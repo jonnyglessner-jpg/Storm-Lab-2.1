@@ -1,7 +1,9 @@
 # CLAUDE.md
 
-StormLab for Unity: the StormLab web build's designed supercell (github.com/jonnyglessner-jpg/StormLab) in Unity 6
-HDRP, with StormLab 2.0's lighting and lightning. Evaluated as a replacement for Supercell Lab 2.0 (`../supercell-lab-2`).
+Storm Lab 2.1 (github.com/jonnyglessner-jpg/Storm-Lab-2.1): built from the StormLab web build's designed supercell
+(github.com/jonnyglessner-jpg/StormLab at f5bd687) in Unity 6 HDRP, with Storm Lab 2.0's lighting, lightning and
+tornadoes. It follows Supercell Lab 2.0 (`../supercell-lab-2`). The folder and package (`com.stormlab.unity`) keep
+their first names.
 README.md has the layout, use, checks and known gaps.
 
 ## Rules

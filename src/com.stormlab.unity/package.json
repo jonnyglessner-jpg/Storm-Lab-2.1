@@ -1,8 +1,8 @@
 {
   "name": "com.stormlab.unity",
   "version": "0.1.0",
-  "displayName": "StormLab for Unity",
-  "description": "StormLab's designed supercell (the web build at github.com/jonnyglessner-jpg/StormLab) as a volumetric storm for Unity 6 HDRP, with StormLab 2.0's physical sun, sky, ground and night lighting and its lightning and thunder. The storm draws through an HDRP custom pass it installs itself.",
+  "displayName": "Storm Lab 2.1",
+  "description": "Storm Lab 2.1: StormLab's designed supercell (built from the web build at github.com/jonnyglessner-jpg/StormLab) as a volumetric storm for Unity 6 HDRP, with StormLab 2.0's physical sun, sky, ground and night lighting and its lightning and thunder. The storm draws through an HDRP custom pass it installs itself.",
   "unity": "6000.0",
   "license": "MIT",
   "author": { "name": "Jonny Glessner" },

@@ -1,9 +1,9 @@
-# StormLab for Unity
+# Storm Lab 2.1
 
-StormLab's designed supercell (the web build, github.com/jonnyglessner-jpg/StormLab, commit f5bd687) as a volumetric
-storm for Unity 6 HDRP, with StormLab 2.0's lighting (physical sun, sky, ground bounce and night) and its lightning and
-thunder. A possible replacement for Supercell Lab 2.0 (`../supercell-lab-2`): the storm is the website's, not 2.0's
-brain-driven skin.
+Built from [StormLab](https://github.com/jonnyglessner-jpg/StormLab), the web build, at commit f5bd687 ("Add varied
+tornado shapes and reproducible storm cycles"): its designed supercell as a volumetric storm for Unity 6 HDRP, with
+Storm Lab 2.0's lighting (physical sun, sky, ground bounce and night), its lightning and thunder, and its tornadoes. It
+follows Supercell Lab 2.0 (`../supercell-lab-2`): the storm is the website's, not 2.0's brain-driven skin.
 
 ## Layout
 
