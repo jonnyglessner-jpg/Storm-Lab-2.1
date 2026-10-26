@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="DumpCs.cs" />
+    <Compile Include="../../../src/com.stormlab.unity/Runtime/Physics/*.cs" />
+    <Compile Include="../../../src/com.stormlab.unity/Runtime/Design/*.cs" />
+  </ItemGroup>
+</Project>

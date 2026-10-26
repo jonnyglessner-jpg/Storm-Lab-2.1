@@ -1,0 +1,97 @@
+#pragma kernel BuildLight
+#pragma kernel Probe
+#pragma kernel FillMedium
+#pragma kernel FindAnchors
+#include "Packages/com.stormlab.unity/Runtime/Lightning/Shaders/StormLightningMedium.hlsl"
+RWTexture3D<float4> _SLLightOut;
+float4 _SLLights[8]; // volume km, relative intensity
+int _SLLightCount;
+float4 _SLLightSettings; // gain, soft radius km, scattering extinction scale, trace sample budget
+float4 _SLGrid; // xyz output dimensions
+
+[numthreads(4,4,4)]
+void BuildLight(uint3 id:SV_DispatchThreadID)
+{
+    if(any(id>=(uint3)_SLGrid.xyz)) return;
+    float3 uv=(id+.5)/_SLGrid.xyz;
+    float3 p=float3((uv.xy-.5)*2*_SLVolume.x,uv.z*_SLVolume.y);
+    float3 radiance=0;
+    [loop] for(int i=0;i<_SLLightCount;i++)
+    {
+        float d2=dot(p-_SLLights[i].xyz,p-_SLLights[i].xyz);
+        float r2=_SLLightSettings.y*_SLLightSettings.y;
+        float tau=slOpticalDepth(p,_SLLights[i].xyz,(int)_SLLightSettings.w,_SLLightSettings.z);
+        radiance+=float3(.84,.91,1)*(_SLLightSettings.x*_SLLights[i].w*r2/(r2+d2))*exp(-tau);
+    }
+    _SLLightOut[id]=float4(radiance,0);
+}
+
+// GPU validation uses the very same optical-depth function as the channel shader.
+float4 _SLProbeA,_SLProbeB;
+RWStructuredBuffer<float> _SLProbeOut;
+[numthreads(1,1,1)]
+void Probe(uint3 id:SV_DispatchThreadID)
+{ _SLProbeOut[0]=exp(-slOpticalDepth(_SLProbeA.xyz,_SLProbeB.xyz,384,1)); }
+
+RWTexture3D<float4> _SLTestDens;
+float4 _SLSolid;
+[numthreads(4,4,4)]
+void FillMedium(uint3 id:SV_DispatchThreadID)
+{
+    uint x,y,z; _SLTestDens.GetDimensions(x,y,z);
+    if(any(id>=uint3(x,y,z))) return;
+    _SLTestDens[id]=_SLSolid;
+}
+
+// Bounded, deterministic candidate search in the current rendered cloud field. Rain is not a cloud anchor.
+RWStructuredBuffer<float4> _SLAnchors;
+int _SLAnchorSeed, _SLAnchorKind;
+float _SLAnvilFraction;
+float _SLReach; // 0..1: heightened activity carries flashes further from the updraft
+uint slHash(uint x)
+{
+    x^=x>>16; x*=0x7feb352du; x^=x>>15; x*=0x846ca68bu; return x^(x>>16);
+}
+float slRandom(inout uint x) { x=slHash(x+0x9e3779b9u); return ((x>>8)+.5)/16777216.0; }
+
+[numthreads(64,1,1)]
+void FindAnchors(uint3 id:SV_DispatchThreadID)
+{
+    uint index=id.x;
+    if(index>=256) return;
+    uint rng=slHash((uint)_SLAnchorSeed^(index*0x9e3779b9u));
+    uint choice=slHash((uint)_SLAnchorSeed^0x17a32f91u);
+    bool anvil=_SLAnchorKind==2 && slRandom(choice)<_SLAnvilFraction && index%128<96;
+    float R=max(S_tower.y,.5), base=S_base.x, top=min(S_tower.x,S_base.y);
+    // Crawlers (kind 3) start in the upper updraft and end out in the anvil, in its lower part where they show from below.
+    bool crawlTarget=_SLAnchorKind==3 && index>=128;
+    float z;
+    if(anvil) z=lerp(S_anvil2.x+.25,S_anvil2.y-.25,slRandom(rng));
+    else if(crawlTarget) z=lerp(S_anvil2.x+.15,S_anvil2.x+.7,slRandom(rng));
+    else if(_SLAnchorKind>=2 || index>=128) z=lerp(base+(top-base)*.6,top-.3,slRandom(rng));
+    else z=lerp(base+(top-base)*.25,base+(top-base)*.65,slRandom(rng));
+    float angle=slRandom(rng)*6.2831853;
+    float radius=anvil ? R*lerp(1.3,3.5+2*_SLReach,slRandom(rng)) : R*.8*sqrt(slRandom(rng));
+    // Heightened activity: in-cloud flashes run further through the storm, ground flashes start further out.
+    if(!anvil && _SLAnchorKind==0 && index>=128) radius*=1+1.6*_SLReach;
+    else if(!anvil && _SLAnchorKind==1) radius*=1+_SLReach;
+    float2 centre=S_up.xy+S_tilt.xy*max(0,z-base);
+    float2 dir=float2(cos(angle),sin(angle));
+    if(crawlTarget)
+    {
+        // Downwind along the anvil, spread across it.
+        float2 ad=dot(S_anvil.xy,S_anvil.xy)>.01 ? normalize(S_anvil.xy) : float2(1,0);
+        float2 across=float2(-ad.y,ad.x);
+        float along=R*lerp(1.5,4.5+3*_SLReach,slRandom(rng));
+        dir=ad; radius=along; centre+=across*R*lerp(-1.5,1.5,slRandom(rng));
+    }
+    float3 p=float3(centre+dir*radius,z);
+    // Require an interior cushion; origins on a boundary can appear detached after density filtering.
+    float cloud=slMedium(p).x;
+    [unroll] for(int axis=0;axis<3;axis++)
+    {
+        float3 d=0; d[axis]=.15;
+        cloud=min(cloud,min(slMedium(p-d).x,slMedium(p+d).x));
+    }
+    _SLAnchors[index]=float4(p,cloud);
+}

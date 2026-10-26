@@ -1,0 +1,365 @@
+// Play-mode check of the storm on the plains test map. Enters Play with the scene as built, then runs four phases:
+//   1  real time (minutesPerSecond 1/60) for 45 s, from 4 min before the first tornado forms: the storm clock must
+//      advance at 1 storm second per second; the lightning must run on the storm clock, flash, land on the terrain and
+//      schedule thunder at the camera
+//   2  10x (10/60) for 45 s: the storm clock at 10 storm seconds per second; lightning on the wall clock (watchable
+//      rates); what thunder does
+//   3  floating origin: the storm paused, the camera and whole world moved by (-30, 0, +20) km with ShiftOrigin; the
+//      updraft, tornado and view must move with them exactly (image difference before / after)
+//   4  frame cost: the storm paused at the tornado, the chaser camera 8 km off, the game's half-resolution march at
+//      1920 x 1080 and 2560 x 1440, checkerboard off and on: GPU time of the storm's volume work, march and composite
+//      (profiler samples) and of the whole camera frame
+// Screenshots/play_*.png, validation/reports/StormPlayCheck.md.
+//   StormLab > Test Map > Storm Play Check
+// Batch: -executeMethod StormPlayCheck.RunFromCommandLine (never with -nographics)
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text;
+using StormLab;
+using StormLab.Lightning;
+using StormLab.TestMap;
+using UnityEditor;
+using UnityEditor.SceneManagement;
+using UnityEngine;
+using UnityEngine.Rendering;
+using Object = UnityEngine.Object;
+
+[InitializeOnLoad]
+public static class StormPlayCheck
+{
+    const string Key = "StormPlayCheck.Active", BatchKey = "StormPlayCheck.Batch", CodeKey = "StormPlayCheck.Code";
+    static string ShotDir => Path.Combine(StormLabTestKit.ProjectDir, "Screenshots");
+    static string ReportPath => Path.Combine(StormLabTestKit.RepoRoot, "validation", "reports", "StormPlayCheck.md");
+
+    static StormPlayCheck()
+    {
+        if (SessionState.GetBool(Key, false)) EditorApplication.playModeStateChanged += OnState;
+    }
+
+    [MenuItem("StormLab/Test Map/Storm Play Check")]
+    public static void RunMenu() => Begin(false);
+    public static void RunFromCommandLine() => Begin(true);
+
+    static void Begin(bool batch)
+    {
+        EditorSceneManager.OpenScene(TestMapBuilder.ScenePath, OpenSceneMode.Single);
+        SessionState.SetBool(Key, true); SessionState.SetBool(BatchKey, batch);
+        EditorApplication.playModeStateChanged -= OnState;
+        EditorApplication.playModeStateChanged += OnState;
+        EditorApplication.EnterPlaymode();
+    }
+
+    static void OnState(PlayModeStateChange s)
+    {
+        if (s == PlayModeStateChange.EnteredPlayMode)
+        {
+            errors = 0; errorLines.Clear(); editorNoise.Clear(); rep.Clear(); ok = true; phase = 0; phaseStart = -1;
+            Application.logMessageReceived += OnLog;
+            routine = Run().GetEnumerator();
+            EditorApplication.update += Tick;
+        }
+        else if (s == PlayModeStateChange.EnteredEditMode && SessionState.GetBool(Key, false))
+        {
+            SessionState.SetBool(Key, false);
+            EditorApplication.playModeStateChanged -= OnState;
+            if (SessionState.GetBool(BatchKey, false)) EditorApplication.Exit(SessionState.GetInt(CodeKey, 1));
+        }
+    }
+
+    static int errors; static readonly List<string> errorLines = new List<string>(), editorNoise = new List<string>();
+    static void OnLog(string msg, string stack, LogType t)
+    {
+        if (t != LogType.Error && t != LogType.Exception && t != LogType.Assert) return;
+        // Unity's own search indexer sometimes throws at editor start-up in batch mode; not StormLab's
+        if (stack != null && stack.Contains("UnityEditor.Search")) { if (editorNoise.Count < 4) editorNoise.Add($"{t}: {msg.Split('\n')[0]}"); return; }
+        errors++; if (errorLines.Count < 12) errorLines.Add($"{t}: {msg.Split('\n')[0]}");
+    }
+
+    static readonly StringBuilder rep = new StringBuilder();
+    static bool ok; static int phase; static float phaseStart;
+    static IEnumerator<object> routine;
+
+    static void Tick()
+    {
+        if (!EditorApplication.isPlaying) return;
+        bool more;
+        try { more = routine.MoveNext(); }
+        catch (Exception e) { Debug.LogException(e); ok = false; more = false; }
+        if (more) return;
+        EditorApplication.update -= Tick;
+        Application.logMessageReceived -= OnLog;
+        rep.AppendLine($"## Errors logged: {errors}").AppendLine();
+        foreach (var l in errorLines) rep.AppendLine($"- {l}");
+        if (editorNoise.Count > 0) { rep.AppendLine().AppendLine("Not counted (Unity's search indexer, not StormLab code):"); foreach (var l in editorNoise) rep.AppendLine($"- {l}"); }
+        ok &= errors == 0;
+        rep.Insert(0, $"# Storm Play-mode check: {(ok ? "PASS" : "FAIL")}\n\nGenerated by `StormPlayCheck` on {DateTime.Now:yyyy-MM-dd HH:mm}, {SystemInfo.graphicsDeviceName}, {SystemInfo.graphicsDeviceType}, Unity {Application.unityVersion}, batch {Application.isBatchMode}.\n\n");
+        Directory.CreateDirectory(Path.GetDirectoryName(ReportPath));
+        File.WriteAllText(ReportPath, rep.ToString());
+        Debug.Log($"[StormPlay] {(ok ? "PASS" : "FAIL")}; report {ReportPath}");
+        SessionState.SetInt(CodeKey, ok ? 0 : 1);
+        EditorApplication.ExitPlaymode();
+    }
+
+    static void Check(bool pass, string what) { ok &= pass; rep.AppendLine($"- {(pass ? "PASS" : "FAIL")}: {what}"); }
+
+    /// <summary>Wait about `seconds` of real time (one editor update per step).</summary>
+    static IEnumerable<object> Wait(float seconds) { float t0 = Time.realtimeSinceStartup; while (Time.realtimeSinceStartup - t0 < seconds) yield return null; }
+
+    static IEnumerable<object> Run()
+    {
+        foreach (var x in Wait(2f)) yield return x;   // Start() has placed the storm and set 10x
+        var world = Object.FindAnyObjectByType<TestMapWorld>();
+        var storm = world ? world.storm : null;
+        var sl = storm ? storm.GetComponent<StormLightning>() : null;
+        var cam = Camera.main;
+        if (!world || !storm || !sl || !cam) { Check(false, $"scene objects: world {world}, storm {storm}, lightning {sl}, camera {cam}"); yield break; }
+        var rig = cam.GetComponent<TestMapCamera>(); if (rig) rig.enabled = false;
+        var P = storm.Plan;
+        float form = P.cycles != null ? (float)P.cycles[0].times[2] : 48f;
+        rep.AppendLine($"Storm: {storm.preset}, seed {storm.seed}, {P.kind}, {(P.cycles != null ? string.Join(", ", P.cycles.Select(c => c.shape)) : "teaching sequence")}; first tornado forms at {form:0.0} min. Lighting {storm.lighting}, sun from {storm.sunSource}.").AppendLine();
+
+        // the chaser: on the ground 7 km off the updraft, square to the storm's motion, looking at its base
+        Vector3 Chaser(float km, float tMin, out Vector3 target)
+        {
+            var u = storm.UpdraftWorld(tMin);
+            target = storm.TornadoAmount > 0.15f ? storm.TornadoGroundWorld : new Vector3(u.x, 0f, u.z);
+            var mv = new Vector3((float)P.motion.x, 0f, (float)P.motion.y).normalized;
+            var from = target + Quaternion.Euler(0, 110, 0) * mv * km * 1000f;
+            from.y = Physics.Raycast(from + Vector3.up * 3000f, Vector3.down, out var hit, 6000f) ? hit.point.y + 2f : 2f;
+            return from;
+        }
+        void Aim(float km)
+        {
+            var from = Chaser(km, storm.stormMinutes, out var target);
+            cam.transform.SetPositionAndRotation(from, Quaternion.LookRotation(new Vector3(target.x, from.y + 900f, target.z) - from, Vector3.up));
+        }
+
+        // count flashes, where ground strikes land, and thunder; and per player frame, what happened in it
+        int framesSeen = -1; var frameLog = new List<(float dt, int flashes, int thunder, float storm)>();
+        int flashesThisFrame = 0, thunderSeenAt = 0;
+        void LogFrame()
+        {
+            if (Time.frameCount == framesSeen) return;
+            framesSeen = Time.frameCount;
+            int th = sl.Flashes.transform.Cast<Transform>().Count(t => t.name == "Delayed thunder");
+            frameLog.Add((Time.unscaledDeltaTime, flashesThisFrame, Math.Max(0, th - thunderSeenAt), (float)storm.StormTime));
+            flashesThisFrame = 0; thunderSeenAt = th;
+        }
+        string Hitches(List<(float dt, int flashes, int thunder, float storm)> log)
+        {
+            var d = log.Select(x => x.dt).OrderBy(x => x).ToList();
+            if (d.Count == 0) return "no frames";
+            var worst = log.OrderByDescending(x => x.dt).Take(4).Select(x => $"{x.dt * 1000:0} ms ({x.flashes} new flashes, {x.thunder} new thunder voices, at {x.storm:0.00} min)");
+            return $"{d.Count} frames: median {d[d.Count / 2] * 1000:0.0} ms, 99th percentile {d[(int)(d.Count * 0.99f)] * 1000:0.0} ms; longest: {string.Join("; ", worst)}";
+        }
+        int flashes = 0, ground = 0, strikesOnTerrain = 0, strikesChecked = 0; var kinds = new Dictionary<FlashKind, int>();
+        sl.Flashes.FlashStarted += f =>
+        {
+            flashes++; flashesThisFrame++; kinds[f.Event.kind] = kinds.TryGetValue(f.Event.kind, out var n) ? n + 1 : 1;
+            if (f.Event.kind == FlashKind.NegativeGround || f.Event.kind == FlashKind.PositiveGround)
+            {
+                ground++;
+                var end = f.Channels[0].points.OrderBy(p => p.Y).First();
+                var e = new Vector3(end.X, end.Y, end.Z);
+                if (Physics.Raycast(e + Vector3.up * 3000f, Vector3.down, out var hit, 6000f)) { strikesChecked++; if (Mathf.Abs(hit.point.y - e.y) < 3f) strikesOnTerrain++; }
+            }
+        };
+        int Thunder() => sl.Flashes.transform.Cast<Transform>().Count(t => t.name == "Delayed thunder");
+
+        // ---------------------------------------------------------------- 1: real time
+        rep.AppendLine("## 1. Real time (1 storm second per second)").AppendLine();
+        storm.minutesPerSecond = 1f / 60f; storm.playing = true;
+        storm.StormTime = form - 4f;
+        Aim(7f);
+        foreach (var x in Wait(1f)) yield return x;
+        frameLog.Clear();
+        int f0 = flashes; double dsp0 = AudioSettings.dspTime;
+        double s0 = storm.StormTime; float r0 = Time.realtimeSinceStartup, g0 = Time.time; int thunderMax = 0, playingMax = 0;
+        while (Time.realtimeSinceStartup - r0 < 45f)
+        {
+            Aim(7f);
+            LogFrame();
+            thunderMax = Mathf.Max(thunderMax, Thunder());
+            playingMax = Mathf.Max(playingMax, sl.Flashes.GetComponentsInChildren<AudioSource>().Count(a => a.isPlaying));
+            yield return null;
+        }
+        float real = Time.realtimeSinceStartup - r0, storm1 = (float)((storm.StormTime - s0) * 60.0), game1 = Time.time - g0;
+        int hitches = frameLog.Count(x => x.dt > Time.maximumDeltaTime);
+        rep.AppendLine($"Player frames (batch editor, no window): {Hitches(frameLog)}. {hitches} longer than Unity's maximum time step ({Time.maximumDeltaTime * 1000:0} ms); game time moved {game1:0.0} s in {real:0.0} s real.");
+        rep.AppendLine($"{real:0.0} s real: storm clock moved {storm1:0.00} s ({storm.StormTime:0.000} min now), lightning clock {sl.BoundClock}, timeScale {sl.Flashes.timeScale:0.00}; activity now {sl.Flashes.CurrentActivity}.");
+        rep.AppendLine($"Flashes {flashes - f0} ({string.Join(", ", kinds.Select(k => $"{k.Key} {k.Value}"))}), ground strikes on the terrain {strikesOnTerrain} of {strikesChecked}; thunder voices at once up to {thunderMax}, playing up to {playingMax}; audio clock moved {AudioSettings.dspTime - dsp0:0.0} s.").AppendLine();
+        Check(Mathf.Abs(storm1 / game1 - 1f) < 0.002f, $"storm clock follows game time at real time ({storm1 / game1:0.0000} storm s per game s; {storm1 / real:0.0000} per real s)");
+        Check(hitches == 0, $"no frame longer than the maximum time step at real time ({hitches})");
+        Check(sl.BoundClock == LightningClock.Storm, "lightning on the storm clock at real time");
+        Check(flashes - f0 > 0, "flashes at real time");
+        Check(strikesChecked == 0 || strikesOnTerrain == strikesChecked, "ground strikes land on the terrain");
+        Check(thunderMax > 0, "thunder scheduled at real time");
+        Check(playingMax > 0 || AudioSettings.dspTime - dsp0 < 1, playingMax > 0 ? "thunder played" : "thunder playback not checked (no audio clock in this session)");
+        Shot(cam, "play_realtime");
+        rep.AppendLine();
+
+        // ---------------------------------------------------------------- 2: 10x
+        rep.AppendLine("## 2. 10x").AppendLine();
+        storm.minutesPerSecond = 10f / 60f;
+        foreach (var x in Wait(0.5f)) yield return x;
+        int f1 = flashes, g1 = ground; int th1 = 0;
+        s0 = storm.StormTime; r0 = Time.realtimeSinceStartup; g0 = Time.time;
+        var seenThunder = new HashSet<Transform>();
+        frameLog.Clear();
+        while (Time.realtimeSinceStartup - r0 < 45f)
+        {
+            Aim(7f);
+            LogFrame();
+            foreach (Transform t in sl.Flashes.transform) if (t.name == "Delayed thunder") seenThunder.Add(t);
+            yield return null;
+        }
+        th1 = seenThunder.Count;
+        real = Time.realtimeSinceStartup - r0; float storm2 = (float)((storm.StormTime - s0) * 60.0);
+        rep.AppendLine($"Player frames: {Hitches(frameLog)}.");
+        rep.AppendLine($"{real:0.0} s real: storm clock moved {storm2:0.0} s ({storm.StormTime:0.00} min now, {storm.Frame.stage}), lightning clock {sl.BoundClock}, timeScale {sl.Flashes.timeScale:0.00}.");
+        rep.AppendLine($"Flashes {flashes - f1} ({ground - g1} to ground); thunder voices made {th1}.").AppendLine();
+        float game2 = Time.time - g0;
+        Check(Mathf.Abs(storm2 / game2 / 10f - 1f) < 0.002f, $"storm clock at 10x ({storm2 / game2:0.00} storm s per game s; {storm2 / real:0.00} per real s)");
+        Check(sl.BoundClock == LightningClock.Wall, "lightning on the wall clock at 10x (Auto)");
+        Check(flashes - f1 > 0, "flashes at 10x");
+        rep.AppendLine($"- note: at 10x the lightning runs in real seconds, so its thunder plays at its real delay after each flash ({(th1 > 0 ? "it did" : "none was made")}). On the storm clock it would be silent, as in 2.0.");
+        Shot(cam, "play_10x");
+        rep.AppendLine();
+
+        // ---------------------------------------------------------------- 3: floating origin
+        rep.AppendLine("## 3. Floating origin").AppendLine();
+        storm.playing = false;
+        sl.Flashes.enabled = false;   // a still frame without flashes, so the two images compare
+        Aim(7f);
+        storm.ResetHistory(cam);
+        foreach (var x in Wait(0.5f)) yield return x;
+        var upA = storm.UpdraftWorld(storm.StormTime); var torA = storm.TornadoGroundWorld; var camA = cam.transform.position;
+        string a = Shot(cam, "play_origin_before", 8);
+        var offset = new Vector3(-30000f, 0f, 20000f);
+        foreach (var go in world.gameObject.scene.GetRootGameObjects())
+        {
+            if (go.GetComponent<StormRenderer>()) continue;   // the storm moves through its origin, not its transform
+            go.transform.position += offset;
+        }
+        Physics.SyncTransforms();
+        storm.ShiftOrigin(offset);
+        storm.ResetHistory(cam);
+        foreach (var x in Wait(0.5f)) yield return x;
+        var upB = storm.UpdraftWorld(storm.StormTime); var torB = storm.TornadoGroundWorld;
+        string b = Shot(cam, "play_origin_after", 8);
+        float dUp = (upB - upA - offset).magnitude, dTor = (torB - torA - offset).magnitude, dCam = (cam.transform.position - camA - offset).magnitude;
+        float diff = ImageDiff(a, b, 0f), diffSky = ImageDiff(a, b, 0.5f);
+        rep.AppendLine($"Offset {offset}: updraft moved by offset {(upB - upA)} (error {dUp:0.000} m), tornado ground error {dTor:0.000} m, camera error {dCam:0.000} m.");
+        rep.AppendLine($"Mean image difference: upper half (the storm and sky) {diffSky * 100:0.00} %, whole frame {diff * 100:0.00} %. The rest is the map: its roads are BatchingStatic (TestMapBuilder), and Unity combines static-batched meshes when Play starts, so they cannot be moved; a floating-origin game must not static-batch what it shifts.").AppendLine();
+        Check(dUp < 0.5f && dTor < 0.5f && dCam < 0.01f, "storm moved exactly with the world");
+        Check(diffSky < 0.005f, "the storm looks the same after the shift");
+        // and the lightning after the shift: flashes start round the moved updraft
+        sl.Flashes.enabled = true; storm.playing = true; storm.minutesPerSecond = 10f / 60f;
+        int f3 = flashes; float near = float.MaxValue, far = 0f; int measured = 0;
+        void Where(LightningFlash fl) { var p = fl.Channels[0].points[0]; float d = Vector2.Distance(new Vector2(p.X, p.Z), new Vector2(storm.UpdraftWorld(storm.stormMinutes).x, storm.UpdraftWorld(storm.stormMinutes).z)); near = Mathf.Min(near, d); far = Mathf.Max(far, d); measured++; }
+        sl.Flashes.FlashStarted += Where;
+        foreach (var x in Wait(15f)) yield return x;
+        sl.Flashes.FlashStarted -= Where;
+        rep.AppendLine($"After the shift: {flashes - f3} flashes; their origins {near / 1000:0.0}-{far / 1000:0.0} km from the updraft ({measured} measured).").AppendLine();
+        Check(measured > 0 && far < 40000f, "flashes come from the moved storm");
+        rep.AppendLine();
+
+        // ---------------------------------------------------------------- 4: frame cost
+        rep.AppendLine("## 4. Frame cost (game settings: physical lighting, HDRP sky, fog, exposure and ACES)").AppendLine();
+        storm.playing = false; sl.Flashes.enabled = false;
+        float tTor = P.cycles != null ? (float)P.cycles[0].times[3] : 50f;
+        storm.stormMinutes = tTor; storm.StepTo(tTor, storm.Clock, true);
+        foreach (var x in Wait(0.5f)) yield return x;
+        Aim(8f);
+        rep.AppendLine($"At {tTor:0.0} min ({storm.Frame.stage}), camera 8 km off. Volume: {storm.Volume.NV} x {storm.Volume.NV} x {storm.Volume.NZ} ({storm.Volume.VramBytes / 1048576f:0} MB with its light grids). " +
+                       "The march's GPU time is measured with synchronised command buffers (20 marches in one); the camera frame is the wall time of a render request and a GPU wait through all of HDRP (CPU and GPU), median of 30, the storm on and off alternately.").AppendLine();
+        // GPU time by synchronised command buffers (the profiler's GPU samples report nothing in batch mode): each item is
+        // recorded `reps` times into one buffer, executed, and the GPU waited for; less the cost of an empty wait
+        double SyncMs() { var sw = System.Diagnostics.Stopwatch.StartNew(); StormLabTestKit.Sync(); return sw.Elapsed.TotalMilliseconds; }
+        double Timed(int reps, Action<CommandBuffer> record)
+        {
+            using (var warm = new CommandBuffer()) { record(warm); Graphics.ExecuteCommandBuffer(warm); }
+            StormLabTestKit.Sync();
+            double idle = Enumerable.Range(0, 5).Select(_ => SyncMs()).Min();
+            using (var cmd = new CommandBuffer { name = "StormPlayCheck timing" })
+            {
+                for (int i = 0; i < reps; i++) record(cmd);
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                Graphics.ExecuteCommandBuffer(cmd); StormLabTestKit.Sync();
+                return Math.Max(0, sw.Elapsed.TotalMilliseconds - idle) / reps;
+            }
+        }
+        rep.AppendLine("| target | march scale | checkerboard | march + resolve (GPU) | camera frame with the storm | without it |").AppendLine("| --- | --- | --- | --- | --- | --- |");
+        float halfMs1080 = 0;
+        foreach (var (w, h) in new[] { (1920, 1080), (2560, 1440) })
+            foreach (var cb in new[] { false, true })
+            {
+                storm.renderScale = 0.5f; storm.checkerboard = cb; storm.temporalBlend = 0.35f; storm.ResetHistory(cam);
+                // the march without the scene depth (rays end at the volume's ground, as over open plains)
+                double march = Timed(20, c => storm.RecordMarch(c, cam, null, w, h, false, out _));
+                if (w == 1920 && !cb) halfMs1080 = (float)march;
+                double with = 0, without = 0;
+                {
+                    var rt = new RenderTexture(w, h, 24, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB); rt.Create();
+                    var on = new List<double>(); var off = new List<double>();
+                    for (int i = 0; i < 70; i++)
+                    {
+                        bool en = (i & 1) == 0; storm.enabled = en;
+                        var sw = System.Diagnostics.Stopwatch.StartNew();
+                        RenderPipeline.SubmitRenderRequest(cam, new RenderPipeline.StandardRequest { destination = rt });
+                        StormLabTestKit.Sync();
+                        if (i >= 10) (en ? on : off).Add(sw.Elapsed.TotalMilliseconds);
+                    }
+                    storm.enabled = true;
+                    rt.Release(); Object.DestroyImmediate(rt);
+                    on.Sort(); off.Sort(); with = on[on.Count / 2]; without = off[off.Count / 2];
+                }
+                rep.AppendLine($"| {w} x {h} | 0.5 | {(cb ? "on" : "off")} | {march:0.00} ms | {with:0.0} ms | {without:0.0} ms |");
+            }
+        rep.AppendLine();
+        // the march while a flash lights the cloud (8 sources: the bridge rebuilds its light field for each camera)
+        {
+            var u = storm.UpdraftWorld(storm.StormTime);
+            sl.Bridge.externalSources = Enumerable.Range(0, 8).Select(i => new LightningIllumination(u + new Vector3(0, 3000 + 1000 * i, 0), 0.25f, FlashKind.NegativeGround)).ToList();
+            storm.renderScale = 0.5f; storm.checkerboard = false;
+            double flash = Timed(20, c => storm.RecordMarch(c, cam, null, 1920, 1080, false, out _));
+            sl.Bridge.externalSources = null;
+            rep.AppendLine($"March at 1920 x 1080 while a flash lights the cloud (local light field built, checkerboard and history bypassed): {flash:0.00} ms.").AppendLine();
+        }
+        // the volume: a full repaint and relight at once (a jump in time), one of the four slabs a spread repaint does a
+        // frame, and the relight on its last
+        var noiseTex = CloudNoise.Make();
+        double full = Timed(4, c => storm.Volume.Update(c, storm.Frame.param, noiseTex, storm.Lighting.keyDir));
+        double relight = Timed(4, c => storm.Volume.Relight(c, storm.Lighting.keyDir, storm.Frame.param[4]));
+        double slab = (full - relight) / StormVolume.Slabs;
+        rep.AppendLine($"Volume: full repaint and relight {full:0.00} ms (a seek or the first frame); a spread repaint costs about {slab:0.00} ms on each of {StormVolume.Slabs} frames plus {relight:0.00} ms (relight, sky visibility, ground light) on the last, at most every {storm.rebuildEvery:0.0} s while storm time moves.").AppendLine();
+        Object.DestroyImmediate(noiseTex);
+        Check(halfMs1080 > 0, $"march timing measured at 1080p half resolution ({halfMs1080:0.00} ms)");
+        Check(halfMs1080 < 8f, "the march fits the 8 ms storm budget at 1080p on this GPU");
+        rep.AppendLine();
+        rep.AppendLine("Images: `Screenshots/play_realtime.png`, `play_10x.png`, `play_origin_before.png`, `play_origin_after.png`.").AppendLine();
+    }
+
+    static string Shot(Camera cam, string name, int frames = 4)
+    {
+        string path = Path.Combine(ShotDir, name + ".png");
+        StormLabTestKit.Render(cam, path, 1920, 1080, frames);
+        return path;
+    }
+
+    /// <summary>Mean absolute difference 0..1 of two images, over rows from `fromTop` of the height upward (Unity's rows
+    /// run bottom-up: 0.5 = the upper half).</summary>
+    static float ImageDiff(string a, string b, float fromTop)
+    {
+        var ta = new Texture2D(2, 2); ta.LoadImage(File.ReadAllBytes(a));
+        var tb = new Texture2D(2, 2); tb.LoadImage(File.ReadAllBytes(b));
+        var pa = ta.GetPixels32(); var pb = tb.GetPixels32();
+        int w = ta.width, h = ta.height, y0 = (int)(h * fromTop);
+        double s = 0; long n = 0;
+        for (int y = y0; y < h; y++) for (int x = 0; x < w; x++) { int i = y * w + x; s += Math.Abs(pa[i].r - pb[i].r) + Math.Abs(pa[i].g - pb[i].g) + Math.Abs(pa[i].b - pb[i].b); n++; }
+        Object.DestroyImmediate(ta); Object.DestroyImmediate(tb);
+        return (float)(s / (n * 3.0 * 255.0));
+    }
+}

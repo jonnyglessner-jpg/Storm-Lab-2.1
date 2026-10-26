@@ -1,0 +1,90 @@
+// HDRP custom pass (from StormLab 2.0's StormSkinCustomPass): ray-marches the active StormRenderer for each camera,
+// composites it over the camera colour and writes its depth where it is opaque. Storms marked drawAlongside are drawn
+// too, farthest first.
+//
+// Injection point: BeforeTransparent, after HDRP has drawn the sky, applied its fog to opaques and combined its
+// volumetric clouds. Those passes treat any pixel without depth as open sky, so a storm drawn earlier gets HDRP's sky
+// clouds and fog painted over it. Transparents drawn after the storm (rain, particles, lightning) are depth-tested
+// against the depth it writes.
+//
+// StormRenderer registers one of these with HDRP as a global custom pass (EnsureInstalled); a scene can also hold its
+// own CustomPassVolume with this pass in it, and then the global one stands down.
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.Rendering;
+using UnityEngine.Rendering.HighDefinition;
+
+namespace StormLab
+{
+    [System.Serializable]
+    public class StormCustomPass : CustomPass
+    {
+        [Tooltip("write the storm's depth where it is opaque, so transparents behind it are hidden")]
+        public bool writeDepth = true;
+        List<StormRenderer> drawn;
+        /// <summary>how many times any storm pass has run (diagnostics: 0 means HDRP never reached it)</summary>
+        public static int Executions { get; private set; }
+        /// <summary>how many storms it has composited</summary>
+        public static int Composites { get; private set; }
+
+        protected override bool executeInSceneView => true;
+
+        protected override void Execute(CustomPassContext ctx)
+        {
+            Executions++;
+            var hd = ctx.hdCamera; var cam = hd.camera;
+            if (cam.cameraType == CameraType.Preview || cam.cameraType == CameraType.Reflection) return;
+            if (this == global && SceneHasOwnPass()) return;
+            drawn ??= new List<StormRenderer>();
+            drawn.Clear();
+            var active = StormRenderer.Active;
+            if (active != null && active.isActiveAndEnabled && active.ReadyToRender) drawn.Add(active);
+            foreach (var s in StormRenderer.Enabled)
+                if (s != null && s != active && s.drawAlongside && s.isActiveAndEnabled && s.ReadyToRender) drawn.Add(s);
+            if (drawn.Count == 0) return;
+            if (drawn.Count > 1)
+            {
+                var eye = cam.transform.position;
+                drawn.Sort((a, b) => (b.UpdraftWorld(b.stormMinutes) - eye).sqrMagnitude.CompareTo((a.UpdraftWorld(a.stormMinutes) - eye).sqrMagnitude));
+            }
+            int w = hd.actualWidth, h = hd.actualHeight;
+            for (int i = 0; i < drawn.Count; i++)
+            {
+                var storm = drawn[i];
+                // the march reads the depth buffer as a texture, so nothing may have it bound as a target meanwhile
+                CoreUtils.SetRenderTarget(ctx.cmd, ctx.cameraColorBuffer, ClearFlag.None);
+                var tex = storm.RecordMarch(ctx.cmd, cam, ctx.cameraDepthBuffer, w, h, i == 0, out var dist);
+                if (tex == null) continue;
+                CoreUtils.SetRenderTarget(ctx.cmd, ctx.cameraColorBuffer, ctx.cameraDepthBuffer, ClearFlag.None);
+                storm.RecordComposite(ctx.cmd, cam, tex, dist, w, h, writeDepth);
+                Composites++;
+            }
+        }
+
+        static StormCustomPass global;
+        public static StormCustomPass Global => global;
+        /// <summary>
+        /// Make sure the storm is drawn: register one StormCustomPass with HDRP as a global custom pass at BeforeTransparent.
+        /// HDRP clears its global passes when scripts reload (entering Play mode, too), so StormRenderer calls this every frame.
+        /// </summary>
+        public static void EnsureInstalled()
+        {
+            global ??= new StormCustomPass { name = "StormLab storm" };
+            CustomPassVolume.RegisterUniqueGlobalCustomPass(CustomPassInjectionPoint.BeforeTransparent, global);
+        }
+
+        static readonly List<CustomPassVolume> volumes = new List<CustomPassVolume>();
+        static readonly CustomPassInjectionPoint[] points = (CustomPassInjectionPoint[])System.Enum.GetValues(typeof(CustomPassInjectionPoint));
+        static bool SceneHasOwnPass()
+        {
+            foreach (var p in points)
+            {
+                CustomPassVolume.GetActivePassVolumes(p, volumes);
+                foreach (var v in volumes)
+                    foreach (var c in v.customPasses)
+                        if (c is StormCustomPass && c.enabled) return true;
+            }
+            return false;
+        }
+    }
+}

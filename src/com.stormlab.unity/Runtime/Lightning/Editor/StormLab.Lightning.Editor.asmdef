@@ -1,0 +1,6 @@
+{
+  "name": "StormLab.Lightning.Editor",
+  "references": ["StormLab.Lightning"],
+  "includePlatforms": ["Editor"],
+  "autoReferenced": true
+}

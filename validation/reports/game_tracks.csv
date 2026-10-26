@@ -1,0 +1,100 @@
+storm,gameMin,lifeMin,x,z,stage
+1,0,0.0,-48079,-8721,Towering cumulus
+1,1,2.5,-47336,-8350,Towering cumulus
+1,2,5.0,-46593,-7979,Towering cumulus
+1,3,7.5,-45850,-7608,Towering cumulus
+1,4,10.0,-45106,-7237,Towering cumulus
+1,5,12.5,-44363,-6866,Cumulonimbus
+1,6,15.0,-43620,-6495,Cumulonimbus
+1,7,17.5,-42877,-6124,Cumulonimbus
+1,8,20.0,-42134,-5753,Cumulonimbus
+1,9,22.5,-41391,-5382,Supercell organising
+1,10,25.0,-40648,-5011,Supercell organising
+1,11,27.5,-39905,-4640,Supercell organising
+1,12,30.0,-39162,-4270,Wall cloud forming
+1,13,32.5,-38419,-3899,Wall cloud forming
+1,14,35.0,-37675,-3528,Wall cloud forming
+1,15,37.5,-36932,-3157,Clear slot opening
+1,16,40.0,-36189,-2786,Clear slot opening
+1,17,42.5,-35446,-2415,Updraft wrapping around the clear slot
+1,18,45.0,-34703,-2044,Updraft wrapping around the clear slot
+1,19,47.5,-33960,-1673,Mature mesocyclone
+1,20,50.0,-33217,-1302,Rope tornado
+1,21,52.5,-32474,-931,Rope tornado
+1,22,55.0,-31731,-560,Rope tornado
+1,23,57.5,-30988,-189,Rope tornado
+1,24,60.0,-30244,182,Tornado roping out
+1,25,62.5,-29501,553,Tornado roping out
+1,26,65.0,-28758,924,Tornado roping out
+1,27,67.5,-28015,1295,Occlusion
+1,28,70.0,-27272,1666,Occlusion
+1,29,72.5,-26529,2037,Occlusion
+1,30,75.0,-25786,2408,Occlusion
+1,31,77.5,-25043,2779,Occlusion
+1,32,80.0,-24300,3149,New wall cloud
+1,33,82.5,-23557,3520,New wall cloud
+1,34,85.0,-22813,3891,New wall cloud
+1,35,87.5,-22070,4262,Clear slot opening
+1,36,90.0,-21327,4633,Clear slot opening
+1,37,92.5,-20584,5004,Updraft wrapping around the clear slot
+1,38,95.0,-19841,5375,Updraft wrapping around the clear slot
+1,39,97.5,-19098,5746,Non-tornadic cycle
+1,40,100.0,-18355,6117,Non-tornadic cycle
+1,41,102.5,-17612,6488,Non-tornadic cycle
+1,42,105.0,-16869,6859,Non-tornadic cycle
+1,43,107.5,-16126,7230,Non-tornadic cycle
+1,44,110.0,-15382,7601,Non-tornadic cycle
+1,45,112.5,-14639,7972,Non-tornadic cycle
+1,46,115.0,-13896,8343,Occlusion
+1,47,117.5,-13153,8714,Occlusion
+1,48,120.0,-12410,9085,Occlusion
+1,49,122.5,-11667,9456,Occlusion
+1,50,125.0,-10924,9827,Occlusion
+1,51,127.5,-10181,10198,Final circulation fading
+2,6,0.0,-49260,-40746,Towering cumulus
+2,7,2.5,-48517,-40375,Towering cumulus
+2,8,5.0,-47773,-40004,Towering cumulus
+2,9,7.5,-47030,-39633,Towering cumulus
+2,10,10.0,-46287,-39262,Towering cumulus
+2,11,12.5,-45544,-38891,Cumulonimbus
+2,12,15.0,-44801,-38520,Cumulonimbus
+2,13,17.5,-44058,-38149,Cumulonimbus
+2,14,20.0,-43315,-37778,Cumulonimbus
+2,15,22.5,-42572,-37407,Supercell organising
+2,16,25.0,-41829,-37036,Supercell organising
+2,17,27.5,-41086,-36665,Supercell organising
+2,18,30.0,-40342,-36295,Supercell organising
+2,19,32.5,-39599,-35924,Wall cloud forming
+2,20,35.0,-38856,-35553,Wall cloud forming
+2,21,37.5,-38113,-35182,Wall cloud forming
+2,22,40.0,-37370,-34811,Clear slot opening
+2,23,42.5,-36627,-34440,Clear slot opening
+2,24,45.0,-35884,-34069,Updraft wrapping around the clear slot
+2,25,47.5,-35141,-33698,Cone tornado
+2,26,50.0,-34398,-33327,Cone tornado
+2,27,52.5,-33655,-32956,Cone tornado
+2,28,55.0,-32911,-32585,Cone tornado
+2,29,57.5,-32168,-32214,Cone tornado
+2,30,60.0,-31425,-31843,Tornado roping out
+2,31,62.5,-30682,-31472,Tornado roping out
+2,32,65.0,-29939,-31101,Occlusion
+2,33,67.5,-29196,-30730,Occlusion
+2,34,70.0,-28453,-30359,Occlusion
+2,35,72.5,-27710,-29988,Occlusion
+2,36,75.0,-26967,-29617,Occlusion
+2,37,77.5,-26224,-29246,New wall cloud
+2,38,80.0,-25480,-28876,New wall cloud
+2,39,82.5,-24737,-28505,New wall cloud
+2,40,85.0,-23994,-28134,Clear slot opening
+2,41,87.5,-23251,-27763,Clear slot opening
+2,42,90.0,-22508,-27392,Updraft wrapping around the clear slot
+2,43,92.5,-21765,-27021,Updraft wrapping around the clear slot
+2,44,95.0,-21022,-26650,Non-tornadic cycle
+2,45,97.5,-20279,-26279,Non-tornadic cycle
+2,46,100.0,-19536,-25908,Non-tornadic cycle
+2,47,102.5,-18793,-25537,Occlusion
+2,48,105.0,-18049,-25166,Occlusion
+2,49,107.5,-17306,-24795,Occlusion
+2,50,110.0,-16563,-24424,Occlusion
+2,51,112.5,-15820,-24053,Final circulation fading
+2,52,115.0,-15077,-23682,Final circulation fading

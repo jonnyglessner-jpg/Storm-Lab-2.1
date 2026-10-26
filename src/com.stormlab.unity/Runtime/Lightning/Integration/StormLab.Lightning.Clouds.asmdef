@@ -1,0 +1,6 @@
+{
+  "name": "StormLab.Lightning.Clouds",
+  "rootNamespace": "StormLab.Lightning",
+  "references": ["StormLab.Lightning", "StormLab"],
+  "autoReferenced": true
+}

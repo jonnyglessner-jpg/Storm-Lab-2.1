@@ -1,0 +1,133 @@
+{
+ "source": "https://jonnyglessner-jpg.github.io/StormLab/#storm",
+ "renderer": "webgpu",
+ "adapter": "amd rdna-3 ",
+ "cases": [
+  {
+   "name": "plains_012",
+   "preset": "plains",
+   "seed": 42,
+   "varied": true,
+   "t": 12,
+   "cam": {
+    "az": -70,
+    "dist": 24,
+    "h": 0.09953375562347944,
+    "tz": 2.8995337556234793,
+    "tx": -15.473814010620117,
+    "ty": -4.069530963897705
+   },
+   "w": 1600,
+   "h": 1000,
+   "stage": "Cumulonimbus"
+  },
+  {
+   "name": "plains_022",
+   "preset": "plains",
+   "seed": 42,
+   "varied": true,
+   "t": 22,
+   "cam": {
+    "az": -70,
+    "dist": 24,
+    "h": 0.09953375562347944,
+    "tz": 2.8995337556234793,
+    "tx": -15.473814010620117,
+    "ty": -4.069530963897705
+   },
+   "w": 1600,
+   "h": 1000,
+   "stage": "Supercell organising"
+  },
+  {
+   "name": "plains_036",
+   "preset": "plains",
+   "seed": 42,
+   "varied": true,
+   "t": 36,
+   "cam": {
+    "az": -70,
+    "dist": 24,
+    "h": 0.09953375562347944,
+    "tz": 2.8995337556234793,
+    "tx": -15.473814010620117,
+    "ty": -4.069530963897705
+   },
+   "w": 1600,
+   "h": 1000,
+   "stage": "Wall cloud forming"
+  },
+  {
+   "name": "plains_tornado1",
+   "preset": "plains",
+   "seed": 42,
+   "varied": true,
+   "t": 50.227509441552684,
+   "cam": {
+    "az": -70,
+    "dist": 24,
+    "h": 0.09953375562347944,
+    "tz": 2.8995337556234793,
+    "tx": -15.473814010620117,
+    "ty": -4.069530963897705
+   },
+   "w": 1600,
+   "h": 1000,
+   "stage": "Multiple-vortex tornado"
+  },
+  {
+   "name": "plains_tornado2",
+   "preset": "plains",
+   "seed": 42,
+   "varied": true,
+   "t": 95.52838720963337,
+   "cam": {
+    "az": -70,
+    "dist": 24,
+    "h": 0.09953375562347944,
+    "tz": 2.8995337556234793,
+    "tx": -15.473814010620117,
+    "ty": -4.069530963897705
+   },
+   "w": 1600,
+   "h": 1000,
+   "stage": "Wedge tornado"
+  },
+  {
+   "name": "lp_mature",
+   "preset": "lp",
+   "seed": 42,
+   "varied": true,
+   "t": 50.227509441552684,
+   "cam": {
+    "az": -70,
+    "dist": 24,
+    "h": 0.09953375562347944,
+    "tz": 2.8995337556234793,
+    "tx": -14.49613094329834,
+    "ty": -6.772162914276123
+   },
+   "w": 1600,
+   "h": 1000,
+   "stage": "Updraft wrapping around the clear slot"
+  },
+  {
+   "name": "dixie_mature",
+   "preset": "dixie",
+   "seed": 42,
+   "varied": true,
+   "t": 50.227509441552684,
+   "cam": {
+    "az": -70,
+    "dist": 24,
+    "h": 0.09953375562347944,
+    "tz": 2.8995337556234793,
+    "tx": -15.99858283996582,
+    "ty": 0.21297746896743774
+   },
+   "w": 1600,
+   "h": 1000,
+   "stage": "Multiple-vortex tornado"
+  }
+ ]
+}
