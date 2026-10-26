@@ -1,6 +1,6 @@
 // The test map's camera: chase (behind the truck; hold the right mouse button to look round it, and 0.5 s after the
-// button is let go it eases back behind the truck), roof (a camera mounted on the cab roof, turned toward the nearest
-// storm's tornado or updraft) and free flight. C switches chase and roof (user, 2026-10-26: the hood and overhead views
+// button is let go it eases back behind the truck), roof (a camera mounted on the cab roof, locked on the nearest
+// tornado, or updraft with none down) and free flight. C switches chase and roof (user, 2026-10-26: the hood and overhead views
 // are gone); F toggles free flight (WASD, Q/E down/up, right mouse look, scroll speed, the car stops taking input while
 // flying). V in free flight puts the truck on the ground under the camera, facing the way it looks, and goes back to
 // driving it.
@@ -65,12 +65,14 @@ namespace StormLab.TestMap
                 }
                 case Mode.Storm:
                 {
-                    // a camera mounted on the cab roof, turned toward the nearest storm's base
+                    // a camera mounted on the cab roof, locked on the nearest tornado (or, with none on the ground, the
+                    // nearest updraft): it snaps to it every frame, however the truck turns (user, 2026-10-26: it used to
+                    // ease round toward it)
                     transform.position = target.TransformPoint(roofMount);
                     var aim = NearestStorm(out bool any);
                     var dir = any ? aim - transform.position : smoothedForward;
                     dir.y = any ? Mathf.Max(dir.y, 0f) * 0.6f + new Vector2(dir.x, dir.z).magnitude * 0.05f : 0.05f;
-                    transform.rotation = Quaternion.Slerp(transform.rotation, Quaternion.LookRotation(dir, Vector3.up), k);
+                    transform.rotation = Quaternion.LookRotation(dir, Vector3.up);
                     break;
                 }
                 case Mode.Free:
