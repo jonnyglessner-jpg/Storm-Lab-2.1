@@ -58,6 +58,12 @@ namespace StormLab
         [Tooltip("in Play, shade the scene the sun lights (terrain, roads, vehicles) with the storms' shadow: a cookie on the sun " +
                  "(StormSceneShadow), shared by every storm")]
         public bool castSceneShadow = true;
+        [Tooltip("the game's exposure opens at night as the night model's adaptation would (the test map's panel does): " +
+                 "lightning is then dimmed by that same gain, so a flash keeps about its daytime brightness on screen")]
+        public bool exposureAdaptsAtNight = true;
+        [Tooltip("a flash at night on screen, as a share of the same flash by day (with exposureAdaptsAtNight). By day a flash " +
+                 "already lights cloud to 10-100 times a sunlit cloud, so 3 still turned the whole storm white at night")]
+        public float lightningAtNight = 0.3f;
 
         [Header("Playback")]
         [Tooltip("storm time shown, minutes (StormTime holds it at full precision)")]
@@ -344,6 +350,23 @@ namespace StormLab
                 };
             }
         }
+        /// <summary>
+        /// What lightning is scaled by tonight (user, 2026-10-26: blinding at night, now and then glitching): with the
+        /// game's exposure opened by the night model's gain, a flash came out about a thousand times brighter on screen
+        /// than by day, and could overflow HDRP's half-float buffers. 1 by day, lightningAtNight / gain at night; 1
+        /// where the storm adapts itself (nightAdaptation) or the game's exposure does not (the march's own divisor
+        /// handles the first).
+        /// </summary>
+        public float LightningScale
+        {
+            get
+            {
+                if (nightAdaptation || !exposureAdaptsAtNight || lighting != StormLighting.Physical) return 1f;
+                var n = Night; n.adapt = true;
+                float gain = SkyLighting.Evaluate(SunDirVol, MoonDirVol, n).gain;
+                return Mathf.Min(1f, lightningAtNight / Mathf.Max(gain, 1e-6f));
+            }
+        }
         /// <summary>luminance of the storm's unit of light, nits</summary>
         public float Luminance => luminanceScale > 0f ? luminanceScale : (sun ? sun.intensity : DefaultSunLux) * SunToLuminance / Mathf.PI;
 
@@ -523,7 +546,8 @@ namespace StormLab
             cmd.SetComputeVectorParam(marchCs, "_Sun", lt.keyDir);
             cmd.SetComputeVectorParam(marchCs, "_SunC", lt.keyC); cmd.SetComputeVectorParam(marchCs, "_SkyC", lt.skyC);
             cmd.SetComputeVectorParam(marchCs, "_SkyP", new Vector4(lt.dim, lt.townLight, lt.keyIsMoon ? 1 : 0, 0));
-            cmd.SetComputeVectorParam(marchCs, "_Night", new Vector4(lt.gain, lt.night, nightFill * lt.dark, 0));
+            // w: the lightning's scale in the cloud (undoing the storm's own night gain, or the game's: LightningScale)
+            cmd.SetComputeVectorParam(marchCs, "_Night", new Vector4(lt.gain, lt.night, nightFill * lt.dark, nightAdaptation ? 1f / Mathf.Max(lt.gain, 1f) : LightningScale));
             bool phys = lighting == StormLighting.Physical;
             cmd.SetComputeVectorParam(marchCs, "_PL", new Vector4(phys ? 1 : 0, dropletDiameter, sunScale, scatterOctaves));
             cmd.SetComputeVectorParam(marchCs, "_PL2", new Vector4(skyScale, bounceScale, skyDiffuse, octaveExtinction));

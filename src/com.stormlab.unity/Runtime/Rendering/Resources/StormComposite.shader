@@ -47,7 +47,8 @@ Shader "Hidden/StormLab/Composite"
             {
                 float4 s = _StormTex.SampleLevel(sampler_LinearClamp_StormComposite, StormUV(i.pos), 0);
                 float k = _StormView.w > 0.0 ? _StormView.w * GetCurrentExposureMultiplier() : 1.0;
-                return float4(s.rgb * k, s.a);
+                // (capped below the half-float limit: a value past it is infinite in HDRP's buffers and spreads)
+                return float4(min(s.rgb * k, 60000.0), s.a);
             }
             ENDHLSL
         }

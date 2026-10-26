@@ -36,6 +36,9 @@ namespace StormLab.Lightning
         [Tooltip("Minimum apparent core width. Prevents distant channels breaking into isolated pixels.")]
         [Range(.5f, 3)] public float minimumPixelWidth = 1.2f;
         [Min(0)] public float emission = 8;
+        [Tooltip("scales the flashes' light on the scene and their channels' brightness (a game's night exposure: " +
+                 "StormLab sets it from StormRenderer.LightningScale)")]
+        [Min(0)] public float lightScale = 1;
         [Range(1, 24)] public int maxVisibleFlashes = 8;
         public Transform observer;
         public bool thunder = true;
@@ -157,10 +160,10 @@ namespace StormLab.Lightning
                     line.enabled = visible && power > .0005f;
                     line.positionCount = Math.Max(2, (int)(channel.points.Length * progress));
                     for (int p = 0; p < line.positionCount; p++) line.SetPosition(p, ToUnity(channel.points[p]));
-                    var colour = new Color(power, power * .96f, power * 1.08f, 1);
+                    var colour = new Color(power * lightScale, power * lightScale * .96f, power * lightScale * 1.08f, 1);
                     line.startColor = colour; line.endColor = channel.main ? colour : new Color(0, 0, 0, 0);
                 }
-                visual.light.intensity = intensity * FlashCandela;
+                visual.light.intensity = intensity * FlashCandela * lightScale;
                 if (intensity > .0005f)
                 {
                     var path = flash.Channels[0].points;

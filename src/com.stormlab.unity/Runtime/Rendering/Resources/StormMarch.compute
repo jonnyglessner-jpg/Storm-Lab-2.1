@@ -35,7 +35,8 @@ float4 _Res;
 float4 _Sun, _SunC, _SkyC;
 // x: the sky dome's dimming below twilight's floor (1 by day), y: town light (radiance), z: 1 = the key light is the moon
 float4 _SkyP;
-// x: exposure gain of night adaptation (1 by day), y: the night blue shift 0..1, z: night fill (a floor on sky visibility)
+// x: exposure gain of night adaptation (1 by day), y: the night blue shift 0..1, z: night fill (a floor on sky visibility),
+// w: lightning's scale (1 / x where the storm adapts itself; the game's night exposure undone where the game adapts)
 float4 _Night;
 // x: 1 = physical lighting, 0 = the web build's; y: droplet diameter um; z: sun scale; w: octaves
 float4 _PL;
@@ -1052,7 +1053,7 @@ void March(uint3 gid : SV_DispatchThreadID)
             {
                 // Lightning is local scattered radiance, not a change to density or a screen-wide flash.
                 // Undo night adaptation here: that gain belongs to faint ambient illumination, not a bright discharge.
-                if (_TransientLightOn != 0) Lc += be * _TransientLightTex.SampleLevel(sampler_LinearClamp, tc, 0).rgb / max(_Night.x, 1.0);
+                if (_TransientLightOn != 0) Lc += be * _TransientLightTex.SampleLevel(sampler_LinearClamp, tc, 0).rgb * _Night.w;
                 float a = 1.0 - exp(-be * dt);
                 float3 c = lerp(Lc / be, hazec, haze * 0.9);
                 g_lastC = c;

@@ -1,7 +1,9 @@
 // The test map's electric lights (user, 2026-10-26): a yard light over the main door of every barn (TestMapBuilder puts
 // a spot light and a glowing bulb there) and the truck's headlights. The yard lights are dusk-to-dawn: on while the
 // sun is under sunElevationOn degrees, and only those within activeRadius of the camera exist as live objects (2,158 of
-// them, even switched off, cost the CPU about 0.8 ms a frame while lightning flashed). L cycles the headlights: auto (on with the yard lights), on, off. Their bulbs and
+// them, even switched off, cost the CPU about 0.8 ms a frame while lightning flashed). The headlights look the same
+// however dark it is: they follow the panel's exposure, at their set brightness on a full-moon night (user, 2026-10-26:
+// they grew brighter as the exposure opened through dusk into night). L cycles the headlights: auto (on with the yard lights), on, off. Their bulbs and
 // the truck's lamps glow from runtime copies of their materials, so Play never edits the material assets.
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -30,8 +32,13 @@ namespace StormLab.TestMap
         [Tooltip("luminance of a lit bulb and a lit lamp lens, nits; a tail light's")]
         public float bulbNits = 40000f, lampNits = 60000f, tailNits = 8f;
         public Headlights headlightMode = Headlights.Auto;
+        [Tooltip("the exposure (EV100) at which the headlights, lenses and tail lights show at their set brightness; " +
+                 "under any other exposure they are scaled to look the same (a full-moon night is about 3)")]
+        public float headlightReferenceEV = 3f;
 
         Light[] yard = new Light[0];
+        float[] headLumens = new float[0];
+        TestMapStormPanel panel;
         Vector3[] yardAt = new Vector3[0];
         Material bulbLive, lampLive, tailLive;
         bool? yardOn, headOn;
@@ -44,6 +51,10 @@ namespace StormLab.TestMap
         void Start()
         {
             if (!storm) storm = FindAnyObjectByType<StormRenderer>();
+            panel = GetComponent<TestMapStormPanel>();
+            if (!panel) panel = FindAnyObjectByType<TestMapStormPanel>();
+            headLumens = new float[headlights.Length];
+            for (int i = 0; i < headlights.Length; i++) headLumens[i] = headlights[i] ? headlights[i].intensity : 0f;
             if (yardLights)
             {
                 yard = yardLights.GetComponentsInChildren<Light>(true);
@@ -101,8 +112,19 @@ namespace StormLab.TestMap
             {
                 headOn = head;
                 foreach (var l in headlights) if (l) l.enabled = head;
-                Glow(lampLive, head, new Color(1f, 0.97f, 0.9f) * lampNits);
-                Glow(tailLive, head, new Color(1f, 0.05f, 0.03f) * tailNits);
+            }
+            if (head)
+            {
+                // the same on screen under any exposure: 2^(EV - reference) more light where the exposure is closed down
+                float k = panel ? Mathf.Pow(2f, panel.ExposureEV - headlightReferenceEV) : 1f;
+                for (int i = 0; i < headlights.Length; i++) if (headlights[i]) headlights[i].intensity = headLumens[i] * k;
+                Glow(lampLive, true, new Color(1f, 0.97f, 0.9f) * (lampNits * k));
+                Glow(tailLive, true, new Color(1f, 0.05f, 0.03f) * (tailNits * k));
+            }
+            else
+            {
+                Glow(lampLive, false, Color.black);
+                Glow(tailLive, false, Color.black);
             }
         }
 

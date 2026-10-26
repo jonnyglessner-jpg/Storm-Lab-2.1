@@ -100,6 +100,8 @@ namespace StormLab.Lightning
                 now = wallSeconds;
                 Flashes.timeScale = 1f;
             }
+            // a night flash under a game's opened exposure: dimmed by its gain (StormRenderer.LightningScale)
+            Flashes.lightScale = Storm.LightningScale;
             Flashes.SampleAt(now);
             var a = Flashes.CurrentActivity;
             activityNow = a.HasValue ? $"{BoundClock}: {a.Value} at {Storm.stormMinutes:0.0} min" : "";

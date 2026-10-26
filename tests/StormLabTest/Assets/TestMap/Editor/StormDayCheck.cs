@@ -250,6 +250,78 @@ public static class StormDayCheck
         rep.AppendLine("- `Screenshots/lights_truck_night.png`: the truck from behind at night, headlights on (auto)");
         rep.AppendLine($"- {(barnOk ? "PASS" : "FAIL")}: yard lights off by day, on at night, and the headlights on at night ({yard.Length} yard lights)");
         ok &= barnOk;
+
+        // Lightning at night (user, 2026-10-26: blinding, now and then glitching): flashes at real time under a full moon
+        // for 25 s from the chaser's spot, with the night scaling (StormRenderer.LightningScale) and without it. Frames
+        // read back in half float, so a value that overflowed (infinite or not a number) is counted, not hidden by the
+        // 8-bit picture; the brightest frame of each run saved.
+        rep.AppendLine().AppendLine("## Lightning at night").AppendLine();
+        rep.AppendLine("| night scaling (lightningAtNight) | lightning scale | frames | brightest frame (mean) | broken pixels (inf / NaN) |").AppendLine("| --- | --- | --- | --- | --- |");
+        // -slFlashAtNight a,b,c: also try these lightningAtNight values (the game's default first)
+        var argv = System.Environment.GetCommandLineArgs(); int fi = Array.IndexOf(argv, "-slFlashAtNight");
+        var tries = new List<float> { storm.lightningAtNight };
+        if (fi >= 0 && fi + 1 < argv.Length) tries.AddRange(argv[fi + 1].Split(',').Select(x => float.Parse(x, System.Globalization.CultureInfo.InvariantCulture)));
+        float atNight0 = storm.lightningAtNight;
+        var sl2 = storm.GetComponent<StormLightning>();
+        if (sl2 && sl2.Flashes) { sl2.Flashes.enabled = true; if (sl2.Bridge) sl2.Bridge.enabled = true; }
+        panel.hour = 23f; panel.moonPhase = 0.5f; panel.Apply();
+        cam.transform.SetPositionAndRotation(from, Quaternion.LookRotation(new Vector3(target.x, from.y + 1100f, target.z) - from, Vector3.up));
+        storm.minutesPerSecond = 1f / 60f; storm.playing = true;
+        bool flashOk = true;
+        var runs = tries.Select(v => (scaled: true, v)).Append((scaled: false, v: atNight0)).ToList();
+        foreach (var (scaled, v) in runs)
+        {
+            storm.exposureAdaptsAtNight = scaled; storm.lightningAtNight = v;
+            bool first = scaled && v == atNight0;
+            float bestMean = -1f; Color[] best = null; int frames = 0, broken = 0;
+            float t0 = Time.realtimeSinceStartup;
+            int frame = 0;
+            while (Time.realtimeSinceStartup - t0 < (runs.Count > 2 ? 15f : 25f))
+            {
+                yield return null;
+                if (++frame % 3 != 0) continue;
+                var px = CaptureHdr(cam, 480, 270);
+                frames++;
+                double sum = 0;
+                foreach (var c in px)
+                {
+                    if (float.IsNaN(c.r + c.g + c.b) || float.IsInfinity(c.r + c.g + c.b)) { broken++; continue; }
+                    sum += (c.r + c.g + c.b) / 3f;
+                }
+                float mean = (float)(sum / px.Length);
+                if (mean > bestMean) { bestMean = mean; best = px; }
+            }
+            if (best != null)
+            {
+                var tex = new Texture2D(480, 270, TextureFormat.RGB24, false);
+                for (int i = 0; i < best.Length; i++) { var c = best[i]; best[i] = new Color(Mathf.Clamp01(c.r), Mathf.Clamp01(c.g), Mathf.Clamp01(c.b)); }
+                tex.SetPixels(best); tex.Apply();
+                File.WriteAllBytes(Path.Combine(ShotDir, $"lightning_night_{(scaled ? "scaled" + v.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) : "unscaled")}.png"), tex.EncodeToPNG());
+                Object.DestroyImmediate(tex);
+            }
+            rep.AppendLine($"| {(scaled ? $"on ({v:0.###})" : "off (as before)")} | {storm.LightningScale:0.00000} | {frames} | {bestMean * 100:0.0} % | {broken} |");
+            if (first) flashOk &= broken == 0 && bestMean < 0.9f;
+        }
+        storm.exposureAdaptsAtNight = true; storm.lightningAtNight = atNight0; storm.playing = false;
+        rep.AppendLine().AppendLine($"- {(flashOk ? "PASS" : "FAIL")}: with the night scaling no broken pixels and no frame washed out (brightest frame's mean under 90 %); images `Screenshots/lightning_night_*.png`");
+        ok &= flashOk;
+    }
+
+    /// <summary>One frame of the camera, read back in half float (what HDRP wrote, values past 1 and broken ones kept).</summary>
+    static Color[] CaptureHdr(Camera cam, int w, int h)
+    {
+        var rt = new RenderTexture(w, h, 24, RenderTextureFormat.ARGBHalf, RenderTextureReadWrite.Linear) { antiAliasing = 1 };
+        rt.Create();
+        var req = new UnityEngine.Rendering.RenderPipeline.StandardRequest { destination = rt };
+        if (UnityEngine.Rendering.RenderPipeline.SupportsRenderRequest(cam, req)) UnityEngine.Rendering.RenderPipeline.SubmitRenderRequest(cam, req);
+        else { cam.targetTexture = rt; cam.Render(); cam.targetTexture = null; }
+        var prev = RenderTexture.active; RenderTexture.active = rt;
+        var tex = new Texture2D(w, h, TextureFormat.RGBAHalf, false, true);
+        tex.ReadPixels(new Rect(0, 0, w, h), 0, 0); tex.Apply();
+        RenderTexture.active = prev;
+        var px = tex.GetPixels();
+        Object.DestroyImmediate(tex); rt.Release(); Object.DestroyImmediate(rt);
+        return px;
     }
 
     static Color[] Scale(Texture2D src, int w, int h)

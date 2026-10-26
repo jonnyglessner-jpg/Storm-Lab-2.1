@@ -98,7 +98,12 @@ Lighting (`lighting`):
 Night (user, 2026-10-26): a moonlit night is shown at 1.2 % of day (`nightBrightness`), a moonless one no brighter than
 0.4 % (`nightFloor`); the panel's exposure opens to that. At 8 % and 4.5 % the storm stayed light grey all night, a new
 moon brightest of all, while the moonlit ground was black. `StormDayCheck` measures both nights with and without the
-storm's town light and night fill.
+storm's town light and night fill. Lightning at night (`LightningScale`): where the game's exposure does the night
+adaptation (`exposureAdaptsAtNight`, the test map's panel), lightning is dimmed by the same gain to `lightningAtNight`
+(0.3) of its daytime look on screen, cloud light, ground light (`LightningSystem.lightScale`) and bolt alike; before, a
+night flash came out about a thousand times brighter than by day and turned the whole storm white. The storm's
+composite is capped below the half-float limit. `StormDayCheck` runs flashes at night with and without it, reading
+frames back in half float to count broken (infinite or NaN) pixels; `-slFlashAtNight a,b` tries other strengths.
 
 The storm's shadow on the scene (`StormSceneShadow`, `castSceneShadow`, on in Play): HDRP's sun gets a cookie of how
 much sunlight gets through every storm (StormShadow.compute: from the ground up toward the sun through the volume, with
