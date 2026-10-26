@@ -15,6 +15,7 @@ static class DumpCs
         if (args.Length > 0 && args[0] == "--life") { Life(); return; }
         if (args.Length > 0 && args[0] == "--wedges") { Wedges(); return; }
         if (args.Length > 0 && args[0] == "--runup") { RunUp(); return; }
+        if (args.Length > 0 && args[0] == "--gameframes") { GameFrames(args[1], int.Parse(args[2]), int.Parse(args[3]), double.Parse(args[4], CultureInfo.InvariantCulture), double.Parse(args[5], CultureInfo.InvariantCulture)); return; }
         if (args.Length > 0 && args[0] == "--spin") { Spin(args.Length > 1 ? args[1] : "plains"); return; }
         if (args.Length > 0 && args[0] == "--wall")
         {
@@ -92,6 +93,28 @@ static class DumpCs
                         $"{t.skin} albedo {t.albedo:0.00}, {t.soilName} soil, sub-vortices {t.subVortices}{(t.collar ? ", collar" : "")}{(t.satellite ? ", satellite" : "")}; life {t.LifeMin:0.0} min: {phases}");
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// A game storm's tornado slots, frame by frame (--gameframes preset gameSeed storm fromGameMin toGameMin): storm time,
+    /// stage, life fraction, the funnel's ground and top radius (m), and the detailed tornado's core, multi-vortex amount,
+    /// breakdown and mode (S_tor4), as the game draws them (its plan, rated tornadoes, life).
+    /// </summary>
+    static void GameFrames(string key, int gameSeed, int storm, double g0, double g1)
+    {
+        var pre = StormPreset.Find(key);
+        var sc = new StormScenario(pre, gameSeed, 80467.2 / 2);
+        var st = sc.storms[storm];
+        var F = new StormFrame();
+        Console.WriteLine($"{key} game {gameSeed} storm {storm + 1}: seed {st.seed}; " + string.Join(", ", st.tornadoes.Select((t, i) => t == null ? $"{i}: none" : $"{i}: EF{t.ef} {t.shape} ground {t.groundKm * 1000:0} top {t.topKm * 1000:0} m, form {t.formMin:0.0}, rope {t.ropeMin:0.0}, gone {t.goneMin:0.0}, sub {t.subVortices}, phases {string.Join(">", t.phases.Select(p => p.shape + "@" + p.startFrac.ToString("0.00")))}")));
+        Console.WriteLine("game min | storm min | stage | ground m | top m | core m | multi | breakdown | mode");
+        for (double g = g0; g <= g1 + 1e-9; g += (g1 - g0) / 40)
+        {
+            double t = st.StormMinutes(g, sc.pace);
+            StormDesign.At(st.plan, t, 0, F); StormTornadoes.Apply(st.plan, st.tornadoes, t, F); StormLife.Apply(st.plan, t, F);
+            var a = F.param;
+            Console.WriteLine($"{g:0.000} | {t:0.000} | {F.stage} | {a[14 * 4] * 1000:0} | {a[14 * 4 + 1] * 1000:0} | {a[21 * 4] * 1000:0} | {a[21 * 4 + 1]:0.00} | {a[21 * 4 + 2]:0.00} | {a[21 * 4 + 3]:0.00}");
         }
     }
 

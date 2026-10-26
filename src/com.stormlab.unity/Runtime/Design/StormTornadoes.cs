@@ -342,6 +342,8 @@ namespace StormLab
             t.formThin = r.Range(0.2, 0.45); t.formSinu = r.Range(0.15, 0.45);
         }
 
+        /// <summary>a big tornado's central vortex at touchdown, as a share of its full width</summary>
+        const double CoreStart = 0.15;
         /// <summary>a wedge's narrowing before its rope-out: how far, and over how many storm minutes</summary>
         public const double WedgeShrink = 0.6, WedgeShrinkMin = 2;
         /// <summary>the share of its life at which a tornado's rope-out begins (the web build's rope milestone)</summary>
@@ -536,7 +538,12 @@ namespace StormLab
                 double multi = tg.subVortices > 0 ? Ramp(lifeFrac, 0.02, 0.06) * (1 - Ramp(lifeFrac, tg.multiFrac * 0.75, tg.multiFrac)) : 0;
                 double breakdown = 0;
                 envelope = big ? (tg.shape == FunnelShape.MultiVortex ? 0.35 + 0.25 * takeover : takeover) : 0;
-                double core = big ? Math.Max(tg.rcKm * 1.6, 0.04) * Ramp(lifeFrac, 0.05, 0.2) : 0;
+                // the central vortex comes down thin (CoreStart of its full width, at least 25 m) and widens in proportion
+                // to its full width by a fifth of the life. It is drawn from touchdown: it used to grow unseen from nothing
+                // while the funnel was drawn plain, and appear at once, hundreds of metres wide, when the envelope began
+                // (user, 2026-10-26: the wedge jumped in size)
+                double coreFull = Math.Max(tg.rcKm * 1.6, 0.04), coreStart = Math.Max(coreFull * CoreStart, 0.025);
+                double core = big ? coreStart * Math.Pow(coreFull / coreStart, Ramp(lifeFrac, 0.03, 0.2)) : 0;
                 ground = gWeb * gScale * (big ? 0.3 + 0.7 * takeover : 1);
                 top = tWeb * tScale * (big ? 0.5 + 0.5 * takeover : 1);
                 // Rope-out (user, 2026-10-26): as it begins, the envelope's outer part breaks up into a scuddy collar
@@ -580,7 +587,9 @@ namespace StormLab
                     sinu = C.Lerp(Math.Max(sinu, tg.formSinu), sinu, gG);
                 }
                 // (a roping-out wedge stays in envelope mode with no envelope: what is left is its central vortex)
-                bool plain = envelope <= 0 && multi <= 0 && ropeOut <= 0;
+                // (a big tornado is drawn in envelope mode all its life, so its funnel is always the central vortex and the
+                // envelope round it; switching from plain partway through swapped one funnel for another)
+                bool plain = !big;
                 Set(21, core, multi, breakdown, plain ? 0 : 1 + envelope);
             }
             a[14 * 4] = (float)Math.Max(ground, 0.008);
