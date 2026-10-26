@@ -342,6 +342,8 @@ namespace StormLab
             t.formThin = r.Range(0.2, 0.45); t.formSinu = r.Range(0.15, 0.45);
         }
 
+        /// <summary>a wedge's rope at the end: its central vortex's radius as a share of the foot's (25-60 m)</summary>
+        const double RopeCore = 0.05;
         /// <summary>share of its life a forming funnel takes to come down, before it widens</summary>
         const double FormDown = 0.06;
         static bool FormsThin(FunnelShape s) => s == FunnelShape.Cone || s == FunnelShape.Stovepipe;
@@ -526,11 +528,31 @@ namespace StormLab
                 bool big = tg.shape == FunnelShape.Wedge || tg.shape == FunnelShape.MultiVortex || tg.subVortices > 0;
                 double takeover = tg.shape == FunnelShape.MultiVortex ? 0.35 : Ramp(lifeFrac, 0.12, Math.Max(0.45, tg.multiFrac + 0.15));
                 double multi = tg.subVortices > 0 ? Ramp(lifeFrac, 0.02, 0.06) * (1 - Ramp(lifeFrac, tg.multiFrac * 0.75, tg.multiFrac)) : 0;
-                double breakdown = tg.collar ? Ramp(lifeFrac, 0.68, 0.78) : 0;
+                double breakdown = 0;
                 envelope = big ? (tg.shape == FunnelShape.MultiVortex ? 0.35 + 0.25 * takeover : takeover) : 0;
-                double core = big ? Math.Max(tg.rcKm * 1.6, 0.04) * Ramp(lifeFrac, 0.05, 0.2) * (1 - 0.5 * rope) : 0;
+                double core = big ? Math.Max(tg.rcKm * 1.6, 0.04) * Ramp(lifeFrac, 0.05, 0.2) : 0;
                 ground = gWeb * gScale * (big ? 0.3 + 0.7 * takeover : 1);
                 top = tWeb * tScale * (big ? 0.5 + 0.5 * takeover : 1);
+                // Rope-out (user, 2026-10-26): as it begins, the envelope's outer part breaks up into a scuddy collar
+                // from the ground to the base; its bottom lifts off the ground and rises, the scud breaking up more and
+                // thinning, until it is gone into the base (S_tor4.z, StormMarch), while the central vortex narrows to a
+                // rope (RopeCore of the foot's width). The envelope keeps about its width meanwhile (the web build's
+                // rope-out shrink is undone for it). Before, the envelope stayed whole round a core still hundreds of
+                // metres wide, and the lean of a rope-out tipped the lot over: a fat, tilted sausage.
+                // (the collar lifts over the whole rope-out, from its start to the tornado's end, 5-12 storm min: over the
+                // web build's shrink alone, 3-7 min, it was gone in a moment)
+                double r0 = 1 - tg.ropeFrac;
+                double ropeOut = big ? Ramp(lifeFrac, r0, r0 + 0.92 * tg.ropeFrac) : 0;
+                breakdown = ropeOut;
+                if (rope > 0 && big)
+                {
+                    double ropeR = C.Clamp(RopeCore * pg, 0.025, 0.06);
+                    // (in proportion, so it is rope-thin by half way: shrinking evenly from a kilometre across, it was a fat
+                    // rounded column leaning over for most of the rope-out)
+                    if (core > ropeR) core = core * Math.Pow(ropeR / core, Ramp(rope, 0.0, 0.5));
+                    ground *= C.Lerp(1, 0.85, rope) / Math.Max(1 - 0.75 * rope, 0.25);
+                    top *= C.Lerp(1, 0.9, rope) / Math.Max(1 - 0.6 * rope, 0.4);
+                }
                 if (!big && FormsThin(tg.shape) && tg.formFrac > 0)
                 {
                     // a cone or stovepipe comes down as a thin, nearly even tube (a third to two thirds of its foot's full
@@ -544,7 +566,8 @@ namespace StormLab
                     profile = C.Lerp(0.12, profile, gG);
                     sinu = C.Lerp(Math.Max(sinu, tg.formSinu), sinu, gG);
                 }
-                bool plain = envelope <= 0 && multi <= 0;
+                // (a roping-out wedge stays in envelope mode with no envelope: what is left is its central vortex)
+                bool plain = envelope <= 0 && multi <= 0 && ropeOut <= 0;
                 Set(21, core, multi, breakdown, plain ? 0 : 1 + envelope);
             }
             a[14 * 4] = (float)Math.Max(ground, 0.008);

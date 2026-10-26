@@ -237,7 +237,8 @@ float tornadoReach(float z0, float z1)
         float collar = ss(0.72 * ztop, ztop + 0.1, zh);
         float flare = min(0.25 * S_wall.z + 0.3 * S_tor2.y, 1.6 * S_tor2.y + 0.1);
         float rad = lerp(S_tor2.x, S_tor2.y, pow(saturate(zh / ztop), lerp(3.0, 0.7, S_tor.w))) + collar * collar * flare * (1.0 - 0.4 * S_tor2.w);
-        float f = rad * ((S_tor4.w > 0.5 ? 1.35 : 1.25) + rr);
+        // (a wedge breaking up into scud as it ropes out tears its edge up to 0.3 radii further out)
+        float f = rad * ((S_tor4.w > 0.5 ? 1.35 + 0.3 * ss(0.0, 0.3, S_tor4.z) : 1.25) + rr);
         if (S_tor4.w > 0.5)
         {
             f = max(f, max(S_tor4.x, 0.02) * lerp(1.0, 1.6, pow(saturate(zh / ztop), 1.5)) * 1.45);
@@ -353,8 +354,20 @@ float3 tornadoField(float3 q)
     float core = ss(second ? 1.35 : 1.25, 0.45, d / max(rad, 0.005) + rough);
     float wedgeAmt = second ? S_tor4.w - 1.0 : 1.0;
     float breakdown = second ? S_tor4.z : 0.0;
-    // a breaking-down wedge lifts off the ground from below, leaving a collar cloud at its top
-    float wedgeMask = second ? wedgeAmt * lerp(1.0, ss(breakdown * 0.85 - 0.05, breakdown * 0.85 + 0.25, h), ss(0.0, 0.05, breakdown)) : 1.0;
+    // A wedge's rope-out (S_tor4.z, 0..1; user, 2026-10-26): its envelope, from the ground to the base, breaks up into a
+    // scuddy collar round the roping-out core, torn by noise turning with the vortex; its bottom lifts off the ground
+    // and rises into the base, breaking up more and thinning as it goes, and is gone when it gets there
+    float scud = 0.5, frag = 1.0;
+    if (breakdown > 0.0)
+    {
+        float3 sq = float3(rot2(dv, -S_spin.y), q.z);
+        scud = 0.65 * n3k(sq, 3.0, float3(0.17, 0.53, 0.29)) + 0.35 * n3k(sq, 8.0, float3(0.71, 0.13, 0.47));
+        core = ss(1.35, 0.45, d / max(rad, 0.005) + rough + (scud - 0.5) * 0.6 * ss(0.0, 0.3, breakdown));   // its edge torn
+        frag = ss(0.28 + 0.36 * breakdown, 0.46 + 0.36 * breakdown, scud) * (1.0 - 0.5 * breakdown);   // broken into scud
+    }
+    // its ragged bottom, rising: uneven enough that tags of scud hang well below the rest (0.3 left a flat lens)
+    float liftAt = breakdown * 1.1 + (scud - 0.5) * 0.7 * ss(0.0, 0.1, breakdown);
+    float wedgeMask = second ? wedgeAmt * lerp(1.0, ss(liftAt - 0.06, liftAt + 0.12, h) * frag, ss(0.0, 0.05, breakdown)) : 1.0;
     float vis = min(S_tor.z * 2.5, 1.0);
     float funnel = vis * core * lerp(0.12, 1.0, down) * lerp(0.75, 1.0, ss(0.0, 0.35, h)) * wedgeMask;
     // a translucent funnel is patchy as well as thin
@@ -393,13 +406,6 @@ float3 tornadoField(float3 q)
                 mv = max(mv, ss(1.3, 0.2, di + rough) * pulse * gaps * wisp);
             }
             funnel = max(funnel, vis * S_tor4.y * 0.55 * mv * lerp(0.4, 1.0, down) * lerp(0.75, 1.0, ss(0.0, 0.3, h)));
-        }
-        // collar cloud: what is left of the envelope's upper part, wide and short, under the wall cloud
-        if (breakdown > 0.0)
-        {
-            float rcol = S_tor2.y * lerp(0.85, 1.2, h) + 0.1;
-            float cl = ss(0.4, 0.62, h) * ss(1.2, 0.5, d / rcol + rough * 0.8);
-            funnel = max(funnel, vis * breakdown * cl * (1.0 - 0.5 * S_tor2.w));
         }
     }
     // dust and debris: a low whirl wider than the funnel, rising as a sheath round its lower part. A wide envelope's

@@ -105,11 +105,13 @@ Tornado (`tornado`):
   Wedges are half a mile to two miles wide at the ground (`StormTornadoes.WedgeMinM/MaxM`; a bigger web-build cycle is
   a wider wedge, and their wind and rating follow the width), with a smooth outline, and a wedge's (or multiple-vortex)
   envelope takes the light of the wall cloud it hangs from, so it is that cloud's colour in any light (`-- --wedges`
-  checks the widths). Its sides slant evenly out to a top 1.5-2.1 times as wide as its foot (user, 2026-10-26).
+  checks the widths). Its sides slant evenly out to a top 1.5-2.1 times as wide as its foot (user, 2026-10-26). As it
+  ropes out its envelope breaks up into a scuddy collar from the ground up, whose ragged bottom lifts and rises into the
+  base over the rope-out while the central vortex inside narrows to a rope.
   Stovepipes are one laminar vortex, a quarter thinner than the website's. Cones and stovepipes come down as a thin
   tube and widen once on the ground, each its own way (how fast, top or foot first, how thin, how much it snakes).
   `StormLabTests -slTornadoLife <preset> <seed> <cycle> [tag]` renders one tornado through its life (a tag with
-  "early" shows its formation, "sharp" one unblended full-resolution frame from closer).
+  "early" shows its formation, "rope" its rope-out, "sharp" one unblended full-resolution frame from closer).
 - **Website**: the website's tornado, unchanged (the website comparison uses it).
 
 Wall-cloud base (`wallBase`, also on the panel):

@@ -272,7 +272,7 @@ public static class StormLabTests
     /// One tornado through its life (-slTornadoLife preset seed cycle [tag]): the detailed tornado of that cycle at six
     /// points of its life, from a chaser 140 degrees round from it (as the sheets), the game's half-resolution blended march
     /// and a 15 degree evening sun. Sheet: Screenshots/storm_life_{preset}_{seed}_{cycle}{_tag}.png; the stage and funnel size
-    /// of each shot go to the log. A tag containing "early" shows the first 30 % of its life instead.
+    /// of each shot go to the log. A tag containing "early" shows the first 30 % of its life instead, "rope" the last 40 %.
     /// </summary>
     static bool TornadoLife(string preset, int seed, int k, string tag)
     {
@@ -287,7 +287,9 @@ public static class StormLabTests
         Debug.Log($"[StormLife] {preset} seed {seed} cycle {k}: EF{tg.ef} {tg.shape}, ground {tg.groundKm * 1000:0} m, top {tg.topKm * 1000:0} m, {tg.skin}, roughness {tg.roughness:0.00}, sub-vortices {tg.subVortices}, phases {string.Join(" > ", tg.phases.Select(p => p.shape))}");
         var tiles = new List<string>();
         // a tag with "early" in it shows its formation instead (the first 30 % of its life)
-        var fracs = tag.Contains("early") ? new[] { 0.005f, 0.03f, 0.07f, 0.12f, 0.19f, 0.3f } : new[] { 0.05f, 0.15f, 0.3f, 0.45f, 0.6f, 0.8f };
+        // ("rope": its last 40 %, the rope-out)
+        var fracs = tag.Contains("early") ? new[] { 0.005f, 0.03f, 0.07f, 0.12f, 0.19f, 0.3f }
+            : tag.Contains("rope") ? new[] { 0.62f, 0.66f, 0.7f, 0.74f, 0.8f, 0.9f } : new[] { 0.05f, 0.15f, 0.3f, 0.45f, 0.6f, 0.8f };
         foreach (float f in fracs)
         {
             float T = (float)(tg.formMin + f * tg.LifeMin);
