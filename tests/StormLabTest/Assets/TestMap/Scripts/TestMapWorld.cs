@@ -4,7 +4,7 @@
 //   1-9  jump to a spot          T  storm clock speed (1x, 10x, 30x, 60x real time)    P  pause the storm
 //   [ ]  storm clock -/+ 5 min   N  next storm (new seed)                               H  help on / off
 //   Tab  the storm and lighting panel (TestMapStormPanel: storm controls, a 24 hour clock, exposure, lightning)
-//   C  camera (chase: hold the right mouse button to look round; roof)     F  free flight (V puts the truck under the camera)    R  reset the car upright
+//   C  camera (chase: hold the right mouse button to look round, it eases back 0.5 s after letting go; roof)     F  free flight (V puts the truck under the camera)    R  reset the car upright
 //   G  game mode: a StormScenario's two storms on one hour-long game clock (StormScenarioRunner) in place of the test
 //      storm; T, P, [ ] and N then work on the game clock and the game's seed
 using System.Collections.Generic;

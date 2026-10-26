@@ -1,5 +1,5 @@
 // The test map's camera: chase (behind the truck; hold the right mouse button to look round it, and 0.5 s after the
-// look stops moving it eases back behind the truck), roof (a camera mounted on the cab roof, turned toward the nearest
+// button is let go it eases back behind the truck), roof (a camera mounted on the cab roof, turned toward the nearest
 // storm's tornado or updraft) and free flight. C switches chase and roof (user, 2026-10-26: the hood and overhead views
 // are gone); F toggles free flight (WASD, Q/E down/up, right mouse look, scroll speed, the car stops taking input while
 // flying). V in free flight puts the truck on the ground under the camera, facing the way it looks, and goes back to
@@ -22,14 +22,14 @@ namespace StormLab.TestMap
         public float flySpeed = 60f;
         [Tooltip("chase free look: degrees per mouse count, and per second at full right-stick deflection")]
         public float lookSensitivity = 0.15f, stickLookSpeed = 120f;
-        [Tooltip("chase free look: seconds after the look stops moving before it eases back behind the truck, and how fast it eases")]
+        [Tooltip("chase free look: seconds after the right mouse button is let go (or the stick centred) before it eases back behind the truck, and how fast it eases")]
         public float recentreDelay = 0.5f, recentreRate = 4f;
         [Tooltip("the roof camera, in the truck's frame: above the cab roof (its top is about 2 m up)")]
         public Vector3 roofMount = new Vector3(0f, 2.3f, 0.35f);
 
         Vector3 smoothedForward = Vector3.forward;
         Vector2 flyAngles;
-        // chase free look: yaw round the truck and pitch above the usual view, degrees; when it last moved
+        // chase free look: yaw round the truck and pitch above the usual view, degrees; when it was last held
         Vector2 look; float lastLook = -1e9f;
         Mode lastCarMode = Mode.Chase;
 
@@ -80,19 +80,22 @@ namespace StormLab.TestMap
         }
 
         /// <summary>Chase free look: the right mouse button held turns it with the mouse (and the right stick turns it
-        /// with no button); recentreDelay seconds after the look last moved it eases back behind the truck.</summary>
+        /// with no button). The view stays where it was put while the button is held; recentreDelay seconds after it is
+        /// let go (or the stick centred) it eases back behind the truck (user, 2026-10-26).</summary>
         void ChaseLook()
         {
             var mouse = Mouse.current; var pad = Gamepad.current;
             var d = Vector2.zero;
-            if (mouse != null && mouse.rightButton.isPressed) d += mouse.delta.ReadValue() * lookSensitivity;
-            if (pad != null) d += pad.rightStick.ReadValue() * (stickLookSpeed * Time.unscaledDeltaTime);
-            if (d.sqrMagnitude > 1e-6f)
+            bool held = false;
+            if (mouse != null && mouse.rightButton.isPressed) { held = true; d += mouse.delta.ReadValue() * lookSensitivity; }
+            if (pad != null)
             {
-                look.x = Mathf.DeltaAngle(0f, look.x + d.x);
-                look.y = Mathf.Clamp(look.y - d.y, -20f, 60f);
-                lastLook = Time.unscaledTime;
+                var st = pad.rightStick.ReadValue();
+                if (st.sqrMagnitude > 0.01f) { held = true; d += st * (stickLookSpeed * Time.unscaledDeltaTime); }
             }
+            look.x = Mathf.DeltaAngle(0f, look.x + d.x);
+            look.y = Mathf.Clamp(look.y - d.y, -20f, 60f);
+            if (held) lastLook = Time.unscaledTime;
             else if (Time.unscaledTime - lastLook > recentreDelay && look.sqrMagnitude > 1e-6f)
                 look = Vector2.Lerp(look, Vector2.zero, 1f - Mathf.Exp(-recentreRate * Time.unscaledDeltaTime));
         }
