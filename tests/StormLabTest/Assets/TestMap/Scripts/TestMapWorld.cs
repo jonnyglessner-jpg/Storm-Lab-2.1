@@ -4,7 +4,7 @@
 //   1-9  jump to a spot          T  storm clock speed (1x, 10x, 30x, 60x real time)    P  pause the storm
 //   [ ]  storm clock -/+ 5 min   N  next storm (new seed)                               H  help on / off
 //   Tab  the storm and lighting panel (TestMapStormPanel: storm controls, a 24 hour clock, exposure, lightning)
-//   C  camera (chase, hood, storm, overhead)     F  free flight (V puts the truck under the camera)    R  reset the car upright
+//   C  camera (chase: hold the right mouse button to look round; roof)     F  free flight (V puts the truck under the camera)    R  reset the car upright
 //   G  game mode: a StormScenario's two storms on one hour-long game clock (StormScenarioRunner) in place of the test
 //      storm; T, P, [ ] and N then work on the game clock and the game's seed
 using System.Collections.Generic;
@@ -320,7 +320,7 @@ namespace StormLab.TestMap
             }
 
             if (!showHelp) return;
-            string help = "W/S or arrows  throttle / brake / reverse    A/D  steer\nSpace  handbrake    R  reset car    C  camera    F  free flight (V: truck here)\n" +
+            string help = "W/S or arrows  throttle / brake / reverse    A/D  steer\nSpace  handbrake    R  reset car    C  camera (chase / roof; hold right mouse to look)    F  free flight (V: truck here)\n" +
                           "T  storm clock speed    P  pause    [ ]  -/+ 5 min    N  new storm    H  hide help\n" +
                           "Tab  storm and lighting panel (24 hour clock)    G  game mode (two storms, one hour)\n";
             for (int i = 0; i < Mathf.Min(9, spots.Length); i++) help += $"\n{i + 1}  {spots[i].name}";

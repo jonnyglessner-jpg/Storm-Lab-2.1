@@ -1,7 +1,9 @@
-// The test map's camera: chase, hood, storm (from the car, turned toward the storm's tornado or updraft), overhead,
-// and free flight. C cycles the car modes; F toggles free flight (WASD, Q/E down/up, right mouse look, scroll speed,
-// the car stops taking input while flying). V in free flight puts the truck on the ground under the camera, facing the
-// way it looks, and goes back to driving it.
+// The test map's camera: chase (behind the truck; hold the right mouse button to look round it, and 0.5 s after the
+// look stops moving it eases back behind the truck), roof (a camera mounted on the cab roof, turned toward the nearest
+// storm's tornado or updraft) and free flight. C switches chase and roof (user, 2026-10-26: the hood and overhead views
+// are gone); F toggles free flight (WASD, Q/E down/up, right mouse look, scroll speed, the car stops taking input while
+// flying). V in free flight puts the truck on the ground under the camera, facing the way it looks, and goes back to
+// driving it.
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -9,21 +11,29 @@ namespace StormLab.TestMap
 {
     public class TestMapCamera : MonoBehaviour
     {
-        public enum Mode { Chase, Hood, Storm, Overhead, Free }
+        public enum Mode { Chase, Storm, Free }
 
         public TestMapCar car;
         public StormRenderer storm;
         [Tooltip("the map (its storms now, the game's in game mode); found when empty")]
         public TestMapWorld world;
         public Mode mode = Mode.Chase;
-        public float distance = 8f, height = 2.8f, lookHeight = 1.3f, sharpness = 6f, overheadHeight = 450f;
+        public float distance = 8f, height = 2.8f, lookHeight = 1.3f, sharpness = 6f;
         public float flySpeed = 60f;
+        [Tooltip("chase free look: degrees per mouse count, and per second at full right-stick deflection")]
+        public float lookSensitivity = 0.15f, stickLookSpeed = 120f;
+        [Tooltip("chase free look: seconds after the look stops moving before it eases back behind the truck, and how fast it eases")]
+        public float recentreDelay = 0.5f, recentreRate = 4f;
+        [Tooltip("the roof camera, in the truck's frame: above the cab roof (its top is about 2 m up)")]
+        public Vector3 roofMount = new Vector3(0f, 2.3f, 0.35f);
 
         Vector3 smoothedForward = Vector3.forward;
         Vector2 flyAngles;
+        // chase free look: yaw round the truck and pitch above the usual view, degrees; when it last moved
+        Vector2 look; float lastLook = -1e9f;
         Mode lastCarMode = Mode.Chase;
 
-        public string ModeName => mode.ToString();
+        public string ModeName => mode == Mode.Storm ? "Roof" : mode.ToString();
 
         void LateUpdate()
         {
@@ -32,7 +42,7 @@ namespace StormLab.TestMap
             bool cycle = (kb != null && kb.cKey.wasPressedThisFrame) || (Gamepad.current != null && Gamepad.current.rightShoulder.wasPressedThisFrame);
             if (kb != null && kb.fKey.wasPressedThisFrame) SetFree(mode != Mode.Free);
             if (kb != null && kb.vKey.wasPressedThisFrame && mode == Mode.Free) DropTruck();
-            if (cycle && mode != Mode.Free) mode = (Mode)(((int)mode + 1) % 4);
+            if (cycle && mode != Mode.Free) { mode = mode == Mode.Chase ? Mode.Storm : Mode.Chase; look = Vector2.zero; }
             float k = 1f - Mathf.Exp(-sharpness * Time.deltaTime);
             var target = car.transform;
             var fwd = Vector3.ProjectOnPlane(target.forward, Vector3.up);
@@ -41,35 +51,50 @@ namespace StormLab.TestMap
             {
                 case Mode.Chase:
                 {
-                    var want = target.position - smoothedForward * distance + Vector3.up * height;
+                    ChaseLook();
+                    // the usual view, swung round the truck by the look's yaw and raised or lowered by its pitch
+                    float R = Mathf.Sqrt(distance * distance + height * height);
+                    float el = Mathf.Clamp(Mathf.Atan2(height, distance) * Mathf.Rad2Deg + look.y, -5f, 75f) * Mathf.Deg2Rad;
+                    var back = Quaternion.AngleAxis(look.x, Vector3.up) * -smoothedForward;
+                    var want = target.position + back * (Mathf.Cos(el) * R) + Vector3.up * (Mathf.Sin(el) * R);
                     if (Physics.Raycast(want + Vector3.up * 30f, Vector3.down, out var hit, 60f, ~0, QueryTriggerInteraction.Ignore) && want.y < hit.point.y + 0.8f)
                         want.y = hit.point.y + 0.8f;
                     transform.position = Vector3.Lerp(transform.position, want, k);
                     transform.rotation = Quaternion.LookRotation(target.position + Vector3.up * lookHeight - transform.position, Vector3.up);
                     break;
                 }
-                case Mode.Hood:
-                    transform.position = target.TransformPoint(new Vector3(0f, 1.55f, 0.5f));
-                    transform.rotation = Quaternion.LookRotation(target.forward, target.up);
-                    break;
                 case Mode.Storm:
                 {
-                    // a chaser standing by the car, looking at the nearest storm's base
-                    transform.position = target.position + Vector3.up * 1.8f - target.right * 1.6f;
-                    var look = NearestStorm(out bool any);
-                    var dir = any ? look - transform.position : smoothedForward;
+                    // a camera mounted on the cab roof, turned toward the nearest storm's base
+                    transform.position = target.TransformPoint(roofMount);
+                    var aim = NearestStorm(out bool any);
+                    var dir = any ? aim - transform.position : smoothedForward;
                     dir.y = any ? Mathf.Max(dir.y, 0f) * 0.6f + new Vector2(dir.x, dir.z).magnitude * 0.05f : 0.05f;
                     transform.rotation = Quaternion.Slerp(transform.rotation, Quaternion.LookRotation(dir, Vector3.up), k);
                     break;
                 }
-                case Mode.Overhead:
-                    transform.position = target.position + Vector3.up * overheadHeight;
-                    transform.rotation = Quaternion.LookRotation(Vector3.down, smoothedForward);
-                    break;
                 case Mode.Free:
                     Fly(kb);
                     break;
             }
+        }
+
+        /// <summary>Chase free look: the right mouse button held turns it with the mouse (and the right stick turns it
+        /// with no button); recentreDelay seconds after the look last moved it eases back behind the truck.</summary>
+        void ChaseLook()
+        {
+            var mouse = Mouse.current; var pad = Gamepad.current;
+            var d = Vector2.zero;
+            if (mouse != null && mouse.rightButton.isPressed) d += mouse.delta.ReadValue() * lookSensitivity;
+            if (pad != null) d += pad.rightStick.ReadValue() * (stickLookSpeed * Time.unscaledDeltaTime);
+            if (d.sqrMagnitude > 1e-6f)
+            {
+                look.x = Mathf.DeltaAngle(0f, look.x + d.x);
+                look.y = Mathf.Clamp(look.y - d.y, -20f, 60f);
+                lastLook = Time.unscaledTime;
+            }
+            else if (Time.unscaledTime - lastLook > recentreDelay && look.sqrMagnitude > 1e-6f)
+                look = Vector2.Lerp(look, Vector2.zero, 1f - Mathf.Exp(-recentreRate * Time.unscaledDeltaTime));
         }
 
         /// <summary>Free flight: put the truck on the ground under the camera (kept on the map), facing the way the camera
