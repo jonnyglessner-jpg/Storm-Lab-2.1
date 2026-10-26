@@ -29,7 +29,10 @@ README.md has the layout, use, checks and known gaps.
   map; check with `validation/parity/csharp -- --life` after changing tracks, placement or cycles.
 - Look changes: one named problem at a time, checked in the test map; say when a request is taste, not a bug.
 - Funnels are smooth (no vertical grooves), as in 2.0.
-- `Runtime/Lightning` (core) is 2.0's unchanged code but for its namespace; fixes there should go back to 2.0 too.
+- `Runtime/Lightning` (core) is 2.0's unchanged code but for its namespace and the `ThunderOverride` hook (2026-10-26,
+  for `StormAudio`'s thunder); fixes there should go back to 2.0 too.
+- Sound (`Runtime/Audio`) is procedural; the synths in `Synth/` stay plain C# (no UnityEngine) so `validation/audio`
+  can render and check them. Run it after changing a synth, and `StormAudioCheck` after changing what drives them.
 - C: is nearly full (about 14 GB free on 2026-10-24); the test map's generated data is about 2 GB.
 
 ## Running
@@ -37,6 +40,7 @@ README.md has the layout, use, checks and known gaps.
 - Unity 6000.6.6f1, project `tests/StormLabTest`, headless with `-batchmode` (never `-nographics`).
 - `StormLabTests.RunFromCommandLine [-slQuick] [-slCompare <cases.json> -slOut <dir>]`, `TestMapBuilder.BuildFromCommandLine`,
   `TestMapTests.RunFromCommandLine [-testmapShotsOnly]`.
-- Play-mode checks on the test map: `StormPlayCheck`, `StormDayCheck`, `StormGameCheck [-slGameSeed n] [-slGamePreset key]`
-  (all `.RunFromCommandLine`); `StormSpawnCheck` runs without Play.
+- Play-mode checks on the test map: `StormPlayCheck`, `StormDayCheck`, `StormGameCheck [-slGameSeed n] [-slGamePreset key]`,
+  `StormAudioCheck [-slAudioWiring]` (all `.RunFromCommandLine`); `StormSpawnCheck` runs without Play.
+- Sound synths offline: `dotnet run --project validation/audio` (WAVs to `validation/audio/out/`).
 - Pure C# checks with Unity's bundled dotnet: `validation/parity/csharp`.

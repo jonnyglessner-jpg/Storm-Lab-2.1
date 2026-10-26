@@ -143,7 +143,7 @@ public static class StormPlayCheck
         {
             if (Time.frameCount == framesSeen) return;
             framesSeen = Time.frameCount;
-            int th = sl.Flashes.transform.Cast<Transform>().Count(t => t.name == "Delayed thunder");
+            int th = Thunder();
             frameLog.Add((Time.unscaledDeltaTime, flashesThisFrame, Math.Max(0, th - thunderSeenAt), (float)storm.StormTime));
             flashesThisFrame = 0; thunderSeenAt = th;
         }
@@ -166,7 +166,11 @@ public static class StormPlayCheck
                 if (Physics.Raycast(e + Vector3.up * 3000f, Vector3.down, out var hit, 6000f)) { strikesChecked++; if (Mathf.Abs(hit.point.y - e.y) < 3f) strikesOnTerrain++; }
             }
         };
-        int Thunder() => sl.Flashes.transform.Cast<Transform>().Count(t => t.name == "Delayed thunder");
+        // thunder voices: the lightning core's own, or StormAudio's when the test map's sound replaces them (TestMapAudio)
+        var stormAudio = Object.FindAnyObjectByType<StormLab.Audio.StormAudio>();
+        IEnumerable<Transform> ThunderVoices() => sl.Flashes.transform.Cast<Transform>().Where(t => t.name == "Delayed thunder")
+            .Concat(stormAudio ? stormAudio.transform.Cast<Transform>().Where(t => t.name == "Thunder") : Enumerable.Empty<Transform>());
+        int Thunder() => ThunderVoices().Count();
 
         // ---------------------------------------------------------------- 1: real time
         rep.AppendLine("## 1. Real time (1 storm second per second)").AppendLine();
@@ -182,7 +186,7 @@ public static class StormPlayCheck
             Aim(7f);
             LogFrame();
             thunderMax = Mathf.Max(thunderMax, Thunder());
-            playingMax = Mathf.Max(playingMax, sl.Flashes.GetComponentsInChildren<AudioSource>().Count(a => a.isPlaying));
+            playingMax = Mathf.Max(playingMax, ThunderVoices().Count(t => t.GetComponent<AudioSource>().isPlaying));
             yield return null;
         }
         float real = Time.realtimeSinceStartup - r0, storm1 = (float)((storm.StormTime - s0) * 60.0), game1 = Time.time - g0;
@@ -212,7 +216,7 @@ public static class StormPlayCheck
         {
             Aim(7f);
             LogFrame();
-            foreach (Transform t in sl.Flashes.transform) if (t.name == "Delayed thunder") seenThunder.Add(t);
+            foreach (var t in ThunderVoices()) seenThunder.Add(t);
             yield return null;
         }
         th1 = seenThunder.Count;

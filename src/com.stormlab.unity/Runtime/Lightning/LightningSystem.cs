@@ -62,6 +62,9 @@ namespace StormLab.Lightning
         /// depend only on the time for replay. While set, the settings' rate and fractions are ignored and
         /// settings.maxFlashesPerMinute is the ceiling. Call ResetPlayback() after assigning or replacing it.</summary>
         public Func<double, LightningActivity> ActivityAtTime;
+        /// <summary>Optional thunder in place of the built-in synthesis: called once per flash when its thunder is due (as the
+        /// built-in thunder would play), with how many seconds ago the flash began. Distance, range and voices are the handler's.</summary>
+        public Action<LightningFlash, double> ThunderOverride;
         /// <summary>The storm-driven activity at the last sampled time, for readouts and tuning; null without ActivityAtTime.</summary>
         public LightningActivity? CurrentActivity { get; private set; }
         public bool TryGetFlash(long id, out LightningFlash flash)
@@ -138,7 +141,10 @@ namespace StormLab.Lightning
                 active.Add(e.id, visual);
                 FlashStarted?.Invoke(flash);
                 if (!seek && thunder && Math.Abs(timeScale - 1) < .01f && e.time > previous)
-                    PlayThunder(flash, seconds - e.time);
+                {
+                    if (ThunderOverride != null) ThunderOverride(flash, seconds - e.time);
+                    else PlayThunder(flash, seconds - e.time);
+                }
             }
             illumination.Clear();
             foreach (var pair in active)

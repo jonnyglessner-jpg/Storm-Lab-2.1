@@ -44,6 +44,9 @@ namespace StormLab.TestMap
         public float SpeedKph => rb ? rb.linearVelocity.magnitude * 3.6f : 0f;
         public float ForwardSpeed => rb ? Vector3.Dot(rb.linearVelocity, transform.forward) : 0f;
         public Rigidbody Body => rb ? rb : rb = GetComponent<Rigidbody>();
+        /// <summary>the last control step's throttle and brake, 0..1 (the engine sound reads them)</summary>
+        public float Throttle { get; private set; }
+        public float Brake { get; private set; }
 
         Rigidbody rb;
         float steerInput;
@@ -72,6 +75,7 @@ namespace StormLab.TestMap
         public void Step(float throttle, float steerTarget, float brakeIn, bool handbrake, float dt)
         {
             var body = Body;
+            Throttle = Mathf.Clamp01(throttle); Brake = Mathf.Clamp01(brakeIn);
             float fwd = ForwardSpeed, kph = Mathf.Abs(fwd) * 3.6f;
             steerInput = Mathf.MoveTowards(steerInput, steerTarget, steerSpeed * dt);
             float steerAngle = steerInput * Mathf.Lerp(maxSteerAngle, highSpeedSteerAngle, Mathf.InverseLerp(10f, 130f, kph));

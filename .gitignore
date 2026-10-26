@@ -19,3 +19,6 @@ data/raw/
 validation/parity/csharp/bin/
 validation/parity/csharp/obj/
 *.log
+validation/audio/bin/
+validation/audio/obj/
+validation/audio/out/

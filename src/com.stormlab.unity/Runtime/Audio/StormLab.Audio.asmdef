@@ -1,0 +1,6 @@
+{
+  "name": "StormLab.Audio",
+  "rootNamespace": "StormLab.Audio",
+  "references": ["StormLab", "StormLab.Lightning"],
+  "autoReferenced": true
+}

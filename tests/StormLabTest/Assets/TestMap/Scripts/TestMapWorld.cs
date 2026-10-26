@@ -7,6 +7,7 @@
 //   C  camera (chase: hold the right mouse button to look round, it eases back 0.5 s after letting go; roof)     F  free flight (V puts the truck under the camera)    R  reset the car upright
 //   G  game mode: a StormScenario's two storms on one hour-long game clock (StormScenarioRunner) in place of the test
 //      storm; T, P, [ ] and N then work on the game clock and the game's seed
+//   M  sound on / off (TestMapAudio: tornado wind, rain, thunder, the truck, birds and cattle)
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -68,6 +69,8 @@ namespace StormLab.TestMap
             if (storm) { storm.minutesPerSecond = Timelapses[timelapseIndex] / 60f; SpawnStorm(); }
             // the storm and lighting panel, also in scenes built before it existed
             if (storm && !GetComponent<TestMapStormPanel>()) { var panel = gameObject.AddComponent<TestMapStormPanel>(); panel.world = this; panel.storm = storm; }
+            // the sound: storms, truck and ambience
+            if (!GetComponent<TestMapAudio>()) gameObject.AddComponent<TestMapAudio>().world = this;
             if (gameMode) SetGameMode(true);
         }
 
@@ -321,7 +324,7 @@ namespace StormLab.TestMap
 
             if (!showHelp) return;
             string help = "W/S or arrows  throttle / brake / reverse    A/D  steer\nSpace  handbrake    R  reset car    L  headlights (auto / on / off)    C  camera (chase / roof; hold right mouse to look)    F  free flight (V: truck here)\n" +
-                          "T  storm clock speed    P  pause    [ ]  -/+ 5 min    N  new storm    H  hide help\n" +
+                          "T  storm clock speed    P  pause    [ ]  -/+ 5 min    N  new storm    H  hide help    M  sound on / off\n" +
                           "Tab  storm and lighting panel (24 hour clock)    G  game mode (two storms, one hour)\n";
             for (int i = 0; i < Mathf.Min(9, spots.Length); i++) help += $"\n{i + 1}  {spots[i].name}";
             float ph = 105 + 19 * Mathf.Min(9, spots.Length);

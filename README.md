@@ -15,6 +15,7 @@ follows Supercell Lab 2.0 (`../supercell-lab-2`): the storm is the website's, no
 | `Runtime/Rendering` | `StormRenderer` (the component), `StormVolume` (GPU volume), `StormCustomPass` (HDRP), shaders in `Resources/` and `Shaders/` |
 | `Runtime/Lightning` | 2.0's lightning core (own assembly `StormLab.Lightning`, unchanged but for its namespace) |
 | `Runtime/Lightning/Integration` | `StormLightning` (add to the storm), `LightningCloudBridge`, `StormLightningActivity` (flash rates from this storm's cycles) |
+| `Runtime/Audio` | the sound (assembly `StormLab.Audio`): `StormAudio` (tornado wind, rain and hail, thunder), `CountryAmbience` (breeze, birds, cattle), `ProceduralAudio`; the synths in `Synth/` are plain C# |
 | `tests/StormLabTest/` | Unity 6000.6.6f1 HDRP test project; the plains test map (`Assets/TestMap`) and the render checks (`Assets/Editor`) |
 | `tools/testmap/` | the test map's Python pipeline (from 2.0; README there) |
 | `validation/` | parity check, website captures and comparisons, reports |
@@ -136,6 +137,23 @@ Wall-cloud base (`wallBase`, also on the panel):
   cloud (`dotnet run --project validation/parity/csharp -- --wall` lists the wall clouds' sizes).
 - **Website**: the web build's ragged fringe (its streaks point at the wall cloud's centre); the website comparison uses it.
 
+**Sound** (`Runtime/Audio`, all procedural: no recorded samples). `StormAudio` (one per scene) hears every storm at the
+`player`: the tornado wind (`TornadoWindAt`), silent below 3 m/s, then a gusty rush, moaning and whistling round the truck,
+the low roar, debris strikes and buffeting as it rises to full intensity at 80 m/s (`windRange`); rain and hail where the
+player is, read back from the storm volume's precipitation (so it follows the shafts and curtains you see), from scattered
+drops ticking on the truck to a downpour's hiss and roar, with hail clatter in the hail core; and thunder for every flash
+(`ThunderSynth`, through `LightningSystem.ThunderOverride`): each short segment of the flash's channel sends a pulse that
+arrives at its own time and falls off as 1/distance, so a channel across the line of sight claps and one along it rolls;
+air takes the highs first (a near strike rips and cracks, a distant one grumbles), the delay is the real sound travel
+time, and a seeded character per flash (echo, crackle, bass, rolling) varies flashes of the same shape. Up to 16 thunder
+voices; a nearer flash displaces a farther one still on its way. `CountryAmbience`: a soft breeze, birds (western
+meadowlark, red-winged blackbird, sparrows, mourning dove) calling from 20-140 m and often repeating, and cattle mooing
+250-1300 m off; the birds stop as soon as the tornado wind is heard and come back 2 minutes after it has gone
+(`birdsReturnAfter`). On the test map `TestMapAudio` adds both, and `TestMapCarAudio` gives the truck a V8 on a six-speed
+automatic, tyre squeal when the tyres slide past their grip, road roar and suspension thumps; the wind and rain are taken
+at the truck (at the camera in free flight); **M** mutes. `dotnet run --project validation/audio` renders every synth to
+WAV in `validation/audio/out/` (gitignored) and checks their levels.
+
 Output: by default the storm's light is in HDRP's physical units under the game's exposure and tonemapping.
 `UseStandaloneLook()` gives the website's backdrop and display curve (HDRP tonemapping off).
 
@@ -163,6 +181,11 @@ Output: by default the storm's light is in HDRP's physical units under the game'
 - **Play mode on the test map**: `-executeMethod StormPlayCheck.RunFromCommandLine` (about 3 min). Real time and 10x
   (storm clock, lightning clock, flashes, strikes on the terrain, thunder), a floating-origin shift of 36 km, and the frame
   cost at the game's half-resolution march. Report: `validation/reports/StormPlayCheck.md`. Last run: PASS (below).
+- **Sound**: `dotnet run --project validation/audio` (the synths offline: wind and rain grow with their drivers, thunder
+  falls off with distance, nothing clips; WAVs to listen to). `-executeMethod StormAudioCheck.RunFromCommandLine` (about
+  3 min, `-slAudioWiring` for the first part only) in Play on the test map: the truck's gears and squeal, dry upwind and
+  pouring under the core, the wind sound walking in to a tornado and the birds falling silent, thunder heard and nearer
+  thunder louder. Report: `validation/reports/StormAudioCheck.md`. Last run: PASS.
 
 Headless Unity: `"C:\Program Files\Unity\Hub\Editor\6000.6.6f1\Editor\Unity.exe" -batchmode -projectPath
 tests/StormLabTest -executeMethod <method> -logFile <log>`. Never with `-nographics`.
