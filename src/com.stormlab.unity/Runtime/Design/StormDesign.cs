@@ -64,8 +64,8 @@ namespace StormLab
     /// <summary>One moment of the storm, as numbers the GPU builder and renderer read.</summary>
     public sealed class StormFrame
     {
-        /// <summary>packed parameters for the GPU (NSLOT x float4)</summary>
-        public float[] param = new float[StormTornadoes.NSLOT * 4];
+        /// <summary>packed parameters for the GPU (StormSpin.NSLOT x float4: the design's, the tornado's and the angles)</summary>
+        public float[] param = new float[StormSpin.NSLOT * 4];
         /// <summary>what's happening now, for captions</summary>
         public string stage = "", caption = "";
         /// <summary>tornado on the ground (0..1)</summary>

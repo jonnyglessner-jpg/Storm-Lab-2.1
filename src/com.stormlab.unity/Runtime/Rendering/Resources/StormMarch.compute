@@ -214,7 +214,8 @@ float smax(float a, float b, float k) { float h = max(k - abs(a - b), 0.0) / k; 
 // test and horizon light, the dense debris whirl and streamers, a satellite and the anticyclonic tornado.
 // Drawn analytically from the parameter block (2.0: DesignedStorm; here StormTornadoes). x: condensation funnel as a cloud field 0..1; y: dust and
 // debris, extinction 1/km; z: the funnel's tone (striations and mottling on its skin, about 1). Everything turns at the
-// real rates in the block: S_tor6.x is the angular speed at the funnel's edge (rad/s), S_base.z the wall clock (s).
+// real rates in the block: S_tor6.x is the angular speed at the funnel's edge (rad/s), and S_spin / S_spin2 the angles
+// those rates have turned so far (StormSpin), so a rate that changes changes only the speed.
 float tornadoAxisAmp(float ztop) { return min((0.03 + 0.1 * S_tor2.w + 0.3 * S_tor5.w) * (0.4 + 0.6 * ztop), 0.22 * ztop + 0.02); }
 float tornadoBound() { return max(S_tor2.y * 1.6, S_tor2.x * max(S_tor6.w, 1.0) * 1.3) + tornadoAxisAmp(S_base.x) + S_tor10.z * 1.35 + 0.35; }
 
@@ -293,7 +294,6 @@ float3 tornadoField(float3 q)
     float ztop = max(zb - 0.6 * S_wall2.x, 0.3);
     float h = saturate(q.z / ztop);
     float clock = S_base.z;
-    float spin = clamp(S_tor6.x, 0.02, 2.0);
     // Distance to the axis in 3D, to a short polyline of it around this height: a bent or leaning funnel is then a round
     // tube of even thickness all along, where its slope is steep as well as where it is upright
     float2 ax = tornadoAxis(q.z, ztop, clock);
@@ -319,7 +319,7 @@ float3 tornadoField(float3 q)
     // grooved. Texture is sampled in a frame turning with the vortex, in units of the funnel's mean radius both round it
     // and up it, so what structure there is lies in soft bands winding round the funnel rather than streaks up it. The
     // edge stays clean low down and turns ragged only where the funnel flares into the lowering.
-    float2 pr = rot2(dv, -clock * spin) / max(rad, 0.02);
+    float2 pr = rot2(dv, -S_spin.y) / max(rad, 0.02);
     float rm = max(0.5 * (S_tor2.x + S_tor2.y), 0.02);
     float zz = (q.z - clock * 0.02) / rm;
     // These coordinates are normalised by radius; filter in world units so small
@@ -329,15 +329,20 @@ float3 tornadoField(float3 q)
     float n1 = n3k(float3(pr * 0.55, zz * 0.9), 1.0, 0.0);
     float n2 = n3k(float3(pr * 1.6, zz * 2.6), 1.0, float3(0.31, 0.77, 0.13));
     g_fp = texFootprint;
-    // the skin: torn (roughness ~1-1.5) or smooth and laminar (~0.2-0.35) with banding wound about 30 degrees from horizontal
+    // the skin: torn (roughness ~1-1.5) or smooth and laminar (~0.2-0.35) with fine striations
     float roughK = S_tor8.y > 0.0 ? S_tor8.y : 1.0;
     // a wedge's envelope is as smooth in outline as any funnel, a little more ragged where it meets the cloud; what sets it
     // apart is a soft edge (rain and debris at its rim, below), not lumps. 1.8 here made it a heap of cauliflower.
     // (a wedge's envelope: 0.3-0.6, from 0.45-0.85, which broke the outline of a mile-wide wedge into jagged lumps)
     float rough = ((n1 - 0.5) * 0.3 + (n2 - 0.5) * 0.12) * roughK * (S_tor4.w > 0.5 ? lerp(0.3, 0.6, collar) : lerp(0.35, 0.6, collar));
-    float band = sin(atan2(pr.y, pr.x) * 4.0 + zz * 7.0 + (n1 - 0.5) * 1.5);
-    rough += S_tor8.w * 0.02 * band;
-    float tone = 1.0 + S_tor8.w * 0.07 * band + (n1 - 0.5) * 0.1 * saturate(roughK - 0.4);
+    // Striations: fine, nearly level rings (one slow helix, a third of the mean radius between rings, a few degrees off
+    // level), wavering and broken into patches, faint. Four coarse arms wound at 30 degrees read as a barber pole
+    // (user, 2026-10-26). Faded out before the rings are finer than a pixel, so a distant funnel does not shimmer.
+    float ringK = 18.0;
+    float ringFade = 1.0 - ss(0.15, 0.4, texFootprint * ringK / (6.2832 * rm));
+    float band = sin(zz * ringK + atan2(pr.y, pr.x) + (n2 - 0.5) * 2.5) * ss(0.4, 0.7, n1) * ringFade;
+    rough += S_tor8.w * 0.012 * band;
+    float tone = 1.0 + S_tor8.w * 0.05 * band + (n1 - 0.5) * 0.1 * saturate(roughK - 0.4);
     // condensation reaches down to condBottom; below it only a faint sheath (a high base leaves a gap, filled by dust)
     float condBottom = zb * (1.0 - S_tor2.z);
     float down = ss(condBottom - 0.06, condBottom + 0.12, q.z);
@@ -355,7 +360,7 @@ float3 tornadoField(float3 q)
     {
         // the central vortex: slender, visible all the way down, still there when the envelope breaks down
         float radc = max(S_tor4.x, 0.02) * lerp(1.0, 1.6, pow(h, 1.5)) * (1.0 - 0.4 * S_tor2.w);
-        float2 prc = rot2(dv, -clock * min(spin * 1.4, 2.5)) / max(radc, 0.03);
+        float2 prc = rot2(dv, -S_spin.z) / max(radc, 0.03);
         float zc = (q.z - clock * 0.02) / max(radc, 0.03);
         float roughc = (n3(float3(prc * 0.55, zc * 0.9)) - 0.5) * 0.25 + (n3(float3(prc * 1.6, zc * 2.6) + float3(0.62, 0.21, 0.4)) - 0.5) * 0.1;
         float coreF = vis * step(0.005, S_tor4.x) * ss(1.25, 0.45, d / radc + roughc) * lerp(0.12, 1.0, down) * lerp(0.8, 1.0, ss(0.02, 0.3, q.z));
@@ -372,12 +377,12 @@ float3 tornadoField(float3 q)
             {
                 if (i >= nv) break;
                 float fi = (float)i;
-                float a = fi * 6.2832 / max(S_tor5.z, 1.0) + clock * 0.55 * spin + 1.2 * h;
+                float a = fi * 6.2832 / max(S_tor5.z, 1.0) + S_spin2.x + 1.2 * h;
                 float2 ci = ax + ro * float2(cos(a), sin(a));
                 float2 dvi = q.xy - ci; float di = length(dvi) / rs;
                 float pulse = ss(0.3, 0.7, 0.5 + 0.5 * sin(clock * 0.12 + fi * 2.3 + 1.7 * sin(clock * 0.05 + fi * 1.9)));
                 float gaps = ss(0.25, 0.65, n3(float3(fi * 3.1, q.z * 1.6 - clock * 0.04, 0.37)));
-                float wisp = saturate(0.55 + 0.9 * (n3(float3(rot2(dvi, -clock * min(3.0 * spin, 3.0)) / rs * 1.6, q.z / rs * 1.2 + fi)) - 0.5));
+                float wisp = saturate(0.55 + 0.9 * (n3(float3(rot2(dvi, -S_spin.w) / rs * 1.6, q.z / rs * 1.2 + fi)) - 0.5));
                 mv = max(mv, ss(1.3, 0.2, di + rough) * pulse * gaps * wisp);
             }
             funnel = max(funnel, vis * S_tor4.y * 0.55 * mv * lerp(0.4, 1.0, down) * lerp(0.75, 1.0, ss(0.0, 0.3, h)));
@@ -399,7 +404,7 @@ float3 tornadoField(float3 q)
     float dh = 0.1 + lerp(0.36, 0.26, wedgeD) * S_tor.w * (1.0 - S_tor2.w) + 0.12 * (1.0 - S_tor2.z);   // taller where the funnel does not reach down
     float2 dustDv = q.xy - tornadoAxis(0.0, ztop, clock);
     float dustD = length(dustDv);
-    float3 dustQ = float3(rot2(dustDv, -clock * spin * 0.65), q.z - clock * 0.008);
+    float3 dustQ = float3(rot2(dustDv, -S_spin2.y), q.z - clock * 0.008);
     float dn = n3k(dustQ, 0.7 / dr, float3(0.3, 0.1, 0.7));
     float fine = n3k(dustQ * float3(1.0, 1.0, 1.6), 2.0 / dr, float3(0.62, 0.18, 0.41));
     // A dense, rounded inner cloud survives between the irregular outer streamers.
@@ -748,7 +753,7 @@ void March(uint3 gid : SV_DispatchThreadID)
                 {
                     // one detail lookup at a position blended between the still and the rotating frame: continuous, so no seam
                     float3 qr = q; float2 udr = ud;
-                    if (m > 0.01) { udr = rot2(ud, -S_tilt.w * S_base.z); qr = float3(lerp(q.xy, uc + udr, m), q.z); }
+                    if (m > 0.01) { udr = rot2(ud, -S_spin.x); qr = float3(lerp(q.xy, uc + udr, m), q.z); }
                     nn = detail(qr, turb, lod);
                     if (m > 0.01)
                     {
@@ -800,7 +805,7 @@ void March(uint3 gid : SV_DispatchThreadID)
                         {
                             // Match the visible texture's rotating frame so inner billows cast coherent
                             // small shadows instead of receiving an unrelated, stationary noise pattern.
-                            float3 qr1 = float3(lerp(q1.xy, uc + rot2(q1.xy - uc, -S_tilt.w * S_base.z), m), q1.z);
+                            float3 qr1 = float3(lerp(q1.xy, uc + rot2(q1.xy - uc, -S_spin.x), m), q1.z);
                             probeDetail = lerp(probeDetail, (detail(qr1, turb, lod) - 0.5) * lerp(0.2, 0.5, turb), interior);
                         }
                         float v1 = _Dens.SampleLevel(sampler_LinearClamp, uvw(q1), 0).r + probeDetail;

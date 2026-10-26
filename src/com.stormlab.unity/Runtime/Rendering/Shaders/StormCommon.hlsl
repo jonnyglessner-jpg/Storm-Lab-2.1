@@ -1,12 +1,12 @@
 // Shared by the storm's compute passes and the lightning medium: the parameter block (StormDesign.cs, 23 float4 slots,
-// then StormTornadoes.cs, 6 more for the detailed tornado),
+// then StormTornadoes.cs, 6 more for the detailed tornado, then StormSpin.cs, 2 of angles turned so far),
 // noise, and the near-ground features. Ported from StormLab's src/storm3d/shaders.ts (WGSL, web build f5bd687, MIT):
 // the SP struct, NOISE and NEAR blocks, kept line for line. Lengths are km in the storm's frame (origin at the volume
 // centre, x east, y north, z up above ground).
 #ifndef STORM_COMMON
 #define STORM_COMMON
 
-float4 _SP[29];
+float4 _SP[31];
 #define S_f      _SP[0]    // xy forward (storm motion) unit, zw left unit
 #define S_base   _SP[1]    // x cloud base, y storm top (EL), z clock s, w storm time min
 #define S_tower  _SP[2]    // x top height, y radius, z amount, w striation
@@ -38,6 +38,9 @@ float4 _SP[29];
 #define S_tor9   _SP[26]   // xyz colour of the soil it lofts (linear albedo), w how far that dirt stains the funnel's lower part
 #define S_tor10  _SP[27]   // sidewinder: xy direction its lower end is dragged in (unit), z drag km; w angle of the plane the funnel bends in
 #define S_tor11  _SP[28]   // satellite tornado: xy position, z amount 0..1, w visible radius km
+// ---- angles turned so far, rad (StormSpin.Advance: each rate added up frame by frame, not rate x clock)
+#define S_spin   _SP[29]   // x mesocyclone, y funnel skin, z central core, w suction-vortex wisps
+#define S_spin2  _SP[30]   // x suction-vortex orbit, y dust whirl
 
 Texture3D<float> _Noise;
 SamplerState sampler_LinearRepeat;

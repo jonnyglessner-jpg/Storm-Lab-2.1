@@ -14,6 +14,8 @@ static class DumpCs
         if (args.Length > 0 && args[0] == "--scenario") { Scenarios(); return; }
         if (args.Length > 0 && args[0] == "--life") { Life(); return; }
         if (args.Length > 0 && args[0] == "--wedges") { Wedges(); return; }
+        if (args.Length > 0 && args[0] == "--runup") { RunUp(); return; }
+        if (args.Length > 0 && args[0] == "--spin") { Spin(args.Length > 1 ? args[1] : "plains"); return; }
         if (args.Length > 0 && args[0] == "--wall")
         {
             // the wall cloud's radius (S_wall.z) and lowering (S_wall2.x), km, where it is at least half formed
@@ -78,7 +80,7 @@ static class DumpCs
             var pre = StormPreset.All.First(p => p.key == key);
             for (int seed = 1; seed <= 6; seed++)
             {
-                var P = StormDesign.Plan(pre, seed);
+                var P = StormGame.Adapt(StormDesign.Plan(pre, seed));
                 var ch = StormTornadoes.Build(P, StormTornadoes.RegionOf(key));
                 if (ch == null) continue;
                 for (int k = 0; k < ch.Length; k++)
@@ -93,6 +95,107 @@ static class DumpCs
         }
     }
 
+    /// <summary>
+    /// The game's plan beside the web build's (StormGame.Adapt), 300 seeds per setup: multiple-vortex cycles left, and the
+    /// mean storm minutes per cycle each stage is shown, sampled every 0.05 min (the clear slot and the wrap should take
+    /// half as long, every tornado stage as long as before).
+    /// </summary>
+    static void RunUp()
+    {
+        string[] watch = { "Wall cloud forming", "New wall cloud", "Clear slot opening", "Updraft wrapping around the clear slot", "Mature mesocyclone", "Non-tornadic cycle", "Occlusion" };
+        foreach (var pre in StormPreset.All)
+        {
+            int multiWeb = 0, multiGame = 0, cycles = 0; double durWeb = 0, durGame = 0;
+            var web = new System.Collections.Generic.Dictionary<string, double>(); var game = new System.Collections.Generic.Dictionary<string, double>();
+            var shapes = new System.Collections.Generic.Dictionary<string, int>();
+            var F = new StormFrame();
+            for (int seed = 1; seed <= 300; seed++)
+            {
+                var P = StormDesign.Plan(pre, seed); var Q = StormGame.Adapt(P);
+                if (P.cycles == null) continue;
+                cycles += P.cycles.Length; durWeb += P.duration; durGame += Q.duration;
+                for (int i = 0; i < P.cycles.Length; i++)
+                {
+                    if (P.cycles[i].shape == TornadoShape.Multivortex) { multiWeb++; string k = Q.cycles[i].shape.ToString(); shapes[k] = shapes.TryGetValue(k, out int v) ? v + 1 : 1; }
+                    if (Q.cycles[i].shape == TornadoShape.Multivortex) multiGame++;
+                }
+                foreach (var (plan, acc) in new[] { (P, web), (Q, game) })
+                    for (double t = 0; t <= plan.duration; t += 0.05)
+                    {
+                        StormDesign.At(plan, t, 0, F);
+                        string st = F.stage.EndsWith(" tornado") || F.stage.Contains("tornado") || F.stage.Contains("vortex") || F.stage.Contains("wedge") || F.stage.Contains("Wedge") ? "(tornado on the ground)" : F.stage;
+                        acc[st] = (acc.TryGetValue(st, out double a) ? a : 0) + 0.05;
+                    }
+            }
+            Console.WriteLine($"{pre.key}: {cycles} cycles in 300 storms; multiple-vortex cycles {multiWeb} -> {multiGame} (now {string.Join(", ", shapes.Select(kv => kv.Key + " " + kv.Value))}); mean storm {durWeb / 300:0.0} -> {durGame / 300:0.0} min");
+            Console.WriteLine("| stage | web build, min per cycle | game | share |");
+            Console.WriteLine("|---|---|---|---|");
+            foreach (var st in watch.Concat(new[] { "(tornado on the ground)" }))
+            {
+                double a = web.TryGetValue(st, out double x) ? x / cycles : 0, b = game.TryGetValue(st, out double y) ? y / cycles : 0;
+                Console.WriteLine($"| {st} | {a:0.00} | {b:0.00} | {(a > 0 ? b / a : 0):0.00} |");
+            }
+            Console.WriteLine();
+        }
+    }
+
+    /// <summary>
+    /// The speed things are seen to turn, rad/s, the web build's way (angle = rate x clock, so seen speed = d(rate x clock)/dt)
+    /// and StormSpin's (the rate), through the life of a storm with a wedge, on a game's clock (real time, life cycle at
+    /// StormScenario's pace, wall clock from storm time 0). Per stage: the mesocyclone, the funnel's skin and the suction
+    /// vortices' orbit, and how much of the stage the web build's skin turned backwards (clockwise).
+    /// </summary>
+    static void Spin(string key)
+    {
+        var pre = StormPreset.Find(key); var region = StormTornadoes.RegionOf(key);
+        double pace = StormScenario.DefaultPace, mesoScale = 3, dt = 0.25;
+        int found = 0;
+        for (int seed = 1; seed <= 400 && found < 2; seed++)
+        {
+            var P = StormGame.Adapt(StormDesign.Plan(pre, seed));
+            var ch = StormTornadoes.Build(P, region);
+            if (ch == null || !ch.Any(c => c != null && c.shape == FunnelShape.Wedge && c.subVortices > 0)) continue;
+            found++;
+            Console.WriteLine($"{key} seed {seed}: " + string.Join(", ", ch.Select((c, i) => c == null ? $"cycle {i + 1} none" : $"cycle {i + 1} {c.shape} EF{c.ef}{(c.subVortices > 0 ? $" ({c.subVortices} vortices)" : "")}")));
+            Console.WriteLine("| stage | storm min | meso web | meso now | skin web | skin now | orbit web | orbit now | skin web backwards |");
+            Console.WriteLine("|---|---|---|---|---|---|---|---|---|");
+            var F = new StormFrame(); var spin = new StormSpin();
+            string stage = null; double t0 = 0; int n = 0, back = 0;
+            double sMw = 0, sMn = 0, sSw = 0, sSn = 0, sOw = 0, sOn = 0;
+            double prevM = double.NaN, prevS = 0, prevO = 0, prevC = 0;
+            void Flush(double t1)
+            {
+                if (stage == null || n == 0) return;
+                Console.WriteLine($"| {stage} | {t0:0.0}-{t1:0.0} | {sMw / n:0.000} | {sMn / n:0.000} | {sSw / n:0.000} | {sSn / n:0.000} | {sOw / n:0.000} | {sOn / n:0.000} | {back * 100.0 / n:0}% |");
+            }
+            for (double clock = 0; ; clock += dt)
+            {
+                double t = clock * pace / 60;
+                if (t > P.duration) { Flush(t); break; }
+                StormDesign.At(P, t, clock, F); StormTornadoes.Apply(P, ch, t, F); StormLife.Apply(P, t, F);
+                spin.Advance(F, t, clock, mesoScale);
+                double m = F.param[3 * 4 + 3], s = F.param[StormTornadoes.Slot0 * 4];
+                bool tor = s > 0;
+                double sk = C.Clamp(s, 0.02, 2.0), or = 0.55 * sk;
+                if (!double.IsNaN(prevM))
+                {
+                    string st = F.stage;
+                    if (st != stage) { Flush(t); stage = st; t0 = t; n = 0; back = 0; sMw = sMn = sSw = sSn = sOw = sOn = 0; }
+                    n++;
+                    sMw += (m * clock - prevM * prevC) / dt; sMn += m * mesoScale;
+                    if (tor)
+                    {
+                        double skW = (sk * clock - prevS * prevC) / dt, orW = (or * clock - prevO * prevC) / dt;
+                        sSw += skW; sSn += sk; sOw += orW; sOn += or;
+                        if (skW < 0) back++;
+                    }
+                }
+                prevM = m; prevS = sk; prevO = or; prevC = clock;
+            }
+            Console.WriteLine();
+        }
+    }
+
     // Wedges: visible width at the ground (2 x ground radius) must be half a mile to two miles, free storms and rated games
     static void Wedges()
     {
@@ -103,7 +206,7 @@ static class DumpCs
             var widths = new System.Collections.Generic.List<double>(); var webR = new System.Collections.Generic.List<double>(); var efs = new int[6]; int bad = 0;
             for (int seed = 1; seed <= 800; seed++)
             {
-                var P = StormDesign.Plan(pre, seed);
+                var P = StormGame.Adapt(StormDesign.Plan(pre, seed));
                 var ch = StormTornadoes.Build(P, region); if (ch == null) continue;
                 foreach (var t in ch)
                 {
@@ -152,7 +255,7 @@ static class DumpCs
                         dying++;
                         double gDie = st.startMin + P.dieMin / sc.pace, gGone = st.startMin + P.duration / sc.pace;
                         dieMin = Math.Min(dieMin, gDie); dieMax = Math.Max(dieMax, gDie); goneMin = Math.Min(goneMin, gGone); goneMax = Math.Max(goneMax, gGone);
-                        var full = StormDesign.Plan(pre, st.seed, st.overrides);
+                        var full = StormGame.Adapt(StormDesign.Plan(pre, st.seed, st.overrides));
                         if (full.cycles != null) for (int i = 0; i < full.cycles.Length; i++) if (full.cycles[i].tornadic && !P.cycles[i].tornadic) lostTornadic++;
                     }
                     bool on = false;
@@ -177,7 +280,7 @@ static class DumpCs
             int sTors = 0, sOut = 0, sSamples = 0, sDying = 0, sCut = 0; double sWorst = 0;
             for (int seed = 1; seed <= 300; seed++)
             {
-                var full = StormDesign.Plan(pre, seed);
+                var full = StormGame.Adapt(StormDesign.Plan(pre, seed));
                 var (sx, sz) = TestMapStart(full, seed, half);
                 var P = StormLife.Trim(full, StormLife.DyingFrom(sx, sz, full.motion, 1, half));
                 if (!double.IsInfinity(P.dieMin)) sDying++;

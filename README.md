@@ -63,6 +63,22 @@ tower sinks and narrows, rain, rotation and lightning fade; the anvil fades last
 validation/parity/csharp -- --life` checks that no tornado is ever off the map (300 seeds per setup, test-map storms and
 games).
 
+**The game's plan** (`StormGame.Adapt`, a game addition beside the port, user 2026-10-26): every varied storm the game
+draws (the test map, game mode, the checks that mirror them) goes through it before `StormLife` trims it; "web:" presets
+and parity keep the web build's plan. No multiple-vortex tornado: such a cycle becomes a wedge on a low base or a
+stovepipe on a high one (another shape when a neighbouring cycle already has it), at that shape's size; wedges keep
+their multiple-vortex start. A quicker build-up: the clear slot opening and the updraft wrapping round it take about
+1.5 storm min each (from about 4.5), the mature stage of a cycle without a tornado half as long, and everything after
+comes that much sooner (a mean plains storm runs 148 storm min instead of 170). `-- --runup` lists both per stage. The teaching sequence (varied off) is the
+web build's and keeps its second tornado, which starts as multiple vortices and grows into a mile-wide wedge.
+
+**Rotation** (`StormSpin`, a game addition beside the port): the mesocyclone and the detailed tornado turn by angles
+added up frame by frame, where the web build turns them by rate x wall clock. With a clock that has run for many minutes
+any change of rate swamped the rate itself: the mesocyclone looked fast while it spun up and slowed sharply once the
+wall cloud formed, a widening wedge turned backwards, and suction vortices whirled at touchdown. `mesoSpinScale` (3)
+keeps the mesocyclone at about the speed it seemed to have while spinning up; it winds down only as the storm dies.
+`-- --spin [preset]` lists, stage by stage, the speeds the web build's way showed and the speeds now.
+
 On the test map (**StormLab > Test Map > Open Test Map**), **Tab** opens the storm and lighting panel
 (`TestMapStormPanel`): setup, seed, storm time and speed, jumps to the next wall cloud or tornado, bringing the storm to
 the truck; a 24 hour clock that drives the sun, the moon, HDRP's sky and the storm (with date, latitude and moon phase,

@@ -131,7 +131,7 @@ namespace StormLab
                 for (int attempt = 0; attempt < 12; attempt++)
                 {
                     st.seed = baseSeed + 7919 * attempt;
-                    st.plan = StormDesign.Plan(preset, st.seed, st.overrides);
+                    st.plan = StormGame.Adapt(StormDesign.Plan(preset, st.seed, st.overrides));
                     // where it crosses the map decides when it dies (StormLife): only tornadoes over before then count
                     Place(st, ux, uz, ax, az, mps, enterBeforeMature);
                     st.plan = StormLife.Trim(st.plan, StormLife.DyingFrom(st.startX, st.startZ, st.plan.motion, 1.0 / pace, mapHalfM));

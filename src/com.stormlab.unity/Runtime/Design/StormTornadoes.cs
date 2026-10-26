@@ -206,6 +206,8 @@ namespace StormLab
             // and stovepipes start as multiple vortices before a central vortex takes over
             if (main == FunnelShape.MultiVortex) { t.subVortices = 3 + (int)(r.U() * 4); t.multiFrac = r.Range(0.6, 0.85); }
             else if ((main == FunnelShape.Wedge || main == FunnelShape.Stovepipe) && t.ef >= 2 && r.U() < 0.55) { t.subVortices = 3 + (int)(r.U() * 3); t.multiFrac = r.Range(0.15, 0.3); }
+            // a stovepipe is one smooth, laminar vortex all its life (user, 2026-10-26): it keeps the draws, not the vortices
+            if (main == FunnelShape.Stovepipe) { t.subVortices = 0; t.multiFrac = 0; }
             t.collar = main == FunnelShape.Wedge && t.LifeMin > 10 && r.U() < 0.6;
             t.ropeFrac = C.Clamp((goneMin - ropeMin) / Math.Max(t.LifeMin, 0.1), 0.1, 0.6);
             t.dust = dust;
@@ -220,6 +222,8 @@ namespace StormLab
 
         /// <summary>A wedge's visible width at the ground, m: half a mile to two miles (user, 2026-10-25).</summary>
         public const double WedgeMinM = 0.5 * 1609.344, WedgeMaxM = 2 * 1609.344;
+        /// <summary>A stovepipe's visible width over the web build's (user, 2026-10-26: a bit thinner on average).</summary>
+        public const double StovepipeSlim = 0.75;
 
         /// <summary>A wedge's size from the web build's cycle (bigger cycles, wider wedges, between WedgeMinM and WedgeMaxM)
         /// and this tornado's own proportion gS; its damage path, wind and rating follow from that width, as in Make.</summary>
@@ -273,6 +277,7 @@ namespace StormLab
             if (shape == FunnelShape.DustWhirl) t.condReach = Math.Min(t.condReach, 0.3);
             if (shape == FunnelShape.MultiVortex) { t.subVortices = 3 + (int)(r.U() * 4); t.multiFrac = r.Range(0.6, 0.85); }
             else if ((shape == FunnelShape.Wedge || shape == FunnelShape.Stovepipe) && ef >= 2 && r.U() < 0.55) { t.subVortices = 3 + (int)(r.U() * 3); t.multiFrac = r.Range(0.15, 0.3); }
+            if (shape == FunnelShape.Stovepipe) { t.subVortices = 0; t.multiFrac = 0; }
             t.collar = shape == FunnelShape.Wedge && t.LifeMin > 10 && r.U() < 0.6;
             t.rainWrap = 0;
             Individualise(t, P, region, ref r);
@@ -338,6 +343,8 @@ namespace StormLab
             t.profile = C.Clamp(t.profile + pJ, 0.03, 1);
             // a wedge: half a mile to two miles wide (before its phases, which are sized from its width)
             if (t.shape == FunnelShape.Wedge) SizeWedge(t, P, gS);
+            // a stovepipe: a quarter thinner than the web build's (user, 2026-10-26)
+            if (t.shape == FunnelShape.Stovepipe) { t.groundKm = Math.Max(t.groundKm * StovepipeSlim, 0.012); t.topKm = Math.Max(t.topKm * StovepipeSlim, t.groundKm); }
 
             // its life: many tornadoes change shape. Strong ones often start as a cone and grow into a stovepipe or wedge; a
             // wedge can narrow again before it ropes out; drillbits fill out into cones; elephant trunks thin into ropes, and
@@ -394,6 +401,13 @@ namespace StormLab
             }
             // a wedge's outline is smooth at its size: the same draw, mapped to a calmer range
             if (t.shape == FunnelShape.Wedge && t.skin == FunnelSkin.Ragged) t.roughness = 0.45 + (t.roughness - 0.8) / 0.7 * 0.3;
+            // a stovepipe is always laminar (user, 2026-10-26); one drawn otherwise takes its laminar look from its own stream,
+            // so every draw after this one is as before
+            if (t.shape == FunnelShape.Stovepipe && t.skin != FunnelSkin.Laminar)
+            {
+                var rl = new StormRng(P.seed ?? 1701, 1000 + t.cycle);
+                t.skin = FunnelSkin.Laminar; t.roughness = rl.Range(0.18, 0.35); t.striation = rl.Range(0.6, 1.0); t.ghost = 0;
+            }
             // brightness: condensation under a high, dry base is bright white in the sun; rain-laden HP funnels are grey;
             // wedges and multiple-vortex tornadoes are dark masses, loaded with rain and debris
             t.albedo = C.Clamp((0.9 + 0.15 * dry - 0.22 * wetHp + 0.08 * C.Clamp(-hp, 0, 1)) * (big ? 0.72 : 1) * Math.Exp(0.1 * r.N()), 0.5, 1.2);

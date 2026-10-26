@@ -34,7 +34,7 @@ namespace StormLab
         readonly RenderTexture dens, light, lightWeb, skyVis, ground;
         readonly ComputeShader cs;
         readonly int kBuild, kLight, kSky, kGround;
-        readonly Vector4[] sp = new Vector4[StormTornadoes.NSLOT];
+        readonly Vector4[] sp = new Vector4[StormSpin.NSLOT];
         int slab = -1, slabZ;
         float pendingBase;
         Vector3 pendingKey;
@@ -76,7 +76,7 @@ namespace StormLab
         /// <summary>The parameter block as the passes take it: the grid slot filled in.</summary>
         public Vector4[] GpuParams(float[] param)
         {
-            for (int i = 0; i < StormTornadoes.NSLOT; i++) sp[i] = new Vector4(param[i * 4], param[i * 4 + 1], param[i * 4 + 2], param[i * 4 + 3]);
+            for (int i = 0; i < StormSpin.NSLOT; i++) sp[i] = new Vector4(param[i * 4], param[i * 4 + 1], param[i * 4 + 2], param[i * 4 + 3]);
             sp[17] = new Vector4(NV, NZ, L, ZT);
             sp[20] = Vector4.zero;
             return sp;
@@ -133,7 +133,7 @@ namespace StormLab
             pendingBase = param[4]; pendingKey = keyVol;
             slab = 0; slabZ = Mathf.CeilToInt(NZ / (float)Slabs / 4f) * 4;
         }
-        readonly float[] pending = new float[StormTornadoes.NSLOT * 4];
+        readonly float[] pending = new float[StormSpin.NSLOT * 4];
 
         /// <summary>This frame's share of a repaint in progress; true when it (and the relight) finished.</summary>
         public bool Step(CommandBuffer cmd)

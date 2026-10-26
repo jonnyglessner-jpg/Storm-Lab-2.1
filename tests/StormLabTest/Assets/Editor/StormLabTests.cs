@@ -153,6 +153,10 @@ public static class StormLabTests
             File.WriteAllText(Path.Combine(StormLabTestKit.RepoRoot, "validation", "reports", "TornadoChecks.md"), rep.ToString());
             return ok;
         }
+        var argv = System.Environment.GetCommandLineArgs();
+        int li = Array.IndexOf(argv, "-slTornadoLife");
+        if (li >= 0 && li + 3 < argv.Length)
+            return TornadoLife(argv[li + 1], int.Parse(argv[li + 2]), int.Parse(argv[li + 3]), li + 4 < argv.Length && !argv[li + 4].StartsWith("-") ? argv[li + 4] : "");
         if (System.Environment.GetCommandLineArgs().Contains("-slWall"))
         {
             WallBases(rep);
@@ -162,7 +166,7 @@ public static class StormLabTests
         if (compare != null)
         {
             var list = JsonUtility.FromJson<CaseList>(File.ReadAllText(compare));
-            storm.lighting = StormLighting.Website; storm.tornado = TornadoModel.Website; storm.wallBase = WallBase.Website;
+            storm.lighting = StormLighting.Website; storm.tornado = TornadoModel.Website; storm.wallBase = WallBase.Website; storm.mesoSpinScale = 1;
             rep.AppendLine("## Website comparison").AppendLine();
             foreach (var k in list.cases)
             {
@@ -262,6 +266,43 @@ public static class StormLabTests
         sheet.Apply();
         File.WriteAllBytes(path, sheet.EncodeToPNG());
         Object.DestroyImmediate(sheet);
+    }
+
+    /// <summary>
+    /// One tornado through its life (-slTornadoLife preset seed cycle [tag]): the detailed tornado of that cycle at six
+    /// points of its life, from a chaser 140 degrees round from it (as the sheets), the game's half-resolution blended march
+    /// and a 15 degree evening sun. Sheet: Screenshots/storm_life_{preset}_{seed}_{cycle}{_tag}.png; the stage and funnel size
+    /// of each shot go to the log.
+    /// </summary>
+    static bool TornadoLife(string preset, int seed, int k, string tag)
+    {
+        storm.lighting = StormLighting.Physical; storm.tornado = TornadoModel.Detailed;
+        storm.renderScale = 0.5f; storm.temporalBlend = 0.25f; storm.sunAzimuth = 272f; storm.sunElevation = 15f;
+        storm.preset = preset; storm.varied = true; storm.seed = seed; storm.Replan();
+        var tg = storm.Tornadoes != null && k < storm.Tornadoes.Length ? storm.Tornadoes[k] : null;
+        if (tg == null) { Debug.LogError($"[StormLife] {preset} seed {seed} cycle {k}: no tornado"); return false; }
+        Debug.Log($"[StormLife] {preset} seed {seed} cycle {k}: EF{tg.ef} {tg.shape}, ground {tg.groundKm * 1000:0} m, top {tg.topKm * 1000:0} m, {tg.skin}, roughness {tg.roughness:0.00}, sub-vortices {tg.subVortices}, phases {string.Join(" > ", tg.phases.Select(p => p.shape))}");
+        var tiles = new List<string>();
+        foreach (float f in new[] { 0.05f, 0.15f, 0.3f, 0.45f, 0.6f, 0.8f })
+        {
+            float T = (float)(tg.formMin + f * tg.LifeMin);
+            storm.StepTo(T, 100f, true); StormLabTestKit.Sync();
+            var g = storm.TornadoGroundWorld; g.y = storm.origin.y;
+            float zb = (float)(storm.Plan.zb - StormDesign.CLOUD_BASE_LIFT_KM);
+            float D = Mathf.Clamp((float)(tg.groundKm * 9000), 3000f, 6000f);
+            var from = g + Bearing(140f) * D + Vector3.up * 2f;
+            cam.transform.SetPositionAndRotation(from, Quaternion.LookRotation(g + Vector3.up * zb * 450f - from, Vector3.up));
+            cam.fieldOfView = 2f * Mathf.Atan(zb * 1000f * 1.25f / D) * Mathf.Rad2Deg;
+            storm.ResetHistory(cam);
+            string path = Path.Combine(ShotDir, $"storm_life_{tiles.Count + 1}.png");
+            StormLabTestKit.Render(cam, path, 960, 540, 12);
+            tiles.Add(path);
+            Debug.Log($"[StormLife] {f:0.00} of its life, {T:0.0} min: {storm.Frame.stage}; funnel ground {storm.Frame.param[14 * 4] * 1000:0} m, top {storm.Frame.param[14 * 4 + 1] * 1000:0} m, envelope mode {storm.Frame.param[21 * 4 + 3]:0.00}");
+        }
+        string sheet = Path.Combine(ShotDir, $"storm_life_{preset}_{seed}_{k}{(tag != "" ? "_" + tag : "")}.png");
+        Sheet(tiles, 3, sheet);
+        Debug.Log($"[StormLife] sheet {sheet}");
+        return true;
     }
 
     /// <summary>

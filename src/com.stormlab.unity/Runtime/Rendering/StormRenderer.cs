@@ -52,6 +52,10 @@ namespace StormLab
                  "origin.y (valleys); the scene depth stops them at the ground. Only with scene depth and no backdrop")]
         public float groundSink = 300f;
 
+        [Tooltip("how fast the mesocyclone turns, over the web build's rate (StormSpin). 3: about the speed it seemed to have " +
+                 "while it spun up, when the web build's rate x clock overstated it; 1 for the website comparison")]
+        public double mesoSpinScale = 3;
+
         [Header("Playback")]
         [Tooltip("storm time shown, minutes (StormTime holds it at full precision)")]
         public float stormMinutes;
@@ -135,6 +139,8 @@ namespace StormLab
         /// <summary>each circulation's tornado as the detailed tornado draws it (null entries: no tornado); tools may replace it</summary>
         public TornadoCharacter[] Tornadoes { get; set; }
         public StormFrame Frame { get; } = new StormFrame();
+        /// <summary>the angles the mesocyclone and the detailed tornado have turned (written into Frame each StepTo)</summary>
+        public StormSpin Spin { get; } = new StormSpin();
         public StormVolume Volume { get; private set; }
         /// <summary>Optional local lighting adapter (lightning). Null keeps the normal cloud path.</summary>
         [NonSerialized] public IStormTransientLighting TransientLighting;
@@ -175,10 +181,10 @@ namespace StormLab
         {
             var found = StormPreset.Find(preset);
             if (found == null) { Debug.LogWarning($"StormLab: no preset '{preset}', using plains"); found = StormPreset.All[0]; }
-            Plan = StormLife.Trim(StormDesign.Plan(found, varied ? seed : (int?)null, planOverrides), dieFrom);
+            Plan = StormLife.Trim(StormGame.Plan(preset, found, varied ? seed : (int?)null, planOverrides), dieFrom);
             Tornadoes = StormTornadoes.Build(Plan, StormTornadoes.RegionOf(preset));
             planKey = PlanKey;
-            hasFrame = false; lastBuilt = double.NaN;
+            hasFrame = false; lastBuilt = double.NaN; Spin.Reset();
             foreach (var c in cams.Values) c.valid = false;
             PlanChanged?.Invoke(this);
         }
@@ -394,6 +400,7 @@ namespace StormLab
             StormDesign.At(Plan, tMin, clock, Frame);
             if (tornado == TornadoModel.Detailed) StormTornadoes.Apply(Plan, Tornadoes, tMin, Frame);
             StormLife.Apply(Plan, tMin, Frame);
+            Spin.Advance(Frame, tMin, clock, mesoSpinScale);
             if (frameCmd == null) frameCmd = new CommandBuffer { name = "Storm volume" };
             frameCmd.Clear();
             frameCmd.BeginSample(VolumeSampler);
