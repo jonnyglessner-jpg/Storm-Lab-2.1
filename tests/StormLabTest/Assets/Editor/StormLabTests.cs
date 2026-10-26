@@ -272,32 +272,37 @@ public static class StormLabTests
     /// One tornado through its life (-slTornadoLife preset seed cycle [tag]): the detailed tornado of that cycle at six
     /// points of its life, from a chaser 140 degrees round from it (as the sheets), the game's half-resolution blended march
     /// and a 15 degree evening sun. Sheet: Screenshots/storm_life_{preset}_{seed}_{cycle}{_tag}.png; the stage and funnel size
-    /// of each shot go to the log.
+    /// of each shot go to the log. A tag containing "early" shows the first 30 % of its life instead.
     /// </summary>
     static bool TornadoLife(string preset, int seed, int k, string tag)
     {
         storm.lighting = StormLighting.Physical; storm.tornado = TornadoModel.Detailed;
         storm.renderScale = 0.5f; storm.temporalBlend = 0.25f; storm.sunAzimuth = 272f; storm.sunElevation = 15f;
+        // "sharp": one full-resolution frame, not blended, from half as far (to see what the march draws)
+        bool sharp = tag.Contains("sharp");
+        if (sharp) { storm.renderScale = 1f; storm.temporalBlend = 1f; }
         storm.preset = preset; storm.varied = true; storm.seed = seed; storm.Replan();
         var tg = storm.Tornadoes != null && k < storm.Tornadoes.Length ? storm.Tornadoes[k] : null;
         if (tg == null) { Debug.LogError($"[StormLife] {preset} seed {seed} cycle {k}: no tornado"); return false; }
         Debug.Log($"[StormLife] {preset} seed {seed} cycle {k}: EF{tg.ef} {tg.shape}, ground {tg.groundKm * 1000:0} m, top {tg.topKm * 1000:0} m, {tg.skin}, roughness {tg.roughness:0.00}, sub-vortices {tg.subVortices}, phases {string.Join(" > ", tg.phases.Select(p => p.shape))}");
         var tiles = new List<string>();
-        foreach (float f in new[] { 0.05f, 0.15f, 0.3f, 0.45f, 0.6f, 0.8f })
+        // a tag with "early" in it shows its formation instead (the first 30 % of its life)
+        var fracs = tag.Contains("early") ? new[] { 0.005f, 0.03f, 0.07f, 0.12f, 0.19f, 0.3f } : new[] { 0.05f, 0.15f, 0.3f, 0.45f, 0.6f, 0.8f };
+        foreach (float f in fracs)
         {
             float T = (float)(tg.formMin + f * tg.LifeMin);
             storm.StepTo(T, 100f, true); StormLabTestKit.Sync();
             var g = storm.TornadoGroundWorld; g.y = storm.origin.y;
             float zb = (float)(storm.Plan.zb - StormDesign.CLOUD_BASE_LIFT_KM);
-            float D = Mathf.Clamp((float)(tg.groundKm * 9000), 3000f, 6000f);
+            float D = Mathf.Clamp((float)(tg.groundKm * 9000), 3000f, 6000f) * (sharp ? 0.5f : 1f);
             var from = g + Bearing(140f) * D + Vector3.up * 2f;
             cam.transform.SetPositionAndRotation(from, Quaternion.LookRotation(g + Vector3.up * zb * 450f - from, Vector3.up));
             cam.fieldOfView = 2f * Mathf.Atan(zb * 1000f * 1.25f / D) * Mathf.Rad2Deg;
             storm.ResetHistory(cam);
             string path = Path.Combine(ShotDir, $"storm_life_{tiles.Count + 1}.png");
-            StormLabTestKit.Render(cam, path, 960, 540, 12);
+            StormLabTestKit.Render(cam, path, 960, 540, sharp ? 1 : 12);
             tiles.Add(path);
-            Debug.Log($"[StormLife] {f:0.00} of its life, {T:0.0} min: {storm.Frame.stage}; funnel ground {storm.Frame.param[14 * 4] * 1000:0} m, top {storm.Frame.param[14 * 4 + 1] * 1000:0} m, envelope mode {storm.Frame.param[21 * 4 + 3]:0.00}");
+            Debug.Log($"[StormLife] {f:0.000} of its life, {T:0.0} min: {storm.Frame.stage}; funnel ground {storm.Frame.param[14 * 4] * 1000:0} m, top {storm.Frame.param[14 * 4 + 1] * 1000:0} m, envelope mode {storm.Frame.param[21 * 4 + 3]:0.00}");
         }
         string sheet = Path.Combine(ShotDir, $"storm_life_{preset}_{seed}_{k}{(tag != "" ? "_" + tag : "")}.png");
         Sheet(tiles, 3, sheet);

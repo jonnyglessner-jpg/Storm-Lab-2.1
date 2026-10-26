@@ -79,6 +79,10 @@ namespace StormLab
         public FunnelSkin skin; public double albedo, roughness, striation, ghost;
         public double soilR, soilG, soilB, dirt; public string soilName;
         public bool satellite; public double satFrac, satLifeS, satOrbitKm, satRadKm, satVmax, satAngle;
+        /// <summary>a cone's or stovepipe's formation: the share of its life it takes to widen from a thin vortex, how much
+        /// sooner (+) or later (-) its top widens than its foot, how thin it starts (a share of its foot's full width), and
+        /// how much it snakes while thin</summary>
+        public double formFrac, formTopLead, formThin, formSinu;
         public const double MorphFrac = 0.1;
         public double LifeMin => goneMin - formMin;
         /// <summary>wind at radius r km, m/s (Rankine vortex, peak at rc)</summary>
@@ -127,8 +131,10 @@ namespace StormLab
                 case FunnelShape.Cone:          g = 0.45 * half; top = 3.4 * g + 0.1;   profile = 0.6;  sinu = C.Lerp(0.05, 0.2, u); break;
                 case FunnelShape.Stovepipe:     g = 0.6 * half;  top = 1.45 * g + 0.06; profile = 0.85; sinu = C.Lerp(0.0, 0.1, u); break;
                 // a wedge is a broad funnel, not a block: its sides flare out into the base, about twice as wide at the top
-                // as at the ground (2.0: a widened drillbit looks far more like a real wedge than a near-cylinder)
-                case FunnelShape.Wedge:         g = 0.8 * half;  top = 1.9 * g + 0.15;  profile = 0.55; sinu = 0.03; break;
+                // as at the ground (2.0: a widened drillbit looks far more like a real wedge than a near-cylinder). Profile
+                // 0.85 makes its sides nearly straight, slanting evenly out to the top (user, 2026-10-26: 0.55 kept it
+                // narrow two thirds of the way up, then flared it suddenly)
+                case FunnelShape.Wedge:         g = 0.8 * half;  top = 1.9 * g + 0.15;  profile = 0.85; sinu = 0.03; break;
                 case FunnelShape.MultiVortex:   g = 0.75 * half; top = 1.35 * g + 0.1;  profile = 0.9;  sinu = 0.05; break;
                 case FunnelShape.Sidewinder:    g = 0.3 * half;  top = 3.0 * g + 0.05;  profile = 0.1;  sinu = C.Lerp(0.6, 0.9, u); break;
                 default:                        g = 0.5 * half;  top = 3.0 * g + 0.08;  profile = 0.4;  sinu = C.Lerp(0.1, 0.35, u); break;   // dust whirl
@@ -215,6 +221,7 @@ namespace StormLab
             // what makes this tornado itself: 2.0's own stream for it
             var ri = new StormRng(seed, 300 + k);
             Individualise(t, P, region, ref ri);
+            DrawFormation(t, new StormRng(seed, 1100 + k));
             return t;
         }
 
@@ -222,6 +229,9 @@ namespace StormLab
 
         /// <summary>A wedge's visible width at the ground, m: half a mile to two miles (user, 2026-10-25).</summary>
         public const double WedgeMinM = 0.5 * 1609.344, WedgeMaxM = 2 * 1609.344;
+        /// <summary>A wedge's top over its foot (user, 2026-10-26: a wider top, its sides more slanted; was 1.1-1.6), and
+        /// how much wider than its foot its top may be at most, km.</summary>
+        public const double WedgeFlareMin = 1.5, WedgeFlareMax = 2.1, WedgeTopReachKm = 1.3;
         /// <summary>A stovepipe's visible width over the web build's (user, 2026-10-26: a bit thinner on average).</summary>
         public const double StovepipeSlim = 0.75;
 
@@ -233,17 +243,21 @@ namespace StormLab
             // of 1.5-3.2 (cycles.ts), so every setup spans the whole range and a bigger cycle is a wider wedge
             double q = C.Clamp((t.webGroundKm / Math.Max(P.torR, 1e-3) - 1.5) / 1.7, 0, 1);
             double D = C.Clamp(WedgeMinM * Math.Pow(WedgeMaxM / WedgeMinM, q) * gS, WedgeMinM, WedgeMaxM);
+            // its flare: where the web build's draw fell in 1.1-1.6, carried to WedgeFlareMin-Max
+            double u = C.Clamp((t.topKm / Math.Max(t.groundKm, 1e-3) - 1.1) / 0.5, 0, 1);
+            t.topKm = t.groundKm * C.Lerp(WedgeFlareMin, WedgeFlareMax, u);
             SetWedgeWidth(t, D);
             t.vmax = C.Clamp(Math.Max(P.vTor, 30) * Math.Pow(Math.Max(t.widthM, 40) / 250, 0.3), 29, 135);
             t.ef = t.vmax < 38.5 ? 0 : t.vmax < 49.6 ? 1 : t.vmax < 60.8 ? 2 : t.vmax < 74.2 ? 3 : t.vmax < 89.9 ? 4 : 5;
             t.rcKm = C.Clamp(0.5 * t.widthM / 1000 * 29.0 / t.vmax, 0.012, 0.6);
         }
 
-        /// <summary>A wedge D m wide at the ground, keeping its flare (top over ground, 1.1-1.6) and its wedge phase.</summary>
+        /// <summary>A wedge D m wide at the ground, keeping its flare (top over ground, WedgeFlareMin-Max, its top at most
+        /// WedgeTopReachKm wider than its foot) and its wedge phase.</summary>
         static void SetWedgeWidth(TornadoCharacter t, double D)
         {
-            double flare = C.Clamp(t.topKm / Math.Max(t.groundKm, 1e-3), 1.1, 1.6);
-            t.groundKm = D / 2000; t.topKm = t.groundKm * flare;
+            double flare = C.Clamp(t.topKm / Math.Max(t.groundKm, 1e-3), WedgeFlareMin, WedgeFlareMax);
+            t.groundKm = D / 2000; t.topKm = Math.Min(t.groundKm * flare, t.groundKm + WedgeTopReachKm);
             t.widthM = 2 * t.groundKm / ShapeWidth(FunnelShape.Wedge) * 1000;
             if (t.phases == null) return;
             for (int i = 0; i < t.phases.Length; i++)
@@ -283,6 +297,7 @@ namespace StormLab
             Individualise(t, P, region, ref r);
             t.phases = new[] { new FunnelPhase { shape = shape, groundKm = t.groundKm, topKm = t.topKm, profile = t.profile, sinuosity = t.sinuosity, cond = 1, sideKm = shape == FunnelShape.Sidewinder ? 0.6 : 0 } };
             t.satellite = false; t.leanKm = 0;
+            DrawFormation(t, new StormRng(7, 1100));
             return t;
         }
 
@@ -315,6 +330,21 @@ namespace StormLab
                 t.rcKm = C.Clamp(0.5 * t.widthM / 1000 * 29.0 / t.vmax, 0.012, 0.6);
             }
         }
+
+        /// <summary>
+        /// How a cone or stovepipe forms (user, 2026-10-26): it comes down as a thin vortex, as a wedge's central vortex does,
+        /// and widens into its shape, each its own way: quickly or slowly (12-30 % of its life), top first or foot first,
+        /// a fifth to nearly half its foot's width at first, snaking more or less while thin. Its own stream, so the other draws are unchanged.
+        /// </summary>
+        static void DrawFormation(TornadoCharacter t, StormRng r)
+        {
+            t.formFrac = r.Range(0.12, 0.3); t.formTopLead = r.Range(-0.3, 0.5);
+            t.formThin = r.Range(0.2, 0.45); t.formSinu = r.Range(0.15, 0.45);
+        }
+
+        /// <summary>share of its life a forming funnel takes to come down, before it widens</summary>
+        const double FormDown = 0.06;
+        static bool FormsThin(FunnelShape s) => s == FunnelShape.Cone || s == FunnelShape.Stovepipe;
 
         static FunnelPhase PhaseOf(TornadoCharacter t, FunnelShape shape, double startFrac, double gS, double tS, double pJ, double u)
         {
@@ -501,6 +531,19 @@ namespace StormLab
                 double core = big ? Math.Max(tg.rcKm * 1.6, 0.04) * Ramp(lifeFrac, 0.05, 0.2) * (1 - 0.5 * rope) : 0;
                 ground = gWeb * gScale * (big ? 0.3 + 0.7 * takeover : 1);
                 top = tWeb * tScale * (big ? 0.5 + 0.5 * takeover : 1);
+                if (!big && FormsThin(tg.shape) && tg.formFrac > 0)
+                {
+                    // a cone or stovepipe comes down as a thin, nearly even tube (a third to two thirds of its foot's full
+                    // width) and widens into its shape; its top leads or lags its foot (DrawFormation)
+                    double thin = Math.Max(pg * tg.formThin, 0.012);
+                    // (it widens once it is down: the web build's funnel takes about 6 % of the life to reach the ground)
+                    double gG = Ramp(lifeFrac, FormDown, FormDown + tg.formFrac);
+                    double gT = Ramp(lifeFrac, FormDown, FormDown + C.Clamp(tg.formFrac * (1 - tg.formTopLead), 0.04, 0.45));
+                    ground = C.Lerp(Math.Min(thin, ground), ground, gG);
+                    top = C.Lerp(Math.Min(thin * 1.6, top), top, gT);
+                    profile = C.Lerp(0.12, profile, gG);
+                    sinu = C.Lerp(Math.Max(sinu, tg.formSinu), sinu, gG);
+                }
                 bool plain = envelope <= 0 && multi <= 0;
                 Set(21, core, multi, breakdown, plain ? 0 : 1 + envelope);
             }
