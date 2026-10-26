@@ -287,9 +287,11 @@ public static class StormLabTests
         Debug.Log($"[StormLife] {preset} seed {seed} cycle {k}: EF{tg.ef} {tg.shape}, ground {tg.groundKm * 1000:0} m, top {tg.topKm * 1000:0} m, {tg.skin}, roughness {tg.roughness:0.00}, sub-vortices {tg.subVortices}, phases {string.Join(" > ", tg.phases.Select(p => p.shape))}");
         var tiles = new List<string>();
         // a tag with "early" in it shows its formation instead (the first 30 % of its life)
-        // ("rope": its last 40 %, the rope-out)
+        // ("rope": a wedge narrowing before its rope-out, then the rope-out)
+        float r0 = (float)StormTornadoes.RopeStart(tg), rs = (float)StormTornadoes.ShrinkSpan(tg), rf = (float)tg.ropeFrac;
         var fracs = tag.Contains("early") ? new[] { 0.005f, 0.03f, 0.07f, 0.12f, 0.19f, 0.3f }
-            : tag.Contains("rope") ? new[] { 0.62f, 0.66f, 0.7f, 0.74f, 0.8f, 0.9f } : new[] { 0.05f, 0.15f, 0.3f, 0.45f, 0.6f, 0.8f };
+            : tag.Contains("rope") ? new[] { r0 - rs - 0.01f, r0 - 0.5f * rs, r0, r0 + 0.25f * rf, r0 + 0.5f * rf, r0 + 0.8f * rf }
+            : new[] { 0.05f, 0.15f, 0.3f, 0.45f, 0.6f, 0.8f };
         foreach (float f in fracs)
         {
             float T = (float)(tg.formMin + f * tg.LifeMin);

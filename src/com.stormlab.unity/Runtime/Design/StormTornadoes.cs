@@ -342,6 +342,12 @@ namespace StormLab
             t.formThin = r.Range(0.2, 0.45); t.formSinu = r.Range(0.15, 0.45);
         }
 
+        /// <summary>a wedge's narrowing before its rope-out: how far, and over how many storm minutes</summary>
+        public const double WedgeShrink = 0.6, WedgeShrinkMin = 2;
+        /// <summary>the share of its life at which a tornado's rope-out begins (the web build's rope milestone)</summary>
+        public static double RopeStart(TornadoCharacter t) => 1 - t.ropeFrac;
+        /// <summary>the share of its life a wedge takes to narrow before its rope-out (WedgeShrinkMin)</summary>
+        public static double ShrinkSpan(TornadoCharacter t) => C.Clamp(WedgeShrinkMin / Math.Max(t.LifeMin, 0.1), 0.04, 0.2);
         /// <summary>a wedge's rope at the end: its central vortex's radius as a share of the foot's (25-60 m)</summary>
         const double RopeCore = 0.05;
         /// <summary>share of its life a forming funnel takes to come down, before it widens</summary>
@@ -541,7 +547,7 @@ namespace StormLab
                 // metres wide, and the lean of a rope-out tipped the lot over: a fat, tilted sausage.
                 // (the collar lifts over the whole rope-out, from its start to the tornado's end, 5-12 storm min: over the
                 // web build's shrink alone, 3-7 min, it was gone in a moment)
-                double r0 = 1 - tg.ropeFrac;
+                double r0 = RopeStart(tg);
                 double ropeOut = big ? Ramp(lifeFrac, r0, r0 + 0.92 * tg.ropeFrac) : 0;
                 breakdown = ropeOut;
                 if (rope > 0 && big)
@@ -552,6 +558,13 @@ namespace StormLab
                     if (core > ropeR) core = core * Math.Pow(ropeR / core, Ramp(rope, 0.0, 0.5));
                     ground *= C.Lerp(1, 0.85, rope) / Math.Max(1 - 0.75 * rope, 0.25);
                     top *= C.Lerp(1, 0.9, rope) / Math.Max(1 - 0.6 * rope, 0.4);
+                }
+                // before the collar (user, 2026-10-26): over its last WedgeShrinkMin storm minutes before the rope-out
+                // the wedge narrows, foot and top together, to WedgeShrink of its width, and breaks up from there
+                if (big)
+                {
+                    double narrow = C.Lerp(1, WedgeShrink, Ramp(lifeFrac, r0 - ShrinkSpan(tg), r0));
+                    ground *= narrow; top *= narrow;
                 }
                 if (!big && FormsThin(tg.shape) && tg.formFrac > 0)
                 {
