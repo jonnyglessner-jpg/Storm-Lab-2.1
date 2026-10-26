@@ -136,8 +136,9 @@ public static class StormDayCheck
         }
         rep.AppendLine();
         // sanity: a visible picture at every time, darker at night than by day, the new moon darker than the full
-        bool visible = lum.All(l => l > 0.02f && l < 0.95f);
-        rep.AppendLine($"- {(visible ? "PASS" : "FAIL")}: every view shows something (mean brightness between 2 % and 95 %)");
+        // (a night is dark: from 2026-10-26 a moonlit night is shown at 1.2 % of day, so it only has to show something)
+        bool visible = lum.Select((l, i) => i < 6 ? l > 0.02f && l < 0.95f : l > 0.005f).All(x => x);
+        rep.AppendLine($"- {(visible ? "PASS" : "FAIL")}: every view shows something (mean brightness 2-95 % by day and dusk, over 0.5 % at night)");
         bool nightDarker = lum[6] < lum[2] && lum[7] <= lum[6] + 0.005f;
         rep.AppendLine($"- {(nightDarker ? "PASS" : "FAIL")}: night is darker than noon, and the new-moon night no brighter than the full-moon night");
         ok &= visible && nightDarker;
@@ -157,6 +158,64 @@ public static class StormDayCheck
         File.WriteAllBytes(Path.Combine(ShotDir, "day_sheet.jpg"), sheet.EncodeToJPG(88));
         Object.DestroyImmediate(sheet);
         rep.AppendLine().AppendLine("Images: `Screenshots/day_*.png`; contact sheet `Screenshots/day_sheet.jpg` (left to right, top to bottom: " + string.Join(", ", views.Select(v => v.name)) + ").");
+
+        // Night: what lights the storm. Both nights with the storm's town light off, then its night fill off too; the
+        // storm (the frame's upper 55 %) and the ground (its lower 30 %) measured apart, mean brightness 0..100 %
+        rep.AppendLine().AppendLine("## Night: what lights the storm").AppendLine();
+        rep.AppendLine("| night | town light | night fill | storm (upper 55 %) | ground (lower 30 %) | EV100 |").AppendLine("| --- | --- | --- | --- | --- | --- |");
+        float town0 = storm.lightPollution, fill0 = storm.nightFill;
+        foreach (var (name, phase) in new[] { ("full moon", 0.5f), ("new moon", 0f) })
+            foreach (var (town, fill) in new[] { (town0, fill0), (0f, fill0), (0f, 0f) })
+            {
+                storm.lightPollution = town; storm.nightFill = fill;
+                panel.hour = 23f; panel.moonPhase = phase; panel.clockRuns = false; panel.Apply();
+                storm.StepTo(t, storm.Clock, true); storm.ResetHistory(cam);
+                foreach (var x in Frames(3)) yield return x;
+                string path = Path.Combine(ShotDir, $"night_{(phase > 0 ? "full" : "new")}_t{town:0.00}_f{fill:0.00}.png");
+                StormLabTestKit.Render(cam, path, 800, 450, 6);
+                var tex = new Texture2D(2, 2); tex.LoadImage(File.ReadAllBytes(path));
+                var px = tex.GetPixels32(); int w = tex.width, hh = tex.height;
+                double up = 0, lo = 0; int nu = 0, nlo = 0;
+                for (int y = 0; y < hh; y++) for (int x = 0; x < w; x++)
+                {
+                    var c = px[y * w + x]; float v = (c.r + c.g + c.b) / 765f;
+                    if (y > hh * 0.45f) { up += v; nu++; } else if (y < hh * 0.3f) { lo += v; nlo++; }
+                }
+                Object.DestroyImmediate(tex);
+                rep.AppendLine($"| {name} | {town:0.00} | {fill:0.00} | {up / nu * 100:0.0} % | {lo / nlo * 100:0.0} % | {panel.ExposureEV:0.0} |");
+            }
+        storm.lightPollution = town0; storm.nightFill = fill0;
+
+        // The storm's shadow on the scene (StormSceneShadow): from 3 km up, 30 km off, looking across the storm and the
+        // ground round it at noon and in the afternoon, with the shadow and without it
+        rep.AppendLine().AppendLine("## The storm's shadow on the ground").AppendLine();
+        var aerial = target + Quaternion.Euler(0, 200, 0) * mv * 30000f; aerial.y = 3000f;
+        cam.transform.SetPositionAndRotation(aerial, Quaternion.LookRotation(new Vector3(target.x, 0f, target.z) - aerial, Vector3.up));
+        foreach (var (name, hour) in new[] { ("noon", 12f), ("afternoon", 16f) })
+            foreach (bool shadow in new[] { true, false })
+            {
+                storm.castSceneShadow = shadow;
+                var ssh = storm.sun ? storm.sun.GetComponent<StormSceneShadow>() : null;
+                if (ssh) ssh.enabled = shadow;
+                panel.hour = hour; panel.moonPhase = 0.5f; panel.clockRuns = false; panel.Apply();
+                storm.StepTo(t, storm.Clock, true); storm.ResetHistory(cam);
+                foreach (var x in Frames(12)) yield return x;
+                string path = Path.Combine(ShotDir, $"shadow_{name}_{(shadow ? "on" : "off")}.png");
+                StormLabTestKit.Render(cam, path, 1600, 900, 6);
+                rep.AppendLine($"- `Screenshots/shadow_{name}_{(shadow ? "on" : "off")}.png`: {name}, shadow {(shadow ? "on" : "off")}");
+            }
+        storm.castSceneShadow = true;
+        { var ssh = storm.sun ? storm.sun.GetComponent<StormSceneShadow>() : null; if (ssh) ssh.enabled = true; }
+        // straight down from 40 km over the storm, north up, at 17:30 (sun in the west, about 20 degrees up): the
+        // shadows must lie to the east of the clouds that cast them
+        cam.transform.SetPositionAndRotation(new Vector3(target.x, 40000f, target.z), Quaternion.LookRotation(Vector3.down, Vector3.forward));
+        float fov0 = cam.fieldOfView; cam.fieldOfView = 90f;
+        panel.hour = 17.5f; panel.Apply();
+        storm.StepTo(t, storm.Clock, true); storm.ResetHistory(cam);
+        foreach (var x in Frames(12)) yield return x;
+        StormLabTestKit.Render(cam, Path.Combine(ShotDir, "shadow_above.png"), 1200, 1200, 6);
+        rep.AppendLine($"- `Screenshots/shadow_above.png`: straight down from 40 km, north up, east right, 17:30 (sun az {panel.SunAzEl.x:0}, el {panel.SunAzEl.y:0})");
+        cam.fieldOfView = fov0;
     }
 
     static Color[] Scale(Texture2D src, int w, int h)

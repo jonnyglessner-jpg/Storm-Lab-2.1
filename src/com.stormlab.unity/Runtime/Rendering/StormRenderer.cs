@@ -55,6 +55,9 @@ namespace StormLab
         [Tooltip("how fast the mesocyclone turns, over the web build's rate (StormSpin). 3: about the speed it seemed to have " +
                  "while it spun up, when the web build's rate x clock overstated it; 1 for the website comparison")]
         public double mesoSpinScale = 3;
+        [Tooltip("in Play, shade the scene the sun lights (terrain, roads, vehicles) with the storms' shadow: a cookie on the sun " +
+                 "(StormSceneShadow), shared by every storm")]
+        public bool castSceneShadow = true;
 
         [Header("Playback")]
         [Tooltip("storm time shown, minutes (StormTime holds it at full precision)")]
@@ -105,8 +108,12 @@ namespace StormLab
         [Range(0f, 1f)] public float moonPhase = 0.5f;
         public float moonAzimuth = 120f;
         public float moonElevation = 30f;
-        [Range(0.005f, 0.095f)] public float nightBrightness = 0.08f;
-        [Range(0f, 0.095f)] public float nightFloor = 0.045f;
+        // (user, 2026-10-26: at 0.08 and 0.045 the storm showed light grey all night, a new-moon night brightest of all,
+        // while the game's moonlit ground was black)
+        [Tooltip("how bright a moonlit night is shown, as a share of day (the exposure opens to it)")]
+        [Range(0.002f, 0.095f)] public float nightBrightness = 0.012f;
+        [Tooltip("the dimmest a night is ever shown (a moonless night)")]
+        [Range(0f, 0.095f)] public float nightFloor = 0.004f;
         [Range(0f, 1f)] public float purkinje = 0.6f;
         [Range(0f, 1f)] public float lightPollution = 0.35f;
         [Range(0f, 1f)] public float nightFill = 0.35f;
@@ -379,6 +386,9 @@ namespace StormLab
 
         void Update()
         {
+            // the storms' shadow on the scene's terrain, roads and vehicles: a cookie on the sun (StormSceneShadow)
+            if (castSceneShadow && Application.isPlaying && sun && sun.type == LightType.Directional && !sun.GetComponent<StormSceneShadow>())
+                StormSceneShadow.For(sun);
             double dt = Application.isPlaying ? Time.deltaTime : 0.0;
             clock += dt;
             if (Plan != null && playing && Application.isPlaying) StormTime = Math.Min(Math.Max(StormTime + dt * minutesPerSecond, 0.0), Plan.duration);

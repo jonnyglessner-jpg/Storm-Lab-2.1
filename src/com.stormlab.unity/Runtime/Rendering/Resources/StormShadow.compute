@@ -1,0 +1,49 @@
+// The storm's shadow on the game's scene (StormSceneShadow): a cookie for the HDRP sun. Each texel is a line along the
+// sunlight through the cookie's plane; from where that line meets the ground (the storm frame's z = 0) it marches up
+// toward the sun through the storm volume, with the light grid's extinction (StormVolume.compute: betaL) and the storm's
+// own transmittance curve (sunT), so the ground is shaded as the storm's cloud is. Storms multiply into one cookie.
+#pragma kernel Cookie
+
+#include "Packages/com.stormlab.unity/Runtime/Rendering/Shaders/StormCommon.hlsl"
+
+Texture3D<float4> _Dens;
+RWTexture2D<float4> _Cookie;
+float4 _CkO;   // xyz: the cookie's centre in the storm frame, km; w: its width, km
+float4 _CkR;   // xyz: the light's right in the storm frame (unit)
+float4 _CkU;   // xyz: the light's up in the storm frame (unit)
+float4 _CkL;   // xyz: toward the light in the storm frame (unit); w: texels across
+float4 _CkV;   // x: the volume's half-width, km; y: its top, km; z: cloud extinction; w: rain extinction (per km)
+float4 _CkP;   // x: 1 for the first storm (write), 0 to multiply into what is there
+
+float3 ckUvw(float3 p) { return float3((p.x + _CkV.x) / (2.0 * _CkV.x), (p.y + _CkV.x) / (2.0 * _CkV.x), p.z / _CkV.y); }
+
+[numthreads(8, 8, 1)]
+void Cookie(uint3 id : SV_DispatchThreadID)
+{
+    uint n = (uint)_CkL.w;
+    if (id.x >= n || id.y >= n) return;
+    float2 f = (float2(id.xy) + 0.5) / n - 0.5;
+    float3 p0 = _CkO.xyz + _CkR.xyz * (f.x * _CkO.w) + _CkU.xyz * (f.y * _CkO.w);
+    float3 L = _CkL.xyz;
+    float T = 1.0;
+    if (L.z > 0.01)
+    {
+        // where this line of sunlight reaches the ground, then up it toward the sun to the volume's top
+        float3 q = p0 + L * (-p0.z / L.z);
+        float len = _CkV.y / L.z, st = len / 128.0;
+        float tau = 0.0;
+        for (int i = 0; i < 128; i++)
+        {
+            float3 s = q + L * (st * (i + 0.5));
+            if (abs(s.x) > _CkV.x || abs(s.y) > _CkV.x) continue;
+            float4 d = _Dens.SampleLevel(sampler_LinearClamp, ckUvw(s), 0);
+            tau += ((d.r * d.r + d.b * d.b) * _CkV.z + d.g * d.g * _CkV.w) * st;
+        }
+        T = sunT(tau);
+    }
+    // the sampler clamps past the cookie's edge: fade to no shadow there
+    float2 e = abs(f) * 2.0;
+    T = lerp(T, 1.0, ss(0.9, 1.0, max(e.x, e.y)));
+    float prev = _CkP.x > 0.5 ? 1.0 : _Cookie[id.xy].r;
+    _Cookie[id.xy] = float4(prev * T, prev * T, prev * T, 1.0);
+}

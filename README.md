@@ -95,6 +95,18 @@ Lighting (`lighting`):
   night model (moon, twilight, adaptation, blue shift, town light). Sun from a Light, from time of day, or fixed.
 - **Website**: the web build's lighting and fixed colours, for comparison with it.
 
+Night (user, 2026-10-26): a moonlit night is shown at 1.2 % of day (`nightBrightness`), a moonless one no brighter than
+0.4 % (`nightFloor`); the panel's exposure opens to that. At 8 % and 4.5 % the storm stayed light grey all night, a new
+moon brightest of all, while the moonlit ground was black. `StormDayCheck` measures both nights with and without the
+storm's town light and night fill.
+
+The storm's shadow on the scene (`StormSceneShadow`, `castSceneShadow`, on in Play): HDRP's sun gets a cookie of how
+much sunlight gets through every storm (StormShadow.compute: from the ground up toward the sun through the volume, with
+the light grid's extinction and the storm's transmittance curve), 120 km round the camera at about 120 m, refreshed
+every 0.25 s. The terrain, roads and vehicles fall into the shadow of the anvil, updraft and rain; the storm's own
+lighting is unchanged. `StormDayCheck` renders it from the air and straight down (`Screenshots/shadow_*.png`). The moon
+casts no storm shadow.
+
 Tornado (`tornado`):
 - **Detailed** (default): StormLab 2.0's tornadoes on the website's cycles (`StormTornadoes`). Each cycle keeps the
   website's timing and size; a seeded step (2.0's generator and rules, on its own streams) gives it a rating and wind

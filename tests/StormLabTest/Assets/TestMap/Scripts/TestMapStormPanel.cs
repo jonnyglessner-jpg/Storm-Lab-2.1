@@ -3,7 +3,7 @@
 // Lighting: a 24 hour clock that drives the sun and the moon from the local solar time, the day of the year, the
 // latitude and the moon's phase, with an optional running clock, and the camera's exposure: Auto adapts to the scene's
 // light level as StormLab 2.0's night model does (SkyLighting: unchanged by day, a moonlit night shown at the storm's
-// nightBrightness, 8 % of day, never darker than its nightFloor), Manual takes an EV100.
+// nightBrightness, 1.2 % of day, never darker than its nightFloor), Manual takes an EV100.
 //
 // The clock turns the scene's sun and moon Lights and dims them as they set (the moon's light is about 0.25 lux at full),
 // so the terrain, HDRP's sky and the storm share one sun and moon. The storm's unit of light is held at the full sun's
@@ -240,7 +240,7 @@ namespace StormLab.TestMap
             {
                 var L = storm.Lighting;
                 GUILayout.Label($"Key light: {(L.keyIsMoon ? "moon" : "sun")}   ·   scene level {L.level:0.###E+0} of day", small);
-                storm.nightBrightness = Slider("moonlit night shown at (of day)", storm.nightBrightness, 0.005f, 0.095f);
+                storm.nightBrightness = Slider("moonlit night shown at (of day)", storm.nightBrightness, 0.002f, 0.095f);
                 storm.lightPollution = Slider("town light", storm.lightPollution, 0f, 1f);
                 storm.nightFill = Slider("night fill under the base", storm.nightFill, 0f, 1f);
                 storm.purkinje = Slider("night blue shift", storm.purkinje, 0f, 1f);
