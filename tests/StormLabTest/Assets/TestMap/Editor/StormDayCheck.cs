@@ -216,6 +216,40 @@ public static class StormDayCheck
         StormLabTestKit.Render(cam, Path.Combine(ShotDir, "shadow_above.png"), 1200, 1200, 6);
         rep.AppendLine($"- `Screenshots/shadow_above.png`: straight down from 40 km, north up, east right, 17:30 (sun az {panel.SunAzEl.x:0}, el {panel.SunAzEl.y:0})");
         cam.fieldOfView = fov0;
+
+        // The night lights (TestMapNightLights): the barn nearest the truck from 30 m in front of its door, at night and
+        // by day, and the truck from behind with its headlights on, at night
+        rep.AppendLine().AppendLine("## Night lights").AppendLine();
+        var nlights = Object.FindAnyObjectByType<TestMapNightLights>();
+        var yard = nlights && nlights.yardLights ? nlights.yardLights.GetComponentsInChildren<Light>(true) : new Light[0];   // (inactive ones too)
+        var carT = world.car ? world.car.transform : null;
+        if (!nlights || yard.Length == 0 || !carT) { ok = false; rep.AppendLine($"- FAIL: night lights {nlights}, yard lights {yard.Length}, truck {carT}"); yield break; }
+        var barn = yard.OrderBy(l => (l.transform.position - carT.position).sqrMagnitude).First();
+        var outward = Vector3.ProjectOnPlane(barn.transform.forward, Vector3.up).normalized;
+        var eye = barn.transform.position + outward * 30f; eye.y = barn.transform.position.y - 3f;
+        cam.transform.SetPositionAndRotation(eye, Quaternion.LookRotation(barn.transform.position - Vector3.up * 2.5f - eye, Vector3.up));
+        foreach (var (name, hour) in new[] { ("night", 23f), ("day", 16f) })
+        {
+            panel.hour = hour; panel.moonPhase = 0.5f; panel.Apply();
+            storm.StepTo(t, storm.Clock, true); storm.ResetHistory(cam);
+            foreach (var x in Frames(6)) yield return x;
+            string path = Path.Combine(ShotDir, $"lights_barn_{name}.png");
+            StormLabTestKit.Render(cam, path, 1200, 675, 6);
+            rep.AppendLine($"- `Screenshots/lights_barn_{name}.png`: the barn nearest the truck, 30 m off its door, {name}; its yard light {(barn.isActiveAndEnabled ? "on" : "off")}");
+        }
+        bool barnOk = !barn.isActiveAndEnabled;   // off by day (the last view)
+        panel.hour = 23f; panel.Apply();
+        nlights.headlightMode = TestMapNightLights.Headlights.Auto;
+        foreach (var x in Frames(40)) yield return x;   // (the near lights are switched twice a second)
+        barnOk &= barn.isActiveAndEnabled && nlights.HeadlightsOn;
+        var behind = carT.position - carT.forward * 12f + Vector3.up * 6f;
+        cam.transform.SetPositionAndRotation(behind, Quaternion.LookRotation(carT.position + carT.forward * 30f - behind, Vector3.up));
+        storm.StepTo(t, storm.Clock, true); storm.ResetHistory(cam);
+        foreach (var x in Frames(6)) yield return x;
+        StormLabTestKit.Render(cam, Path.Combine(ShotDir, "lights_truck_night.png"), 1200, 675, 6);
+        rep.AppendLine("- `Screenshots/lights_truck_night.png`: the truck from behind at night, headlights on (auto)");
+        rep.AppendLine($"- {(barnOk ? "PASS" : "FAIL")}: yard lights off by day, on at night, and the headlights on at night ({yard.Length} yard lights)");
+        ok &= barnOk;
     }
 
     static Color[] Scale(Texture2D src, int w, int h)

@@ -4,7 +4,9 @@
 // its camera, and a StormLab storm (StormRenderer with lightning) whose track crosses the map.
 //   StormLab > Test Map > Build World       rebuilds everything under Assets/TestMap/Generated and the scene
 //   StormLab > Test Map > Open Test Map     opens the scene and presses Play (builds it first if missing)
-// Batch: -executeMethod TestMapBuilder.BuildFromCommandLine
+//   StormLab > Test Map > Rebuild Farmsteads and Lights   only the farmsteads, their yard lights and the truck's
+//                                           headlights, in the scene as it is (keeps everything else in it)
+// Batch: -executeMethod TestMapBuilder.BuildFromCommandLine (or RebuildFarmsteadsFromCommandLine)
 // Generated assets are not in git; the Python tools and this builder recreate them (README in tools/testmap).
 using System;
 using System.Collections.Generic;
@@ -62,6 +64,31 @@ public static class TestMapBuilder
         if (!File.Exists(ScenePath)) Build();
         EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
         EditorApplication.EnterPlaymode();
+    }
+
+    [MenuItem("StormLab/Test Map/Rebuild Farmsteads and Lights")]
+    public static void RebuildFarmsteads()
+    {
+        var meta = LoadMeta();
+        var scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+        var worldGo = GameObject.Find("Plains Test Map");
+        if (!worldGo) throw new InvalidOperationException("no 'Plains Test Map' in " + ScenePath + ": build the world first");
+        foreach (var n in new[] { "Farmsteads", "Yard lights" }) { var t = worldGo.transform.Find(n); if (t) Object.DestroyImmediate(t.gameObject); }
+        BuildBuildings(meta, worldGo.transform);
+        var w = worldGo.GetComponent<TestMapWorld>();
+        WireNightLights(worldGo, w ? w.car : Object.FindAnyObjectByType<TestMapCar>(), w ? w.storm : Object.FindAnyObjectByType<StormRenderer>());
+        EditorSceneManager.MarkSceneDirty(scene);
+        EditorSceneManager.SaveScene(scene);
+        AssetDatabase.SaveAssets();
+        Debug.Log("[TestMap] farmsteads and lights rebuilt");
+    }
+
+    public static void RebuildFarmsteadsFromCommandLine()
+    {
+        bool ok;
+        try { RebuildFarmsteads(); ok = true; }
+        catch (Exception e) { Debug.LogException(e); ok = false; }
+        EditorApplication.Exit(ok ? 0 : 1);
     }
 
     public static void BuildFromCommandLine()
@@ -506,6 +533,9 @@ public static class TestMapBuilder
         var items = JsonUtility.FromJson<Buildings>(File.ReadAllText(Path.Combine(DataDir, "buildings.json"))).items;
         var root = new GameObject("Farmsteads").transform; root.SetParent(parent, false);
         var cache = new Dictionary<int, Material>();
+        var fixture = Lit("yard_fixture", null, new Color(0.10f, 0.17f, 0.12f), 0.6f);
+        var bulbMat = Lit("yard_bulb", null, new Color(1f, 0.95f, 0.85f), 0.9f);
+        var yardLights = new List<(Vector3 pos, Quaternion q)>();
         foreach (var tile in items.GroupBy(b => (Mathf.FloorToInt((b.x + meta.sizeM / 2) / meta.tileM), Mathf.FloorToInt((b.z + meta.sizeM / 2) / meta.tileM))))
         {
             var origin = new Vector3(tile.Key.Item1 * meta.tileM - meta.sizeM / 2, 0, tile.Key.Item2 * meta.tileM - meta.sizeM / 2);
@@ -524,6 +554,26 @@ public static class TestMapBuilder
                         b.Cylinder(wall, p, it.w / 2, it.w / 2, it.h, 20);
                         b.ConeSmooth(roof, p + Vector3.up * it.h, it.w / 2 + 0.2f, it.roof * it.w / 2, 20);
                         break;
+                    case "shed":
+                    {
+                        b.Gabled(wall, roof, p, q, it.w, it.l, it.h, it.roof * it.w / 2);
+                        // the main door: a sliding door on the gable end toward the yard and the house (-forward, as
+                        // world.py lays a farmstead out), and a gooseneck yard light on the wall right above it, its
+                        // arm reaching out from a wall plate and a shade over the bulb (user, 2026-10-26)
+                        float hl = it.l / 2, dw = Mathf.Clamp(0.45f * it.w, 5f, 9f), dh = Mathf.Min(it.h - 0.9f, 4.8f);
+                        var dark = new[] { it.wall[0] * 0.55f, it.wall[1] * 0.55f, it.wall[2] * 0.55f };
+                        b.Box(Sub(ColourMat(cache, dark, 0.35f)), p + q * new Vector3(0f, dh / 2f, -hl - 0.05f), q, new Vector3(dw, dh, 0.1f));
+                        float ly = dh + 0.6f;
+                        int fx = Sub(fixture);
+                        b.Box(fx, p + q * new Vector3(0f, ly, -hl - 0.03f), q, new Vector3(0.25f, 0.25f, 0.06f));
+                        b.Box(fx, p + q * new Vector3(0f, ly, -hl - 0.45f), q, new Vector3(0.05f, 0.05f, 0.85f));
+                        b.Box(fx, p + q * new Vector3(0f, ly - 0.12f, -hl - 0.85f), q, new Vector3(0.05f, 0.25f, 0.05f));
+                        var shadeAt = p + q * new Vector3(0f, ly - 0.32f, -hl - 0.85f);
+                        b.Cylinder(fx, shadeAt, 0.3f, 0.06f, 0.22f, 14);
+                        b.Disc(Sub(bulbMat), shadeAt + Vector3.up * 0.03f, Quaternion.LookRotation(Vector3.down), 0.2f, 14);
+                        yardLights.Add((origin + shadeAt - Vector3.up * 0.05f, q));
+                        break;
+                    }
                     case "windmill":
                         b.Frustum(wall, p, q, 1.6f, 0.25f, it.h);
                         b.Disc(roof, p + Vector3.up * (it.h + 0.3f) + q * Vector3.forward * 0.4f, q, 1.5f, 16);
@@ -545,6 +595,66 @@ public static class TestMapBuilder
             go.AddComponent<MeshCollider>().sharedMesh = mesh;
             GameObjectUtility.SetStaticEditorFlags(go, StaticEditorFlags.BatchingStatic);
         }
+        // the yard lights: warm spots shining down and out over the door, culled past 1.5 km (TestMapNightLights turns
+        // them on from dusk to dawn)
+        var lroot = new GameObject("Yard lights").transform; lroot.SetParent(parent, false);
+        foreach (var (pos, q) in yardLights)
+        {
+            var dir = (Vector3.down + q * Vector3.back * 0.5f).normalized;
+            var l = Spot("Yard light", lroot, pos, Quaternion.LookRotation(dir), 4000f, 140f, 70f, 45f, new Color(1f, 0.86f, 0.68f), 1500f);
+            l.gameObject.SetActive(false);   // (TestMapNightLights activates those near the camera at night)
+        }
+        Debug.Log($"[TestMap] {yardLights.Count} barns, each with a door and a yard light");
+    }
+
+    /// <summary>An HDRP spot light: its luminous flux (lm) aimed into its cone, no shadows, culled past fade m.</summary>
+    static Light Spot(string name, Transform parent, Vector3 pos, Quaternion rot, float lumens, float angle, float inner, float range, Color c, float fade)
+    {
+        var go = new GameObject(name);
+        go.transform.SetParent(parent, false);
+        go.transform.SetPositionAndRotation(pos, rot);
+        var l = go.AddComponent<Light>(); l.type = LightType.Spot;
+        var hd = go.AddComponent<HDAdditionalLightData>();
+        l.lightUnit = LightUnit.Lumen; l.intensity = lumens; l.color = c;
+        l.spotAngle = angle; l.innerSpotAngle = inner; l.range = range; l.shadows = LightShadows.None;
+        hd.enableSpotReflector = true; hd.fadeDistance = fade; hd.volumetricDimmer = 0f;
+        return l;
+    }
+
+    /// <summary>The truck's headlights, at its lamps (replacing any it has), aimed a little down the road.</summary>
+    static Light[] AddHeadlights(TestMapCar car)
+    {
+        var body = car.transform.Find("Body");
+        foreach (Transform t in body.Cast<Transform>().ToArray()) if (t.name.StartsWith("Headlight")) Object.DestroyImmediate(t.gameObject);
+        var o = new Light[2];
+        for (int i = 0; i < 2; i++)
+        {
+            float x = i == 0 ? -0.7f : 0.7f;
+            o[i] = Spot(i == 0 ? "Headlight L" : "Headlight R", body, Vector3.zero, Quaternion.identity, 5000f, 60f, 25f, 160f, new Color(1f, 0.97f, 0.9f), 1200f);
+            o[i].transform.localPosition = new Vector3(x, 1.0f, 2.86f);
+            o[i].transform.localRotation = Quaternion.Euler(4f, 0f, 0f);
+        }
+        return o;
+    }
+
+    /// <summary>The scene's night lights: the switch on the world, wired to the barns' lights and bulbs and the truck.</summary>
+    static void WireNightLights(GameObject world, TestMapCar car, StormRenderer storm)
+    {
+        var old = world.GetComponent<TestMapNightLights>(); if (old) Object.DestroyImmediate(old);   // (fresh, with this build's values)
+        var nl = world.AddComponent<TestMapNightLights>();
+        nl.storm = storm; nl.car = car;
+        nl.yardLights = world.transform.Find("Yard lights");
+        nl.farmsteads = world.transform.Find("Farmsteads");
+        nl.bulb = AssetDatabase.LoadAssetAtPath<Material>($"{Gen}/Materials/yard_bulb.mat");
+        if (car)
+        {
+            nl.headlights = AddHeadlights(car);
+            var body = car.transform.Find("Body");
+            Renderer R(string n) { var t = body.Find(n); return t ? t.GetComponent<Renderer>() : null; }
+            nl.lamps = new[] { R("Lamp L"), R("Lamp R") };
+            nl.tails = new[] { R("Tail L"), R("Tail R") };
+        }
+        EditorUtility.SetDirty(nl);
     }
 
     // ---------------------------------------------------------------------------------------------------- power
@@ -690,6 +800,7 @@ public static class TestMapBuilder
             name = r.name, cls = r.cls,
             points = Enumerable.Range(0, r.pts.Length / 3).Select(i => new Vector3(r.pts[3 * i], r.pts[3 * i + 1], r.pts[3 * i + 2])).ToArray(),
         }).ToArray();
+        WireNightLights(world, car, storm);
         if (w.spots.Length > 0)
         {
             car.transform.position = w.spots[0].position + Vector3.up;
