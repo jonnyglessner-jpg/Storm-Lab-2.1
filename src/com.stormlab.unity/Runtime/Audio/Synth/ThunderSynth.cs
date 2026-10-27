@@ -36,6 +36,8 @@ namespace StormLab.Audio
         public float delaySeconds;
         /// <summary>distance to the nearest point of the channel, m</summary>
         public float nearestM;
+        /// <summary>how far the limiter turned the loudest moment down, dB (0: not at all)</summary>
+        public float limitedDb;
         /// <summary>the flash's character, for readouts</summary>
         public string character;
     }
@@ -47,6 +49,8 @@ namespace StormLab.Audio
         public const float AudibleRangeM = 25000f;
         /// <summary>overall level: a ground strike about 1 km away peaks near full scale</summary>
         public static float Gain = 1f;
+        /// <summary>no thunder peaks above this (-3 dBFS), leaving room for the wind, rain and other thunder</summary>
+        public const float Ceiling = 0.7f;
         const int EnvRate = 1000;          // envelope bins per second
         const float PulseSeconds = 0.003f; // a segment's own pulse length
 
@@ -141,15 +145,17 @@ namespace StormLab.Audio
                 for (int j = 0; j < len && w.at + j < n; j++)
                     if (w.at + j >= 0) o[w.at + j] += w.amp * 6f * (1f - 2f * j / (float)len);
             }
-            // level: physical 1/d throughout (the 1 km reference gives Gain), then a soft limit for the closest strikes
+            // level: physical 1/d throughout (the 1 km reference gives Gain); the closest strikes' peaks are limited cleanly
+            // (a look-ahead limiter, no clipping: a soft clipper here crackled like a blown speaker)
             float g = Gain;
-            for (int i = 0; i < n; i++) o[i] = Dsp.Tanh(o[i] * g);
+            for (int i = 0; i < n; i++) o[i] *= g;
+            float limited = Dsp.LimitBuffer(o, Ceiling, SampleRate);
             // fade the last 0.3 s
             int fade = Math.Min(n, (int)(0.3f * SampleRate));
             for (int i = 0; i < fade; i++) o[n - 1 - i] *= i / (float)fade;
             return new Thunder
             {
-                samples = o, sampleRate = SampleRate, delaySeconds = first, nearestM = nearest,
+                samples = o, sampleRate = SampleRate, delaySeconds = first, nearestM = nearest, limitedDb = limited,
                 character = $"echo {echo:0.0} s, crackle {crackle:0.00}, bass {bass:0.00}, roll {rollHz:0.0} Hz x{rollDepth:0.00}, strokes {nStrokes}"
             };
         }

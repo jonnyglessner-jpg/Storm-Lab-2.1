@@ -89,6 +89,8 @@ namespace StormLab.Audio
         void Update()
         {
             var ears = Ears();
+            // the final mix gets a limiter, so loud moments that pile up dip instead of clipping
+            if (ears.TryGetComponent<AudioListener>(out _) && !ears.TryGetComponent<MasterLimiter>(out _)) ears.gameObject.AddComponent<MasterLimiter>();
             var at = player ? player.position : ears.position;
             storms.Clear();
             if (Storms != null) storms.AddRange(Storms());
@@ -217,23 +219,30 @@ namespace StormLab.Audio
                 if (f < 0) return;
                 Release(voices[f]); voices.RemoveAt(f);
             }
-            var clip = AudioClip.Create("Thunder", th.samples.Length, 1, th.sampleRate, false);
+            double start = p.flashDsp + th.delaySeconds, now = AudioSettings.dspTime;
+            // the sound should already have begun (the synthesis ran late): start that far in, faded in over 20 ms, as
+            // jumping into the middle of a waveform clicks
+            var samples = th.samples;
+            if (start < now)
+            {
+                int skip = (int)((now - start) * th.sampleRate);
+                if (skip >= samples.Length - th.sampleRate / 10) return;
+                samples = new float[th.samples.Length - skip];
+                Array.Copy(th.samples, skip, samples, 0, samples.Length);
+                int fade = Math.Min(samples.Length, th.sampleRate / 50);
+                for (int i = 0; i < fade; i++) samples[i] *= i / (float)fade;
+                start = now;
+            }
+            var clip = AudioClip.Create("Thunder", samples.Length, 1, th.sampleRate, false);
             clip.hideFlags = HideFlags.DontSave;
-            clip.SetData(th.samples, 0);
+            clip.SetData(samples, 0);
             var go = new GameObject("Thunder"); go.transform.SetParent(transform, false); go.hideFlags = HideFlags.DontSave;
             var src = go.AddComponent<AudioSource>();
             src.playOnAwake = false; src.clip = clip; src.volume = thunderVolume;
             // distance and air absorption are in the samples; only pan by where the flash is
             src.spatialBlend = 0f;
             src.panStereo = Vector3.Dot(ears.right, (p.from - ears.position).normalized) * 0.7f;
-            double start = p.flashDsp + th.delaySeconds, now = AudioSettings.dspTime;
-            if (start > now) src.PlayScheduled(start);
-            else
-            {
-                int skip = (int)((now - start) * th.sampleRate);
-                if (skip >= th.samples.Length - th.sampleRate / 10) { Release(new Voice { source = src, clip = clip }); return; }
-                src.timeSamples = skip; src.Play();
-            }
+            if (start > now) src.PlayScheduled(start); else src.Play();
             voices.Add(new Voice { source = src, clip = clip, startsAt = start, endsAt = Math.Max(start, now) + clip.length + 0.2, nearestM = th.nearestM });
             ThunderPlayed++; LastThunder = th;
         }
