@@ -29,6 +29,9 @@ MAX_GRADE = {"state": 0.045, "paved": 0.07, "gravel": 0.08}
 SUPER_E = 0.04
 NO_PASS_SIGHT_M = 300.0
 EYE = 1.08
+# Dixie map: a junction height far from a road's own profile (a highway on a fill or in a cut) is blended in over a
+# length that keeps the road under its grade limit, not over the fixed BLEND_M (set by dixie/places.py)
+ADAPTIVE_BLEND = False
 
 
 def densify(pts, junctions, step=STEP):
@@ -70,7 +73,7 @@ def bridge_spans(pts, s, terrain, prof, streams):
         bank = 20.0 if river else 8.0
         half = max(10.0, (st["width"] / 2 + bank) / max(math.sin(math.radians(ang)), 0.5))
         q = np.array(LineString(pts).interpolate(sc).coords[0])
-        deck = stream_level(st, q) + (4.5 if river else 3.0)
+        deck = stream_level(st, q) + st.get("clear", 4.5 if river else 3.0)     # (the Mississippi: ship clearance)
         spans.append([sc - half, sc + half, deck, river, k])
     return spans
 
@@ -93,7 +96,7 @@ def profile(stk, dem_s, streams):
         p = np.maximum(p, floor)
         # grow each span over the dip it rides above
         for sp in spans:
-            cap = 400.0 if sp[3] else 120.0
+            cap = streams[sp[4]].get("span_cap", 400.0) if sp[3] else 120.0
             mid = 0.5 * (sp[0] + sp[1])
             high = (p - t) > 2.5
             i = int(np.argmin(np.abs(s - mid)))
@@ -144,7 +147,8 @@ def pin(prof, node_h):
         for k, (sk, dk) in enumerate(pins):
             left = sk - ps[k - 1] if k > 0 else np.inf
             right = ps[k + 1] - sk if k + 1 < len(ps) else np.inf
-            for lim, sel in ((min(B, left / 2), s <= sk), (min(B, right / 2), s > sk)):
+            Bk = max(B, 1.6 * abs(dk) / MAX_GRADE[prof["cls"]]) if ADAPTIVE_BLEND else B
+            for lim, sel in ((min(Bk, left / 2), s <= sk), (min(Bk, right / 2), s > sk)):
                 x = np.abs(s[sel] - sk) / max(lim, 1e-3)
                 w = np.where(x < 1, 1 - x * x * (3 - 2 * x), 0.0)
                 corr[sel] += dk * w

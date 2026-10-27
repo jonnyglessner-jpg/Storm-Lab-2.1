@@ -19,7 +19,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import map_config as cfg
 
-OUT = cfg.ROOT / "tests" / "StormLabTest" / "Assets" / "TestMap" / "Generated" / "Textures"
+OUT = cfg.UNITY_GEN / "Textures"          # Assets/TestMap/Generated/Textures for the plains map
 N = 1024
 LAYER_M = 12.0                 # ground layer tile size, metres
 ROAD_REPEAT_M = 12.192         # 40 ft

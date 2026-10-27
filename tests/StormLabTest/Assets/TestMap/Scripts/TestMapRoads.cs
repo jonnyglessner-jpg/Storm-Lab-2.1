@@ -69,10 +69,10 @@ namespace StormLab.TestMap
         }
 
         /// <summary>The network from Resources (null when navmap.py has not been run).</summary>
-        public static TestMapRoads Load()
+        public static TestMapRoads Load(string name = "TestMapNav")
         {
-            var t = Resources.Load<TextAsset>("TestMapNav");
-            if (!t) { Debug.LogWarning("TestMapRoads: Resources/TestMapNav.json is missing: run python -I tools/testmap/navmap.py"); return null; }
+            var t = Resources.Load<TextAsset>(name);
+            if (!t) { Debug.LogWarning($"TestMapRoads: Resources/{name}.json is missing: run python -I tools/testmap/navmap.py"); return null; }
             return new TestMapRoads(JsonUtility.FromJson<Data>(t.text));
         }
 

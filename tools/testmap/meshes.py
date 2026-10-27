@@ -540,7 +540,7 @@ def build_bridges(tm, profs, ground):
                 tm.add(key, M_CONCRETE, V, UV, T, want=np.tile([0, -1.0, 0], (len(T), 1)))
             # abutments and piers
             span = s1 - s0
-            npier = int(span // 28)
+            npier = int(span // (28 if span < 600 else 80))      # long river crossings: longer spans between piers
             stations = [s0, s1] + [s0 + span * (i + 1) / (npier + 1) for i in range(npier)]
             for q in stations:
                 p, t, n, height = sample_prof(pr, q)
@@ -558,7 +558,7 @@ def build_bridges(tm, profs, ground):
 def build_water(tm, streams):
     n = 0
     for st in streams:
-        if st["width"] <= 0:
+        if st["width"] <= 0 or st.get("polygon"):         # (polygon: water drawn from its area, dixie/places.py)
             continue
         p = np.asarray(st["pts"])
         lvl = np.asarray(st["level"])

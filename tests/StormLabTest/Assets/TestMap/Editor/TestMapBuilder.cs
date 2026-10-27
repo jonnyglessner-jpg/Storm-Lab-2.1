@@ -1,4 +1,5 @@
-// Builds the plains test map (Assets/Scenes/TestMap.unity) from TestMapData/, which tools/testmap/*.py write:
+// Builds the plains test map (Assets/Scenes/TestMap.unity) from TestMapData/, which tools/testmap/*.py write,
+// or the Dixie map (Assets/Scenes/DixieMap.unity) from DixieMapData/, which tools/testmap/dixie/*.py write:
 // 100 terrain tiles of 5 x 5 miles with eight ground layers and their trees, the road, bridge and water meshes, the
 // farmsteads, the power lines, a horizon skirt three map widths across, then the scene: HDRP sky and sun, the car and
 // its camera, and a StormLab storm (StormRenderer with lightning) whose track crosses the map.
@@ -6,7 +7,8 @@
 //   StormLab > Test Map > Open Test Map     opens the scene and presses Play (builds it first if missing)
 //   StormLab > Test Map > Rebuild Farmsteads and Lights   only the farmsteads, their yard lights and the truck's
 //                                           headlights, in the scene as it is (keeps everything else in it)
-// Batch: -executeMethod TestMapBuilder.BuildFromCommandLine (or RebuildFarmsteadsFromCommandLine)
+//   StormLab > Dixie Map > Build World / Open Dixie Map   the same for the Dixie map (Natchez, MS)
+// Batch: -executeMethod TestMapBuilder.BuildFromCommandLine (or RebuildFarmsteadsFromCommandLine, BuildDixieFromCommandLine)
 // Generated assets are not in git; the Python tools and this builder recreate them (README in tools/testmap).
 using System;
 using System.Collections.Generic;
@@ -24,8 +26,22 @@ using Object = UnityEngine.Object;
 
 public static class TestMapBuilder
 {
-    public const string Gen = "Assets/TestMap/Generated", ScenePath = "Assets/Scenes/TestMap.unity";
-    public static string DataDir => Path.GetFullPath(Path.Combine(Application.dataPath, "..", "TestMapData"));
+    /// <summary>One map: where its data, generated assets and scene are, and what grows and storms there.</summary>
+    public sealed class MapSpec
+    {
+        public string data, gen, scene, world, nav, preset;
+        public bool dixie;
+        public static readonly MapSpec Plains = new MapSpec { data = "TestMapData", gen = "Assets/TestMap/Generated",
+            scene = "Assets/Scenes/TestMap.unity", world = "Plains Test Map", nav = "TestMapNav", preset = "plains" };
+        public static readonly MapSpec Dixie = new MapSpec { data = "DixieMapData", gen = "Assets/TestMap/GeneratedDixie",
+            scene = "Assets/Scenes/DixieMap.unity", world = "Dixie Map", nav = "DixieMapNav", preset = "dixie", dixie = true };
+    }
+
+    /// <summary>The map the builder works on (plains unless a Dixie menu or command set it).</summary>
+    public static MapSpec Map = MapSpec.Plains;
+    public static string Gen => Map.gen;
+    public static string ScenePath => Map.scene;
+    public static string DataDir => Path.GetFullPath(Path.Combine(Application.dataPath, "..", Map.data));
     const float Mile = 1609.344f;
 
     [Serializable] public class SkirtMeta { public int res; public float size, origin, hmin, hmax; }
@@ -54,9 +70,19 @@ public static class TestMapBuilder
     public static Meta LoadMeta() => JsonUtility.FromJson<Meta>(File.ReadAllText(Path.Combine(DataDir, "meta.json")));
 
     [MenuItem("StormLab/Test Map/Build World")]
-    public static void BuildMenu() => Build();
+    public static void BuildMenu() { Map = MapSpec.Plains; Build(); }
+
+    [MenuItem("StormLab/Dixie Map/Build World")]
+    public static void BuildDixieMenu() { Map = MapSpec.Dixie; try { Build(); } finally { Map = MapSpec.Plains; } }
+
+    [MenuItem("StormLab/Dixie Map/Open Dixie Map")]
+    public static void OpenDixie() { Map = MapSpec.Dixie; try { Open(); } finally { Map = MapSpec.Plains; } }
+
+    public static void BuildDixieFromCommandLine() { Map = MapSpec.Dixie; BuildFromCommandLine(); }
 
     [MenuItem("StormLab/Test Map/Open Test Map")]
+    public static void OpenMenu() { Map = MapSpec.Plains; Open(); }
+
     public static void Open()
     {
         if (EditorApplication.isPlaying) { EditorApplication.ExitPlaymode(); return; }
@@ -71,8 +97,8 @@ public static class TestMapBuilder
     {
         var meta = LoadMeta();
         var scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
-        var worldGo = GameObject.Find("Plains Test Map");
-        if (!worldGo) throw new InvalidOperationException("no 'Plains Test Map' in " + ScenePath + ": build the world first");
+        var worldGo = GameObject.Find(Map.world);
+        if (!worldGo) throw new InvalidOperationException($"no '{Map.world}' in {ScenePath}: build the world first");
         foreach (var n in new[] { "Farmsteads", "Yard lights" }) { var t = worldGo.transform.Find(n); if (t) Object.DestroyImmediate(t.gameObject); }
         BuildBuildings(meta, worldGo.transform);
         var w = worldGo.GetComponent<TestMapWorld>();
@@ -109,7 +135,9 @@ public static class TestMapBuilder
     {
         var t0 = DateTime.Now;
         if (!File.Exists(Path.Combine(DataDir, "meta.json")))
-            throw new FileNotFoundException("TestMapData/meta.json is missing: run tools/testmap (fetch_terrain, terrain, roads, textures, world) first");
+            throw new FileNotFoundException(Map.dixie
+                ? "DixieMapData/meta.json is missing: run tools/testmap/dixie (fetch, land, roadnet, groundtex, places, navmap) first"
+                : "TestMapData/meta.json is missing: run tools/testmap (fetch_terrain, terrain, roads, textures, world) first");
         var meta = LoadMeta();
         try
         {
@@ -123,7 +151,7 @@ public static class TestMapBuilder
             var trees = TreePrototypes();
             Progress("scene", 0.05f);
             var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-            var world = new GameObject("Plains Test Map");
+            var world = new GameObject(Map.world);
             BuildTerrain(meta, layers, trees, world.transform);
             BuildMeshes(meta, mats, world.transform);
             BuildBuildings(meta, world.transform);
@@ -202,13 +230,27 @@ public static class TestMapBuilder
             ["concrete"] = Lit("concrete", Tex("concrete"), Color.white, 0.25f),
             ["water"] = Lit("water", null, new Color(0.16f, 0.2f, 0.2f), 0.93f),
         };
+        if (Map.dixie)
+        {
+            byName["river"] = Lit("river", null, new Color(0.33f, 0.28f, 0.20f), 0.9f);    // the Mississippi's silt
+            byName["canopy_hard"] = Lit("canopy_hard", Tex("canopy_hard"), Color.white, 0.1f);
+            byName["canopy_pine"] = Lit("canopy_pine", Tex("canopy_pine"), Color.white, 0.1f);
+            foreach (var n in new[] { "canopy_hard", "canopy_pine" })
+            {
+                byName[n].SetTexture("_NormalMap", Tex(n + "_n"));
+                byName[n].EnableKeyword("_NORMALMAP");
+                HDMaterial.ValidateMaterial(byName[n]);
+                EditorUtility.SetDirty(byName[n]);
+            }
+        }
         return meta.materials.Select(n => byName[n]).ToArray();
     }
 
     static TerrainLayer[] TerrainLayers(Meta meta)
     {
         var smooth = new Dictionary<string, float> { ["stubble"] = 0.18f, ["greencrop"] = 0.25f, ["fallow"] = 0.1f, ["range"] = 0.18f,
-            ["grass"] = 0.22f, ["sorghum"] = 0.2f, ["sand"] = 0.12f, ["dirt"] = 0.08f };
+            ["grass"] = 0.22f, ["sorghum"] = 0.2f, ["sand"] = 0.12f, ["dirt"] = 0.08f,
+            ["pasture"] = 0.2f, ["tilled"] = 0.1f, ["youngcrop"] = 0.18f, ["forest"] = 0.1f, ["lawn"] = 0.22f, ["wetland"] = 0.35f };
         return meta.layers.Select(n =>
         {
             string path = $"{Gen}/Layers/{n}.terrainlayer";
@@ -227,12 +269,19 @@ public static class TestMapBuilder
 
     // ---------------------------------------------------------------------------------------------------- trees
 
-    // 0 cottonwood, 1 elm / hackberry, 2 eastern red cedar, 3 shrub (plum, Russian olive)
+    // plains: 0 cottonwood, 1 elm / hackberry, 2 eastern red cedar, 3 shrub (plum, Russian olive)
+    // Dixie: 0 loblolly pine, 1 oak / sweetgum, 2 bald cypress, 3 understory (yaupon, privet)
     static TreePrototype[] TreePrototypes()
     {
         var bark = Lit("bark", null, new Color(0.30f, 0.27f, 0.23f), 0.1f);
-        var leafTex = Tex("ground_grass");
-        var leaves = new[]
+        var leafTex = Tex(Map.dixie ? "ground_lawn" : "ground_grass");
+        var leaves = Map.dixie ? new[]
+        {
+            Lit("leaves_pine", leafTex, new Color(0.36f, 0.46f, 0.34f), 0.15f),
+            Lit("leaves_oak", leafTex, new Color(0.58f, 0.74f, 0.46f), 0.2f),
+            Lit("leaves_cypress", leafTex, new Color(0.62f, 0.78f, 0.50f), 0.2f),
+            Lit("leaves_understory", leafTex, new Color(0.50f, 0.64f, 0.40f), 0.2f),
+        } : new[]
         {
             Lit("leaves_cottonwood", leafTex, new Color(0.62f, 0.80f, 0.50f), 0.2f),
             Lit("leaves_elm", leafTex, new Color(0.55f, 0.72f, 0.44f), 0.2f),
@@ -243,7 +292,7 @@ public static class TestMapBuilder
         for (int k = 0; k < 4; k++)
         {
             string path = $"{Gen}/Trees/tree_{k}.prefab";
-            var mesh = TreeMesh(k);
+            var mesh = Map.dixie ? DixieTreeMesh(k) : TreeMesh(k);
             mesh.name = $"tree_{k}";
             string mpath = $"{Gen}/Trees/tree_{k}.asset";
             AssetDatabase.DeleteAsset(mpath);
@@ -251,10 +300,10 @@ public static class TestMapBuilder
             var go = new GameObject($"tree_{k}");
             go.AddComponent<MeshFilter>().sharedMesh = mesh;
             go.AddComponent<MeshRenderer>().sharedMaterials = new[] { bark, leaves[k] };
-            if (k <= 1)
+            if (k <= (Map.dixie ? 2 : 1))
             {
                 var cap = go.AddComponent<CapsuleCollider>();
-                cap.radius = k == 0 ? 0.45f : 0.3f; cap.height = 6f; cap.center = new Vector3(0, 3f, 0);
+                cap.radius = k == 0 && !Map.dixie ? 0.45f : 0.3f; cap.height = 6f; cap.center = new Vector3(0, 3f, 0);
             }
             var prefab = PrefabUtility.SaveAsPrefabAsset(go, path);
             Object.DestroyImmediate(go);
@@ -295,6 +344,44 @@ public static class TestMapBuilder
             default:    // shrub
                 for (int i = 0; i < 3; i++)
                     b.Blob(1, new Vector3(R(-1f, 1f), R(1.2f, 2f), R(-1f, 1f)), new Vector3(R(1.4f, 2f), R(1.1f, 1.6f), R(1.4f, 2f)), rnd);
+                break;
+        }
+        return b.ToMesh(true);
+    }
+
+    static Mesh DixieTreeMesh(int type)
+    {
+        var rnd = new System.Random(31 + type);
+        var b = new MeshBuilder(2);
+        float R(float a, float c) => a + (float)rnd.NextDouble() * (c - a);
+        switch (type)
+        {
+            case 0:     // loblolly pine: tall clear trunk, a small rounded crown of tufts at the top
+                b.Cylinder(0, Vector3.zero, 0.32f, 0.16f, 19f, 7);
+                for (int i = 0; i < 6; i++)
+                {
+                    float a = i * 60f * Mathf.Deg2Rad;
+                    var c = new Vector3(Mathf.Cos(a) * R(0.8f, 2f), R(16.5f, 21f), Mathf.Sin(a) * R(0.8f, 2f));
+                    b.Blob(1, c, new Vector3(R(1.8f, 2.6f), R(1.4f, 2f), R(1.8f, 2.6f)), rnd);
+                }
+                break;
+            case 1:     // oak / sweetgum: a stout trunk and a broad dome
+                b.Cylinder(0, Vector3.zero, 0.45f, 0.28f, 7f, 8);
+                for (int i = 0; i < 7; i++)
+                {
+                    float a = i * 51f * Mathf.Deg2Rad;
+                    var c = new Vector3(Mathf.Cos(a) * R(2f, 4f), R(10f, 14f), Mathf.Sin(a) * R(2f, 4f));
+                    b.Blob(1, c, new Vector3(R(3.2f, 4.5f), R(2.6f, 3.6f), R(3.2f, 4.5f)), rnd);
+                }
+                break;
+            case 2:     // bald cypress: flared base, straight trunk, a narrow open cone
+                b.Cylinder(0, Vector3.zero, 0.9f, 0.35f, 1.6f, 8);
+                b.Cylinder(0, new Vector3(0, 1.6f, 0), 0.35f, 0.18f, 14f, 7);
+                b.Cone(1, new Vector3(0, 6f, 0), 3.2f, 14f, 10, 6, rnd);
+                break;
+            default:    // understory
+                for (int i = 0; i < 3; i++)
+                    b.Blob(1, new Vector3(R(-1f, 1f), R(1.2f, 2.2f), R(-1f, 1f)), new Vector3(R(1.4f, 2.2f), R(1.2f, 1.8f), R(1.4f, 2.2f)), rnd);
                 break;
         }
         return b.ToMesh(true);
@@ -376,8 +463,8 @@ public static class TestMapBuilder
                 t.materialTemplate = mat;
                 t.heightmapPixelError = 4f;
                 t.basemapDistance = 2500f;
-                t.treeDistance = 5000f;
-                t.treeBillboardDistance = 5000f;
+                t.treeDistance = Map.dixie ? 3000f : 5000f;      // (Dixie: the canopy shell carries the forest beyond)
+                t.treeBillboardDistance = t.treeDistance;
                 t.treeMaximumFullLODCount = 100000;
                 t.drawInstanced = true;
                 t.groupingID = 1;
@@ -478,8 +565,9 @@ public static class TestMapBuilder
             go.AddComponent<MeshFilter>().sharedMesh = mesh;
             var mr = go.AddComponent<MeshRenderer>();
             mr.sharedMaterials = matIds.Select(m => mats[m]).ToArray();
-            mr.shadowCastingMode = layer == "bridges" ? ShadowCastingMode.On : ShadowCastingMode.Off;
-            if (layer != "water") go.AddComponent<MeshCollider>().sharedMesh = mesh;
+            mr.shadowCastingMode = layer == "bridges" || layer == "canopy" ? ShadowCastingMode.On : ShadowCastingMode.Off;
+            // no collider on the water, nor on the canopy shell (a car driving into the woods would climb it)
+            if (layer != "water" && layer != "canopy") go.AddComponent<MeshCollider>().sharedMesh = mesh;
             GameObjectUtility.SetStaticEditorFlags(go, StaticEditorFlags.BatchingStatic);
         }
         AssetDatabase.SaveAssets();
@@ -756,7 +844,7 @@ public static class TestMapBuilder
         sunGo.transform.rotation = Quaternion.Euler(32f, 70f, 0f);      // late afternoon, sun in the west-south-west
         RenderSettings.sun = sun;
 
-        string vpath = $"{Gen}/TestMapVolume.asset";
+        string vpath = $"{Gen}/TestMapVolume.asset";      // (one per map: Gen is the map's folder)
         AssetDatabase.DeleteAsset(vpath);
         var profile = ScriptableObject.CreateInstance<VolumeProfile>();
         AssetDatabase.CreateAsset(profile, vpath);
@@ -783,7 +871,7 @@ public static class TestMapBuilder
 
         var stormGo = new GameObject("Storm");
         var storm = stormGo.AddComponent<StormRenderer>();
-        storm.preset = "plains"; storm.varied = true; storm.seed = 1;
+        storm.preset = Map.preset; storm.varied = true; storm.seed = 1;
         // the storm is lit by the scene's sun, in the game's physical units under HDRP's exposure and tonemapping
         storm.sun = sun; storm.sunSource = SunSource.Light;
         storm.stormMinutes = 20f;
@@ -791,7 +879,7 @@ public static class TestMapBuilder
         rig.storm = storm;
 
         var w = world.AddComponent<TestMapWorld>();
-        w.car = car; w.cameraRig = rig; w.storm = storm; w.sizeM = meta.sizeM; w.datum = meta.datum;
+        w.car = car; w.cameraRig = rig; w.storm = storm; w.sizeM = meta.sizeM; w.datum = meta.datum; w.navResource = Map.nav; w.sectionGrid = !Map.dixie;
         // the storm and lighting panel (Tab): storm controls and a 24 hour clock for the sun, moon and exposure
         var panel = world.AddComponent<TestMapStormPanel>(); panel.world = w; panel.storm = storm; panel.sun = sun;
         w.spots = meta.spawns.Select(s => new TestMapWorld.Spot { name = s.name, position = new Vector3(s.x, s.y, s.z), heading = s.yaw }).ToArray();
