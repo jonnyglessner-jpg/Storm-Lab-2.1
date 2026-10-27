@@ -16,6 +16,8 @@ namespace StormLab.Audio
         public StormAudio storm;
         [Range(0f, 1f)] public float volume = 0.8f;
         [Range(0f, 1f)] public float breezeVolume = 1f;
+        [Tooltip("the birds' level (0.25 = 12 dB quieter than first built, user 2026-10-26)")]
+        [Range(0f, 1f)] public float birdVolume = 0.25f;
         [Tooltip("seconds between birds calling (a new bird), min and max")]
         public Vector2 birdEvery = new Vector2(4f, 14f);
         [Tooltip("seconds after the tornado's wind dies away before the birds call again")]
@@ -101,7 +103,7 @@ namespace StormLab.Audio
             birdVoices.RemoveAll(v => !v || !v.isPlaying);
         }
 
-        static float BirdLevel(Vector3 from, Vector3 ears) => Mathf.Clamp01(Mathf.Pow(30f / Mathf.Max(Vector3.Distance(from, ears), 1f), 0.9f)) * 0.55f;
+        float BirdLevel(Vector3 from, Vector3 ears) => Mathf.Clamp01(Mathf.Pow(30f / Mathf.Max(Vector3.Distance(from, ears), 1f), 0.9f)) * 0.55f * birdVolume;
 
         Vector3 Around(Vector3 c, float dist, float height)
         {

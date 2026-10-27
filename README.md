@@ -148,7 +148,7 @@ air takes the highs first (a near strike rips and cracks, a distant one grumbles
 time, and a seeded character per flash (echo, crackle, bass, rolling) varies flashes of the same shape. Up to 16 thunder
 voices; a nearer flash displaces a farther one still on its way. `CountryAmbience`: a soft breeze, birds (western
 meadowlark, red-winged blackbird, sparrows, mourning dove) calling from 20-140 m and often repeating; the birds
-stop as soon as the tornado wind is heard and come back 2 minutes after it has gone (`birdsReturnAfter`). On the test map
+stop as soon as the tornado wind is heard and come back 2 minutes after it has gone (`birdsReturnAfter`); `birdVolume` sets their level. On the test map
 `TestMapAudio` adds both, and `TestMapCarAudio` gives the truck a V8 on a six-speed automatic, tyre squeal when the
 tyres slide past their grip, road roar and suspension thumps; the wind and rain are taken
 at the truck (at the camera in free flight); **M** mutes. `dotnet run --project validation/audio` renders every synth to
