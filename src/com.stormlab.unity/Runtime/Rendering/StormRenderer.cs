@@ -634,14 +634,23 @@ namespace StormLab
 
         MaterialPropertyBlock compositeProps;
         /// <summary>Draw the storm over the bound colour target (out = storm.rgb x light scale + storm.a x target) and, with
-        /// writeDepth, write its depth where it is opaque.</summary>
-        public void RecordComposite(CommandBuffer cmd, Camera cam, Texture storm, Texture dist, int w, int h, bool writeDepth)
+        /// writeDepth, write its depth where it is opaque. under: the storm composited just before (and its march
+        /// texture), which this one is laid behind wherever it is the nearer of the two along the ray.</summary>
+        public void RecordComposite(CommandBuffer cmd, Camera cam, Texture storm, Texture dist, int w, int h, bool writeDepth,
+            StormRenderer under = null, Texture underTex = null)
         {
             if (!compositeMat || storm == null) return;
             var mpb = compositeProps ??= new MaterialPropertyBlock(); mpb.Clear();
             mpb.SetTexture("_StormTex", storm);
             mpb.SetTexture("_StormDist", dist ? dist : Texture2D.blackTexture);
             mpb.SetVector("_StormView", new Vector4(w, h, 0, toneMap ? 0 : Luminance));
+            cams.TryGetValue(cam, out var st);
+            CamState ust = null;
+            bool layered = under != null && underTex && st != null && under.cams.TryGetValue(cam, out ust);
+            mpb.SetTexture("_StormMean", layered ? st.dist : Texture2D.blackTexture);
+            mpb.SetTexture("_UnderTex", layered ? underTex : Texture2D.blackTexture);
+            mpb.SetTexture("_UnderMean", layered ? ust.dist : Texture2D.blackTexture);
+            mpb.SetVector("_UnderP", new Vector4(layered ? 1 : 0, layered ? (under.toneMap ? 0 : under.Luminance) : 0, 0, 0));
             float tanY = Mathf.Tan(cam.fieldOfView * 0.5f * Mathf.Deg2Rad);
             mpb.SetVector("_StormTan", new Vector4(tanY * w / (float)h, tanY, 0, 0));
             cmd.BeginSample(CompositeSampler);

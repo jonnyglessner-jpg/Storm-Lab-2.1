@@ -1,6 +1,6 @@
 // HDRP custom pass (from StormLab 2.0's StormSkinCustomPass): ray-marches the active StormRenderer for each camera,
 // composites it over the camera colour and writes its depth where it is opaque. Storms marked drawAlongside are drawn
-// too, farthest first.
+// too: all are marched first, then composited farthest first, each in front of or behind the one before it per pixel.
 //
 // Injection point: BeforeTransparent, after HDRP has drawn the sky, applied its fog to opaques and combined its
 // volumetric clouds. Those passes treat any pixel without depth as open sky, so a storm drawn earlier gets HDRP's sky
@@ -48,18 +48,31 @@ namespace StormLab
                 drawn.Sort((a, b) => (b.UpdraftWorld(b.stormMinutes) - eye).sqrMagnitude.CompareTo((a.UpdraftWorld(a.stormMinutes) - eye).sqrMagnitude));
             }
             int w = hd.actualWidth, h = hd.actualHeight;
+            // Every storm is marched against the scene's depth before any is composited: a storm's depth (written where
+            // it hides half of what is behind it) stopped the next storm's march there, so a nearer storm's rain cut a
+            // farther one off along that line, straight up the rain column (user, 2026-10-27).
+            marched ??= new List<(StormRenderer, RenderTexture, RenderTexture)>();
+            marched.Clear();
             for (int i = 0; i < drawn.Count; i++)
             {
                 var storm = drawn[i];
                 // the march reads the depth buffer as a texture, so nothing may have it bound as a target meanwhile
                 CoreUtils.SetRenderTarget(ctx.cmd, ctx.cameraColorBuffer, ClearFlag.None);
                 var tex = storm.RecordMarch(ctx.cmd, cam, ctx.cameraDepthBuffer, w, h, i == 0, out var dist);
-                if (tex == null) continue;
-                CoreUtils.SetRenderTarget(ctx.cmd, ctx.cameraColorBuffer, ctx.cameraDepthBuffer, ClearFlag.None);
-                storm.RecordComposite(ctx.cmd, cam, tex, dist, w, h, writeDepth);
+                if (tex != null) marched.Add((storm, tex, dist));
+            }
+            CoreUtils.SetRenderTarget(ctx.cmd, ctx.cameraColorBuffer, ctx.cameraDepthBuffer, ClearFlag.None);
+            for (int i = 0; i < marched.Count; i++)
+            {
+                var (storm, tex, dist) = marched[i];
+                // farthest first; each storm is laid in front of or behind the one before it pixel by pixel (their
+                // mean distances along the ray), since a near storm's forward-flank rain can reach far past its updraft
+                var under = i > 0 ? marched[i - 1].Item1 : null;
+                storm.RecordComposite(ctx.cmd, cam, tex, dist, w, h, writeDepth, under, under != null ? marched[i - 1].Item2 : null);
                 Composites++;
             }
         }
+        List<(StormRenderer, RenderTexture, RenderTexture)> marched;
 
         static StormCustomPass global;
         public static StormCustomPass Global => global;

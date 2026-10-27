@@ -15,6 +15,10 @@ Shader "Hidden/StormLab/Composite"
     float4 _StormView;
     // tangent of the half field of view, horizontal and vertical
     float4 _StormTan;
+    // the storm composited just before this one, to lay this one behind it where it is nearer: its march (rgb, a =
+    // transmittance), both storms' mean distances along the ray (km); x 1 when there is one, y its luminance (0: standalone)
+    Texture2D _UnderTex; Texture2D<float> _StormMean, _UnderMean;
+    float4 _UnderP;
     struct V { float4 pos : SV_Position; };
     V vert(uint id : SV_VertexID)
     {
@@ -47,8 +51,22 @@ Shader "Hidden/StormLab/Composite"
             {
                 float4 s = _StormTex.SampleLevel(sampler_LinearClamp_StormComposite, StormUV(i.pos), 0);
                 float k = _StormView.w > 0.0 ? _StormView.w * GetCurrentExposureMultiplier() : 1.0;
+                float3 rgb = s.rgb * k;
+                if (_UnderP.x > 0.5)
+                {
+                    // the storm composited before this one (target = u.rgb + u.a x scene): where it is the nearer, put this
+                    // one behind it, u.rgb + u.a x (rgb + s.a x scene) = target x s.a + u.rgb x (1 - s.a) + u.a x rgb.
+                    // Blended over a few km of their mean distances, so the order never flips on a hard line.
+                    float2 uv = StormUV(i.pos);
+                    float4 u = _UnderTex.SampleLevel(sampler_LinearClamp_StormComposite, uv, 0);
+                    float ku = _UnderP.y > 0.0 ? _UnderP.y * GetCurrentExposureMultiplier() : 1.0;
+                    float dThis = _StormMean.SampleLevel(sampler_LinearClamp_StormComposite, uv, 0);
+                    float dUnder = _UnderMean.SampleLevel(sampler_LinearClamp_StormComposite, uv, 0);
+                    float behind = smoothstep(-3.0, 3.0, dThis - dUnder);
+                    rgb = lerp(rgb, min(u.rgb * ku, 60000.0) * (1.0 - s.a) + u.a * rgb, behind);
+                }
                 // (capped below the half-float limit: a value past it is infinite in HDRP's buffers and spreads)
-                return float4(min(s.rgb * k, 60000.0), s.a);
+                return float4(min(rgb, 60000.0), s.a);
             }
             ENDHLSL
         }
