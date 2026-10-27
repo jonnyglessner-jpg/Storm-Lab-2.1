@@ -170,6 +170,35 @@ bool inTailCloud(float3 q)
     return s > 0.0 && s < Rw + 5.0 && abs(dot(dw, float2(-td.y, td.x))) < 1.2;
 }
 
+// nearField's inflow tail, on its own so the march can light it as the cloud it is (a game adaptation; the code is the
+// web build's, moved out of nearField unchanged)
+float beaverTail(float3 p, float fine)
+{
+    float zb = S_base.x;
+    float v = 0.0;
+    if (S_tail.w > 0.0)
+    {
+        // inflow tail (beaver tail): a smooth, laminar band streaming in along the forward flank's edge
+        float2 t0 = S_up.xy + S_f.xy * 2.5 + S_f.zw * 0.5;
+        float2 td = S_tail.xy; float s = dot(p.xy - t0, td);
+        // the tail curves: it bends toward the forward flank as it nears the storm
+        float qq = dot(p.xy - t0, float2(-td.y, td.x)) - 0.035 * (S_tail.z - s) * (S_tail.z - s) * 0.12 + 0.6 * sin(s * 0.35);
+        if (s > -2.0 && s < S_tail.z + 2.0 && abs(qq) < 5.0 && p.z > zb - 1.0 && p.z < zb + 3.0)
+        {
+            float fr = saturate(s / S_tail.z);
+            float n = 0.55 * n3(float3(s * 0.05, qq * 0.45, p.z * 0.6)) + 0.45 * lerp(0.5, n3(float3(s * 0.25, qq * 1.6, p.z * 2.5) + float3(0.6, 0.2, 0.4)), fine);
+            // a deep band near the storm (a kilometre or more), rising as it is drawn up into the updraft's vault,
+            // thinning and lowering to a ragged ribbon far out
+            float near = (1.0 - fr) * (1.0 - fr);
+            float wt = lerp(2.8, 0.45, pow(fr, 0.7)); float zc = zb + 0.2 + 1.1 * near; float th = lerp(0.22, 1.25, near);
+            float inT = ss(-2.0, 0.75, s) * (1.0 - ss(S_tail.z * 0.8, S_tail.z, s + (n - 0.5) * 4.0))
+                * ss(wt, wt * 0.45, abs(qq) + (n - 0.5) * 0.9) * ss(th, th * 0.4, abs(p.z - zc) + (n - 0.5) * 0.12);
+            v = max(v, S_tail.w * inT * 0.85);
+        }
+    }
+    return v;
+}
+
 float nearField(float3 p, float fine)
 {
     float zb = S_base.x; float clock = S_base.z;
@@ -305,26 +334,7 @@ float nearField(float3 p, float fine)
             v = max(v, S_anti.z * lw2 * 0.9);
         }
     }
-    if (S_tail.w > 0.0)
-    {
-        // inflow tail (beaver tail): a smooth, laminar band streaming in along the forward flank's edge
-        float2 t0 = S_up.xy + S_f.xy * 2.5 + S_f.zw * 0.5;
-        float2 td = S_tail.xy; float s = dot(p.xy - t0, td);
-        // the tail curves: it bends toward the forward flank as it nears the storm
-        float qq = dot(p.xy - t0, float2(-td.y, td.x)) - 0.035 * (S_tail.z - s) * (S_tail.z - s) * 0.12 + 0.6 * sin(s * 0.35);
-        if (s > -2.0 && s < S_tail.z + 2.0 && abs(qq) < 5.0 && p.z > zb - 1.0 && p.z < zb + 3.0)
-        {
-            float fr = saturate(s / S_tail.z);
-            float n = 0.55 * n3(float3(s * 0.05, qq * 0.45, p.z * 0.6)) + 0.45 * lerp(0.5, n3(float3(s * 0.25, qq * 1.6, p.z * 2.5) + float3(0.6, 0.2, 0.4)), fine);
-            // a deep band near the storm (a kilometre or more), rising as it is drawn up into the updraft's vault,
-            // thinning and lowering to a ragged ribbon far out
-            float near = (1.0 - fr) * (1.0 - fr);
-            float wt = lerp(2.8, 0.45, pow(fr, 0.7)); float zc = zb + 0.2 + 1.1 * near; float th = lerp(0.22, 1.25, near);
-            float inT = ss(-2.0, 0.75, s) * (1.0 - ss(S_tail.z * 0.8, S_tail.z, s + (n - 0.5) * 4.0))
-                * ss(wt, wt * 0.45, abs(qq) + (n - 0.5) * 0.9) * ss(th, th * 0.4, abs(p.z - zc) + (n - 0.5) * 0.12);
-            v = max(v, S_tail.w * inT * 0.85);
-        }
-    }
+    v = max(v, beaverTail(p, fine));
     return v * (1.0 - clearSlot(p));
 }
 

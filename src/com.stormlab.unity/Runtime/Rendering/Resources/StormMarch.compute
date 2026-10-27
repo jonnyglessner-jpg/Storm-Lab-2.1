@@ -992,7 +992,21 @@ void March(uint3 gid : SV_DispatchThreadID)
                 if (bn > 0.0)
                 {
                     float3 c;
-                    if (phys) c = (sunz * (cloudSun(lt.r, 0.0, 1.0) * (1.4 / 1.9)) + skyLight(sv) + groundLight(q, sunc)) * lerp(0.92, 0.83, fs);
+                    if (phys)
+                    {
+                        c = (sunz * (cloudSun(lt.r, 0.0, 1.0) * (1.4 / 1.9)) + skyLight(sv) + groundLight(q, sunc)) * lerp(0.92, 0.83, fs);
+                        // The beaver tail is not lowered cloud hanging in the base's shade but a band of the cloud itself out in
+                        // the inflow: lit as the main cloud is (its full sun, the sky it sees, the ground's bounce as on the base),
+                        // so it is the base's grey in shade and goes white where the sun reaches it (user, 2026-10-27).
+                        // Where it is the near field's cloud (not the wall cloud or the funnel), blended where they meet.
+                        float btN = nearOn ? beaverTail(q, 1.0) * (1.0 - clearSlot(q)) : 0.0;
+                        float tailK = ss(0.7, 1.0, btN / max(nw, 1e-4)) * (1.0 - fs);
+                        if (tailK > 0.0)
+                        {
+                            float3 cTail = sunz * cloudSun(lt.r, 0.0, 1.0) + skyLight(sv) + groundLight(q, sunc) * lerp(1.0, 0.3, ss(S_base.x - 0.4, S_base.x + 1.5, q.z));
+                            c = lerp(c, cTail, tailK);
+                        }
+                    }
                     else
                     {
                         // lowered cloud is lit mostly from the side and below: darker the further it hangs under the base
