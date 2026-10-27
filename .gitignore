@@ -26,3 +26,6 @@ validation/audio/out/
 # raw downloaded recordings (audio-sources/*/CREDITS.md lists them); the trimmed game clips are committed
 audio-sources/**/*.ogg
 validation/audio/thunder/out/
+
+# Python
+__pycache__/
