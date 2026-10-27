@@ -241,6 +241,7 @@ public static class StormAudioCheck
 
         // ---- 5 thunder
         rep.AppendLine().AppendLine("## 5 Thunder").AppendLine();
+        sa.thunder = true;   // (off in the game for now; the check still tests it)
         int flashes = 0; var ls = storm.GetComponent<LightningSystem>();
         Action<LightningFlash> count = _ => flashes++;
         if (ls) ls.FlashStarted += count;

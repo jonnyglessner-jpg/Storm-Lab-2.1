@@ -23,6 +23,8 @@ namespace StormLab.Audio
         public Transform listener;
         [Range(0f, 1f)] public float windVolume = 1f;
         [Range(0f, 1f)] public float rainVolume = 0.8f;
+        [Tooltip("thunder on (off for now at the user's request, 2026-10-26; the old built-in thunder stays silent too)")]
+        public bool thunder;
         [Range(0f, 1f)] public float thunderVolume = 1f;
         [Tooltip("wind speeds (m/s) at which the wind sound starts and reaches full intensity")]
         public Vector2 windRange = new Vector2(3f, 80f);
@@ -180,7 +182,8 @@ namespace StormLab.Audio
         // ------------------------------------------------------------------ thunder
         void OnThunder(LightningFlash flash, double lateSeconds)
         {
-            if (thunderVolume <= 0f) return;
+            // (still hooked when off, so LightningSystem's own thunder does not play instead)
+            if (!thunder || thunderVolume <= 0f) return;
             var ears = Ears();
             var e = new NVector3(ears.position.x, ears.position.y, ears.position.z);
             // cheap range test before copying the channel
