@@ -662,10 +662,20 @@ float3 skyFill() { return 0.5 * skyMean() * (_PL2.z + _Night.z) * _PL2.x; }
 // Sky light scattered toward the eye: the cap, the ring and the horizon by their solid angles and visibilities
 float3 skyLight(float4 sv) { return 0.5 * (0.18 * _SkyZen.rgb * sv.r + 0.477 * _SkyMid.rgb * sv.g + 0.342 * horLight(sv)) * _PL2.x + skyFill(); }
 // Light bounced up from the ground below: Plains grass and wheat (albedo ~0.12) lit by the key light and the sky,
-// averaged over the 4 km under the point, plus town light at night
+// averaged over the 4 km under the point, plus town light at night. Cloud higher above the base sees the ground over a
+// wider area, so four more taps spread out with the height above it (all at the point itself at the base). 2.0 switched to
+// a fixed 0.6 / 0.8 above base + 2 km: cloud above that plane ignored the storm's shadow on the ground, a straight line
+// across the storm by day at that height (user, 2026-10-27)
 float3 groundLight(float3 q, float3 sunc0)
 {
-    float2 g = q.z < S_base.x + 2.0 ? _Ground.SampleLevel(sampler_LinearClamp, uvw(q).xy, 0) : float2(0.6, 0.8);
+    float2 g = _Ground.SampleLevel(sampler_LinearClamp, uvw(q).xy, 0);
+    float gr = min(1.5 * max(q.z - S_base.x, 0.0), 20.0);
+    if (gr > 0.01)
+    {
+        g += _Ground.SampleLevel(sampler_LinearClamp, uvw(q + float3(gr, 0.0, 0.0)).xy, 0) + _Ground.SampleLevel(sampler_LinearClamp, uvw(q - float3(gr, 0.0, 0.0)).xy, 0)
+           + _Ground.SampleLevel(sampler_LinearClamp, uvw(q + float3(0.0, gr, 0.0)).xy, 0) + _Ground.SampleLevel(sampler_LinearClamp, uvw(q - float3(0.0, gr, 0.0)).xy, 0);
+        g *= 0.2;
+    }
     float3 E = sunc0 * (4.0 * max(_Sun.z, 0.0) * g.x) + skyMean() * g.y;
     return 0.5 * (float3(0.12, 0.14, 0.1) * E + _SkyP.y * float3(1.0, 0.75, 0.5)) * _PL2.y;
 }
