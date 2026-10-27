@@ -15,7 +15,7 @@ follows Supercell Lab 2.0 (`../supercell-lab-2`): the storm is the website's, no
 | `Runtime/Rendering` | `StormRenderer` (the component), `StormVolume` (GPU volume), `StormCustomPass` (HDRP), shaders in `Resources/` and `Shaders/` |
 | `Runtime/Lightning` | 2.0's lightning core (own assembly `StormLab.Lightning`, unchanged but for its namespace) |
 | `Runtime/Lightning/Integration` | `StormLightning` (add to the storm), `LightningCloudBridge`, `StormLightningActivity` (flash rates from this storm's cycles) |
-| `Runtime/Audio` | the sound (assembly `StormLab.Audio`): `StormAudio` (tornado wind, rain and hail, thunder), `CountryAmbience` (breeze, birds, cattle), `ProceduralAudio`; the synths in `Synth/` are plain C# |
+| `Runtime/Audio` | the sound (assembly `StormLab.Audio`): `StormAudio` (tornado wind, rain and hail, thunder), `CountryAmbience` (breeze, birds), `ProceduralAudio`; the synths in `Synth/` are plain C# |
 | `tests/StormLabTest/` | Unity 6000.6.6f1 HDRP test project; the plains test map (`Assets/TestMap`) and the render checks (`Assets/Editor`) |
 | `tools/testmap/` | the test map's Python pipeline (from 2.0; README there) |
 | `validation/` | parity check, website captures and comparisons, reports |
@@ -147,10 +147,10 @@ arrives at its own time and falls off as 1/distance, so a channel across the lin
 air takes the highs first (a near strike rips and cracks, a distant one grumbles), the delay is the real sound travel
 time, and a seeded character per flash (echo, crackle, bass, rolling) varies flashes of the same shape. Up to 16 thunder
 voices; a nearer flash displaces a farther one still on its way. `CountryAmbience`: a soft breeze, birds (western
-meadowlark, red-winged blackbird, sparrows, mourning dove) calling from 20-140 m and often repeating, and cattle mooing
-250-1300 m off; the birds stop as soon as the tornado wind is heard and come back 2 minutes after it has gone
-(`birdsReturnAfter`). On the test map `TestMapAudio` adds both, and `TestMapCarAudio` gives the truck a V8 on a six-speed
-automatic, tyre squeal when the tyres slide past their grip, road roar and suspension thumps; the wind and rain are taken
+meadowlark, red-winged blackbird, sparrows, mourning dove) calling from 20-140 m and often repeating; the birds
+stop as soon as the tornado wind is heard and come back 2 minutes after it has gone (`birdsReturnAfter`). On the test map
+`TestMapAudio` adds both, and `TestMapCarAudio` gives the truck a V8 on a six-speed automatic, tyre squeal when the
+tyres slide past their grip, road roar and suspension thumps; the wind and rain are taken
 at the truck (at the camera in free flight); **M** mutes. `dotnet run --project validation/audio` renders every synth to
 WAV in `validation/audio/out/` (gitignored) and checks their levels.
 

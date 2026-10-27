@@ -1,6 +1,6 @@
-// Plains ambience round the listener: a soft breeze, birds calling now and then from the grass and fence lines, and
-// cattle mooing in the distance. The birds go quiet as soon as a tornado's wind is heard (StormAudio.TornadoAudio) and
-// stay quiet until it has been gone a while; the cattle keep on.
+// Plains ambience round the listener: a soft breeze and birds calling now and then from the grass and fence lines. The
+// birds go quiet as soon as a tornado's wind is heard (StormAudio.TornadoAudio) and stay quiet until it has been gone a
+// while.
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -18,8 +18,6 @@ namespace StormLab.Audio
         [Range(0f, 1f)] public float breezeVolume = 1f;
         [Tooltip("seconds between birds calling (a new bird), min and max")]
         public Vector2 birdEvery = new Vector2(4f, 14f);
-        [Tooltip("seconds between cattle mooing, min and max")]
-        public Vector2 cowEvery = new Vector2(9f, 30f);
         [Tooltip("seconds after the tornado's wind dies away before the birds call again")]
         public float birdsReturnAfter = 120f;
         public int seed = 11;
@@ -28,16 +26,15 @@ namespace StormLab.Audio
         public bool BirdsSilenced { get; private set; }
 
         readonly List<AudioClip>[] birds = new List<AudioClip>[4];
-        readonly List<AudioClip> cows = new List<AudioClip>();
         readonly List<AudioSource> pool = new List<AudioSource>();
         readonly List<AudioSource> birdVoices = new List<AudioSource>();
-        Task<(float[][] birds, float[][] cows)> making;
+        Task<float[][]> making;
         ProceduralAudio breezeOut;
-        float nextBird, nextCow, silentUntil, repeatAt;
+        float nextBird, silentUntil, repeatAt;
         int repeats; AudioClip repeatClip; Vector3 repeatFrom;
         Rng rng;
 
-        const int BirdVariants = 4, CowVariants = 6;
+        const int BirdVariants = 4;
 
         void Start()
         {
@@ -49,12 +46,9 @@ namespace StormLab.Audio
             {
                 var b = new float[4 * BirdVariants][];
                 for (int k = 0; k < 4; k++) for (int v = 0; v < BirdVariants; v++) b[k * BirdVariants + v] = AmbienceSynth.Bird((BirdKind)k, s * 31 + (uint)(k * 7 + v + 1));
-                var c = new float[CowVariants][];
-                for (int v = 0; v < CowVariants; v++) c[v] = AmbienceSynth.Cow(s * 17 + (uint)v + 1);
-                return (b, c);
+                return b;
             });
             nextBird = Time.time + rng.Range(1f, 4f);
-            nextCow = Time.time + rng.Range(3f, 8f);
         }
 
         Transform Ears()
@@ -70,9 +64,8 @@ namespace StormLab.Audio
             {
                 if (making.Status == TaskStatus.RanToCompletion)
                 {
-                    var (b, c) = making.Result;
+                    var b = making.Result;
                     for (int k = 0; k < 4; k++) { birds[k] = new List<AudioClip>(); for (int v = 0; v < BirdVariants; v++) birds[k].Add(Clip($"{(BirdKind)k} {v}", b[k * BirdVariants + v], AmbienceSynth.BirdRate)); }
-                    for (int v = 0; v < c.Length; v++) cows.Add(Clip($"Cow {v}", c[v], AmbienceSynth.CowRate));
                 }
                 else if (making.Exception != null) Debug.LogException(making.Exception);
                 making = null;
@@ -86,16 +79,6 @@ namespace StormLab.Audio
             bool silent = t < silentUntil;
             if (silent && !BirdsSilenced) { foreach (var v in birdVoices) if (v) v.Stop(); birdVoices.Clear(); repeats = 0; }
             BirdsSilenced = silent;
-
-            if (cows.Count > 0 && t >= nextCow)
-            {
-                nextCow = t + rng.Range(cowEvery.x, cowEvery.y);
-                // a cow some way off in the pasture; now and then another answers from nearby
-                var at = Around(ears.position, rng.Range(250f, 1300f), 1.2f);
-                float d = Vector3.Distance(at, ears.position);
-                Play(cows[rng.Int(cows.Count)], at, Mathf.Clamp01(Mathf.Pow(220f / d, 0.85f)) * 0.75f, rng.Range(0.92f, 1.08f));
-                if (rng.U() < 0.3f) nextCow = t + rng.Range(1.5f, 4f);
-            }
 
             if (silent || birds[0] == null) return;
             if (repeats > 0 && t >= repeatAt)
@@ -159,8 +142,6 @@ namespace StormLab.Audio
 
         void OnDestroy()
         {
-            foreach (var l in birds) if (l != null) foreach (var c in l) if (c) Destroy(c);
-            foreach (var c in cows) if (c) Destroy(c);
-        }
+            foreach (var l in birds) if (l != null) foreach (var c in l) if (c) Destroy(c);        }
     }
 }

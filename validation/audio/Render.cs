@@ -140,7 +140,7 @@ static class Render
 
     static void Ambience(string dir)
     {
-        Console.WriteLine("ambience: birds and cattle");
+        Console.WriteLine("ambience: birds and breeze");
         var birds = new List<float>();
         foreach (BirdKind k in Enum.GetValues(typeof(BirdKind)))
             for (uint s = 1; s <= 3; s++)
@@ -149,9 +149,6 @@ static class Render
                 birds.AddRange(c); birds.AddRange(new float[AmbienceSynth.BirdRate / 2]);
             }
         Wav(Path.Combine(dir, "birds.wav"), birds.ToArray(), 1, AmbienceSynth.BirdRate);
-        var cows = new List<float>();
-        for (uint s = 1; s <= 5; s++) { var c = AmbienceSynth.Cow(s); Sane(c, $"cow {s}"); cows.AddRange(c); cows.AddRange(new float[AmbienceSynth.CowRate / 2]); }
-        Wav(Path.Combine(dir, "cows.wav"), cows.ToArray(), 1, AmbienceSynth.CowRate);
         var b = new BreezeSynth(Fs); var o = Run(b, 10f, _ => { }); Sane(o, "breeze");
         Wav(Path.Combine(dir, "breeze.wav"), o, 2, Fs);
         Console.WriteLine($"  breeze {Db(Rms(o, 0, o.Length))} dBFS");

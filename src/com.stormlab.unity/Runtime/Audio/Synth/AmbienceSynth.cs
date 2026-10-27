@@ -1,5 +1,5 @@
 // Country ambience on the plains: a soft breeze bed, bird calls (western meadowlark, red-winged blackbird, sparrow chips,
-// mourning dove) and distant cattle. Calls are rendered once to clips (Bird, Cow) and played at places round the listener.
+// mourning dove). Calls are rendered once to clips (Bird) and played at places round the listener.
 using System;
 
 namespace StormLab.Audio
@@ -8,7 +8,7 @@ namespace StormLab.Audio
 
     public static class AmbienceSynth
     {
-        public const int BirdRate = 32000, CowRate = 22050;
+        public const int BirdRate = 32000;
 
         // ------------------------------------------------------------------ birds
         /// <summary>One call of a bird of this kind, mono at BirdRate. Different seeds give different calls.</summary>
@@ -104,53 +104,6 @@ namespace StormLab.Audio
                 }
             }
         }
-
-        // ------------------------------------------------------------------ cattle
-        /// <summary>One moo, mono at CowRate: a nasal 'mm' opening into a long 'ooo-aah' and closing again, its pitch rising
-        /// and falling. Rendered as heard from far off (the highs gone).</summary>
-        public static float[] Cow(uint seed)
-        {
-            var r = new Rng(Rng.Hash(seed, 0x636f7721u));
-            float dur = r.Range(1.1f, 2.4f), f0 = r.Range(85f, 135f), peak = r.Range(1.15f, 1.45f), fall = r.Range(0.75f, 0.92f);
-            float open = r.Range(0.12f, 0.25f), close = r.Range(0.72f, 0.88f);
-            // vowel formants (Hz) with the mouth open; the 'm' is a low nasal hum
-            float F1 = r.Range(550f, 750f), F2 = r.Range(950f, 1250f), F3 = r.Range(2200f, 2700f);
-            int n = (int)((dur + 0.15f) * CowRate);
-            var o = new float[n];
-            double ph = 0; Wander jitter = default; OnePole far = default, far2 = default;
-            float farHz = r.Range(1100f, 2000f); far.Set(farHz, CowRate); far2.Set(farHz, CowRate);
-            Svf breath = default; breath.Set(F1, 1.5f, CowRate);
-            var amps = new float[32];
-            for (int i = 0; i < n; i++)
-            {
-                float t = i / (float)CowRate, u = Dsp.Clamp01(t / dur);
-                float contour = u < 0.35f ? Dsp.Lerp(1f, peak, Dsp.SmoothStep(0f, 0.35f, u)) : Dsp.Lerp(peak, fall, Dsp.SmoothStep(0.35f, 1f, u));
-                float f = f0 * contour * (1f + 0.025f * (jitter.Next(ref r, 0.05f, CowRate) - 0.5f));
-                ph += 2 * Math.PI * f / CowRate;
-                // mouth: 0 closed (the 'm'), 1 open
-                float m = Dsp.SmoothStep(0f, open, u) * Dsp.SmoothStep(1f, close, u);
-                if ((i & 63) == 0)
-                    for (int h = 1; h <= 31; h++)
-                    {
-                        float fh = h * f;
-                        if (fh > 4500f) { amps[h] = 0f; continue; }
-                        float nasal = Res(fh, 260f, 120f) + 0.3f * Res(fh, 1000f, 300f);
-                        float vowel = Res(fh, Dsp.Lerp(380f, F1, m), 140f) + 0.6f * Res(fh, Dsp.Lerp(800f, F2, m), 180f) + 0.25f * Res(fh, F3, 300f);
-                        // a breathy source: its harmonics fall off about 9 dB an octave
-                        amps[h] = Dsp.Lerp(nasal, vowel, m) / (float)Math.Pow(h, 1.5);
-                    }
-                float x = 0f;
-                for (int h = 1; h <= 31; h++) if (amps[h] > 0f) x += amps[h] * (float)Math.Sin(h * ph);
-                float env = Dsp.SmoothStep(0f, 0.08f, u) * Dsp.SmoothStep(1f, 0.82f, u) * (0.75f + 0.25f * m);
-                x = x * env + breath.BandNorm(r.N()) * 0.04f * env * m;
-                o[i] = far2.Low(far.Low(x));
-            }
-            Normalize(o, 0.6f);
-            return o;
-        }
-
-        /// <summary>a formant's response at f: centre fc, bandwidth bw</summary>
-        static float Res(float f, float fc, float bw) { float x = (f - fc) / bw; return 1f / (1f + x * x); }
 
         static void Normalize(float[] o, float peak)
         {

@@ -1,5 +1,5 @@
 // The test map's sound: the storms' tornado wind, rain, hail and thunder (StormAudio) at the truck, or at the camera in
-// free flight; the truck's engine and tyres (TestMapCarAudio); the plains ambience, birds and cattle (CountryAmbience).
+// free flight; the truck's engine and tyres (TestMapCarAudio); the plains ambience, breeze and birds (CountryAmbience).
 // TestMapWorld adds it at Start. M mutes and unmutes everything.
 using StormLab.Audio;
 using UnityEngine;
