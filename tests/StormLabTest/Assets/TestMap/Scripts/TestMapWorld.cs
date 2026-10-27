@@ -8,7 +8,9 @@
 //   G  game mode: a StormScenario's two storms on one hour-long game clock (StormScenarioRunner) in place of the test
 //      storm; T, P, [ ] and N then work on the game clock and the game's seed
 //   M  sound on / off (TestMapAudio: tornado wind, rain, thunder, the truck, birds)
-//   F1  hide all the HUD (the readouts, help and the Tab panel), for clean views and screenshots
+//   F1  hide all the HUD (the readouts, help, the Tab panel and the map), for clean views and screenshots
+//   the map (TestMapMinimap, bottom right): GPS and the KDDC radar; click it to open it full screen, click a road there
+//      to drive to it (turn-by-turn directions), Esc closes
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -74,6 +76,8 @@ namespace StormLab.TestMap
             if (storm && !GetComponent<TestMapStormPanel>()) { var panel = gameObject.AddComponent<TestMapStormPanel>(); panel.world = this; panel.storm = storm; }
             // the sound: storms, truck and ambience
             if (!GetComponent<TestMapAudio>()) gameObject.AddComponent<TestMapAudio>().world = this;
+            // the GPS and radar map
+            if (!GetComponent<TestMapMinimap>()) gameObject.AddComponent<TestMapMinimap>().world = this;
             if (gameMode) SetGameMode(true);
         }
 
@@ -329,7 +333,8 @@ namespace StormLab.TestMap
             if (!showHelp) return;
             string help = "W/S or arrows  throttle / brake / reverse    A/D  steer\nSpace  handbrake    R  reset car    L  headlights (auto / on / off)    C  camera (chase / roof; hold right mouse to look)    F  free flight (V: truck here)\n" +
                           "T  storm clock speed    P  pause    [ ]  -/+ 5 min    N  new storm    H  hide help (F1: all HUD)    M  sound on / off\n" +
-                          "Tab  storm and lighting panel (24 hour clock)    G  game mode (two storms, one hour)\n";
+                          "Tab  storm and lighting panel (24 hour clock)    G  game mode (two storms, one hour)\n" +
+                          "Map (bottom right): click to open, click a road to get directions, Esc closes\n";
             for (int i = 0; i < Mathf.Min(9, spots.Length); i++) help += $"\n{i + 1}  {spots[i].name}";
             float ph = small.CalcHeight(new GUIContent(help), 450) + 12;
             GUI.Box(new Rect(16, 16, 470, ph), GUIContent.none);

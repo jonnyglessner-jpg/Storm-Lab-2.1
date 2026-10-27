@@ -13,6 +13,31 @@
 
 RWTexture3D<float4> _OutD;
 
+// ---- game adaptation beside the port (StormTilt, user 2026-10-27): the tilted updraft's rain-free base and the clear
+// air round a tornado. x: the base's radius, y: the tornado's clear radius, km; zero for the web build's layout.
+float4 _PrecipP;
+// what is left of the rain at p: none under the updraft's base on its inflow side (forward and right of the updraft,
+// up into the vault) or round a tornado on the ground; flat inside, a soft edge out (a super-Gaussian), so the exposed
+// base and the curtains' inner faces stay smooth
+float precipClear(float3 p)
+{
+    float keep = 1.0;
+    float zb = S_base.x;
+    if (_PrecipP.x > 0.0)
+    {
+        float Rb = _PrecipP.x * lerp(1.0, 0.75, ss(zb, zb + 3.0, p.z));
+        float2 c = S_up.xy + (S_f.xy - S_f.zw) * 0.42 * _PrecipP.x;
+        float q = length(p.xy - c) / Rb;
+        keep *= 1.0 - exp(-q * q * q * q) * ss(zb + 4.0, zb + 2.5, p.z);
+    }
+    if (_PrecipP.y > 0.0)
+    {
+        float q = length(p.xy - S_tor.xy) / _PrecipP.y;
+        keep *= 1.0 - exp(-q * q * q * q) * ss(zb + 1.5, zb + 0.5, p.z);
+    }
+    return keep;
+}
+
 float hash1(float x) { return frac(sin(x * 127.1 + 311.7) * 43758.5453); }
 
 // Material, stored in the alpha channel: water cloud 0.3 + 0.7 * turbulence (0 smooth .. 1 cauliflower);
@@ -347,6 +372,7 @@ void Build(uint3 gid : SV_DispatchThreadID)
         float hgt = lerp(forwardBelow, below, sp);
         rain = max(rain, 0.9 * (1.0 + 0.3 * S_up.w) * S_ffd.w * slotWrap * arc * curt * hgt * ss(reachW - 0.2, reachW + 0.3, p.z));
     }
+    rain *= precipClear(p);   // game adaptation (StormTilt), not the web build's
     _OutD[id] = float4(sqrt(saturate(cloud)), sqrt(saturate(rain)), sqrt(saturate(nearV)), ms / mw);
 }
 

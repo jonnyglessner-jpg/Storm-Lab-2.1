@@ -43,6 +43,7 @@ python -I tools/testmap/terrain.py         # DEM mosaic and cleanup, streams, CD
 python -I tools/testmap/roads.py           # road network + docs/testmap/network.png
 python -I tools/testmap/textures.py        # ground and road textures
 python -I tools/testmap/world.py           # profiles, grading, land cover, objects, meshes -> TestMapData/
+python -I tools/testmap/navmap.py          # the GPS's road graph and the map's base image -> Assets/TestMap/Generated/Resources
 ```
 
 Then **StormLab > Test Map > Build World** in Unity (or headless:

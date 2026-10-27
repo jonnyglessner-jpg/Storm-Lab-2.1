@@ -1,0 +1,334 @@
+// The storms on a weather radar (StormRadar): the reflectivity a WSR-88D would see. Each texel of the image is a point
+// on the ground; it takes the range gate and radial it falls in (so the picture has the radar's polar cells) and the
+// beam's height there, and reads every storm's echo where the beam is.
+//
+// The echo is a supercell's, laid out on the storm's own features (the parameter block: updraft, wall cloud, rear-flank
+// surge, tornado, forward-flank and hail cores, anvil, all in the storm's frame), so it moves and grows with the storm
+// that is drawn. The volume's rain is shaped for the eye, not the radar, and gives no hook (user's references,
+// 2026-10-27: classic and HP supercells on WSR-88D and RadarScope). The physics follows the notes in meteorology/
+// (Stull, Practical Meteorology ch. 7-8 and 15; METR 4403; Kumjian, Lebo and Morrison 2015, MWR):
+//
+//   beam height  h = sqrt(r^2 + (ka)^2 + 2 r ka sin(elev)) - ka, ka = 4/3 of the Earth's radius (effective Earth); the
+//                half-power beam (0.95 deg) is sampled at five heights with Gaussian weights, Z averaged, not dBZ. Far
+//                off the beam passes over the low-level hook, as a real radar's does
+//   rain         each part of the storm has a rain rate; Z = 300 RR^1.4 (the WSR-88D's Z-R) times (Dm / Dm0)^2.33 for its
+//                drops (an exponential spectrum: Z / RR goes as Lambda^-2.33). Kumjian et al.: melted ice (Dm 1.52 mm)
+//                fills the forward flank, with the largest drops along its inflow edge (the ZDR arc); warm rain (1.05)
+//                the rear-flank downdraft and its hook; their control run's mean 1.42
+//   ice          above the freezing level |K|^2 is 0.208 against water's 0.93 (snow, graupel and the anvil look weaker)
+//   hail         Z-R fails: hail lifts the core to 45 + 25 x its amount dBZ (60-70 dBZ; hail is 60-75), tapering evenly
+//                into the rain round it (user, 2026-10-27: no separate disc)
+//   debris       a tornado lofting debris shows as a debris ball at the hook's tip (a TDS has Z > 20 dBZ; 40-60 here
+//                by rating), up to a height that grows with the rating
+//   layout       first echo aloft (precipitation forms in the updraft and falls out); the forward-flank shield downstream
+//                with a sharp inflow edge and soft far edges; the inflow notch under the updraft (a weak-echo region
+//                with the echo overhanging it aloft); the hook wrapping cyclonically round the mesocyclone with a clear
+//                eye inside; light rain round it all and the anvil's snow aloft
+#pragma kernel Accumulate
+#pragma kernel Finish
+
+#include "Packages/com.stormlab.unity/Runtime/Rendering/Shaders/StormCommon.hlsl"
+
+RWTexture2D<float> _Z;        // linear reflectivity factor, mm^6 m^-3, summed over the storms
+RWTexture2D<float> _Dbz;      // the finished scan, dBZ (-99: nothing)
+RWTexture2D<float4> _Img;     // the finished scan in the palette's colours (linear; alpha 0 below the lowest shown)
+
+float4 _RdArea;   // x, y: the image's south-west corner, world m (x east, z north); z: metres a texel; w: texels across
+float4 _RdSite;   // xy: the antenna, world m (x, z); z: its height, world m; w: elevation angle, rad
+float4 _RdStorm;  // xyz: the antenna in this storm's frame, km; w: 1 for the first storm (write), 0 to add
+float4 _RdBeam;   // x: gate length, m; y: radial width, rad; z: half-power beam width, rad; w: maximum range, m
+float4 _RdSweep;  // x: first azimuth of this frame's wedge, rad (clockwise from north); y: its width, rad; z: product (0 base, 1 composite); w: scan number
+float4 _RdZR;     // x: the forward-flank core's rain rate, mm/h; y: gate-to-gate noise, dB; w: reference mean drop diameter, mm
+float4 _RdDm;     // mean drop diameters, mm: x melted, y along the inflow edge, z warm; w: freezing level above the storm's ground, km
+float4 _RdHail;   // x, y: hail dBZ at no amount and the rise to full amount; z, w: debris dBZ at EF0 and per rating step
+float4 _RdVol;    // x: 1 with a storm to add, 0 to clear
+float4 _RdClear;  // this storm's tilted updraft (StormTilt): x the rain-free base's radius, y a tornado's clear radius, km; z its slope
+float4 _RdPal[24];   // the palette: rgb (linear) at w dBZ, rising; linear between
+float4 _RdShow;   // x: lowest dBZ shown; y: its opacity there; z: dBZ at which it is opaque; w: anchors in _RdPal
+
+static const float KA = 8494.7;   // 4/3 x 6371 km
+
+// ---------------------------------------------------------------------------------------------------- noise
+float hash12(float2 p) { float3 q = frac(float3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return frac((q.x + q.y) * q.z); }
+float vnoise(float2 p)
+{
+    float2 i = floor(p), f = frac(p); f = f * f * (3.0 - 2.0 * f);
+    return lerp(lerp(hash12(i), hash12(i + float2(1, 0)), f.x), lerp(hash12(i + float2(0, 1)), hash12(i + float2(1, 1)), f.x), f.y);
+}
+// cells of about 6, 2.5 and 1 km, streaked along the storm's motion; drifting slowly with storm time so they evolve
+float cells(float2 q, float seed)
+{
+    float t = S_base.w * 0.06;
+    return 0.5 * vnoise(q / float2(7.0, 4.5) + seed + t) + 0.3 * vnoise(q / float2(3.0, 1.8) + seed * 2.1 - t) + 0.2 * vnoise(q / float2(1.1, 0.8) + seed * 3.7 + t);
+}
+
+// ---------------------------------------------------------------------------------------------------- the storm
+float2 loc(float2 p, float2 o) { float2 d = p - o; return float2(dot(d, S_f.xy), dot(d, S_f.zw)); }   // (forward, left) of o
+float2 fromLoc(float2 o, float2 v) { return o + v.x * S_f.xy + v.y * S_f.zw; }
+float2 dirAt(float deg) { float a = radians(deg); return float2(cos(a), sin(a)); }   // in (forward, left)
+
+// signed distance to a capsule along +y from (0, 0) with radius r1 to (0, h) with radius r2 (rounded at both ends,
+// tapering between): the shield's outline before it is warped
+float sdTaper(float2 q, float r1, float r2, float h)
+{
+    q.x = abs(q.x);
+    float b = (r1 - r2) / h, a = sqrt(saturate(1.0 - b * b));
+    float k = dot(q, float2(-b, a));
+    if (k < 0.0) return length(q) - r1;
+    if (k > a * h) return length(q - float2(0.0, h)) - r2;
+    return dot(q, float2(a, b)) - r1;
+}
+// a slow, broad wobble (km) so outlines are lumpy rather than straight or square
+float2 warp(float2 q, float amp, float scale, float seed)
+{
+    float t = S_base.w * 0.03;
+    return amp * float2(vnoise(q / scale + seed + t) - 0.5 + 0.5 * (vnoise(q / (0.4 * scale) + seed + 3.1) - 0.5),
+                        vnoise(q / scale + seed + 7.7 - t) - 0.5 + 0.5 * (vnoise(q / (0.4 * scale) + seed + 9.4) - 0.5)) * 2.0;
+}
+
+// Z from a rain rate and a mean drop diameter
+float ZR(float rr, float dm) { float k = dm / _RdZR.w; return rr > 1e-4 ? 300.0 * pow(rr, 1.4) * pow(k, 2.33) : 0.0; }
+
+// reflectivity factor at p (storm frame, km), mm^6 m^-3
+float Zat(float3 p)
+{
+    float z = max(p.z, 0.05);
+    float zb = S_base.x, el = S_base.y;
+    float fzlIce = lerp(1.0, 0.208 / 0.93, ss(_RdDm.w - 0.3, _RdDm.w + 0.3, z));
+    float precipTop = lerp(zb + 0.7, el - 0.8, saturate(S_anvil.w));
+    float2 U = S_up.xy;
+    float ffd = saturate(S_ffd.w), sF = max(S_ffd.z, 0.4);
+    float Z = 0.0;
+    float n1 = cells(loc(p.xy, float2(0, 0)), 0.0), n2 = cells(loc(p.xy, float2(0, 0)) * 1.7, 5.3);
+
+    // ---- the mesocyclone and the hook's eye: the wall cloud, or with a tornado down, just behind its tornado
+    float torOn = saturate((S_tor.z - 0.1) / 0.3);
+    float hookAmt = S_wall.w > 0.0 ? saturate(S_rfd.z) * saturate(0.35 + S_rfd.x + S_rfdb.w) * ss(0.0, 0.25, S_wall.w) : 0.0;
+    float hs = clamp(0.8 + 0.25 * S_rfdb.z, 0.8, 1.6) * (1.0 + 0.35 * S_rfd.w) * (1.0 + 0.6 * max(_RdClear.z - 0.15, 0.0));   // the hook's size: bigger as the updraft leans more
+    float wrap = 195.0 + 120.0 * saturate(S_rfd.w);                              // degrees it wraps (HP storms further)
+    float rTip = 1.15 * hs * lerp(1.0, 0.85, torOn);
+    float phi0 = 125.0, phi1 = phi0 + wrap;
+    float2 C = lerp(S_wall.xy, S_tor.xy - fromLoc(float2(0, 0), dirAt(phi1) * rTip), torOn);
+    float2 vC = loc(p.xy, C);
+    float rC = length(vC);
+    float eye = 1.0 - exp(-pow(rC / (0.75 * rTip + 0.35), 4.0)) * hookAmt;
+
+    // ---- the inflow notch: no rain under the updraft at low levels; aloft the echo overhangs it but for the vault
+    float rU = length(p.xy - U);
+    float vaultR = max(1.4, 0.55 * S_tower.y);
+    float notch = 1.0 - 0.98 * exp(-pow(rU / (vaultR * lerp(1.4, 0.7, ss(zb, zb + 3.0, z))), 2.0)) * ss(0.0, 0.3, S_tilt.w + ffd);
+    // the tilted updraft's rain-free base, as the volume's build clears it (StormVolume.compute precipClear), and the
+    // clear air round a tornado on the ground (its rain only: the debris ball stays)
+    if (_RdClear.x > 0.0)
+    {
+        float Rb = _RdClear.x * lerp(1.0, 0.75, ss(zb, zb + 3.0, z));
+        float qb = length(p.xy - (U + (S_f.xy - S_f.zw) * 0.42 * _RdClear.x)) / Rb;
+        notch *= 1.0 - 0.98 * exp(-qb * qb * qb * qb) * ss(zb + 4.0, zb + 2.5, z);
+    }
+    float torClear = 1.0;
+    if (_RdClear.y > 0.0)
+    {
+        float qt = length(p.xy - S_tor.xy) / _RdClear.y;
+        torClear = 1.0 - exp(-qt * qt * qt * qt) * ss(zb + 1.5, zb + 0.5, z);
+    }
+    eye *= torClear;
+
+    // ---- first echo aloft: rain and graupel forming in the updraft before any reaches the ground
+    {
+        float form = saturate(1.6 * max(S_ffd.w, S_hail.w)) * saturate(S_tower.z);
+        float hq = length(p.xy - fromLoc(U, float2(1.5, 1.0))) / max(S_tower.y * 0.9, 1.0);
+        float colm = ss(zb + 1.0, zb + 2.5, z) * ss(S_tower.x, S_tower.x - 2.0, z);
+        float rr = 25.0 * form * exp(-hq * hq) * colm * (0.6 + 0.8 * n2);
+        Z += ZR(rr, _RdDm.x) * fzlIce;
+    }
+
+    // ---- the hail core: not an echo of its own but the top of the core's gradient. Hail raises the reflectivity of
+    // the heavy rain it falls through (Z-R fails: 60-70 dBZ where rain alone gives 50-55), most at the core's centre and
+    // less outward, by dB falling off linearly so the colour bands step evenly up to it. It sits in the rear of the
+    // core beside the updraft, a little behind and left of the hail shaft drawn, spread along the rear flank, from its
+    // reach under the cloud base (the ground once its amount passes 0.625) to above the shafts' top
+    float hailDb = 0.0;
+    if (S_hail.w > 0.0)
+    {
+        float reachH = zb * (1.0 - saturate(S_hail.w * 1.6));
+        float2 hq = loc(p.xy, fromLoc(S_hail.xy, float2(-1.8, 1.2)));
+        hq += warp(hq, 1.6, 6.0, 2.6);
+        float2 ax = normalize(float2(0.45, 1.0));                        // the rear flank's run: mostly across the motion
+        float2 e = float2(dot(hq, ax), ax.x * hq.y - ax.y * hq.x) / (max(S_hail.z, 0.5) * float2(3.4, 2.3));
+        float rise = max(_RdHail.x + _RdHail.y * saturate(S_hail.w) - 55.0, 0.0);   // dB above heavy rain at the centre
+        float cone = saturate(1.0 - length(e));
+        cone = cone * cone * (3.0 - 2.0 * cone) * 0.35 + cone * 0.65;    // nearly linear, rounded at the top and foot
+        hailDb = rise * cone * (0.85 + 0.3 * n1) * ss(reachH - 0.2, reachH + 0.3, z) * ss(precipTop + 2.0, precipTop - 0.8, z);
+    }
+    float hailK = pow(10.0, 0.1 * hailDb);
+
+    // ---- the forward-flank shield: a lumpy teardrop from the hook's root downstream, narrow and heaviest at the rear,
+    // widening and thinning downstream; its inflow (right) edge sharp, its far edges soft
+    if (ffd > 0.0)
+    {
+        float2 B0 = fromLoc(C, float2(-2.0, 4.0) * lerp(1.0, hs, 0.5));
+        float2 axis = float2(16.0, 6.9) * sF;
+        float len = length(axis);
+        float2 dirA = axis / len;
+        float2 qr = loc(p.xy, B0);
+        float2 q = qr + warp(qr, 1.4, 9.0, 1.3);
+        float along = dot(q, dirA), d = dirA.x * q.y - dirA.y * q.x;      // along the axis; left of it, km
+        float t = along / len, tc = saturate(t);
+        float side = ss(-1.5, 1.5, d);                                  // 0 on the inflow side, 1 on the far side
+        float sd = sdTaper(float2(d, along), 2.7, 3.0 + 2.8 * sF, len);
+        sd -= 1.6 * ss(zb, zb + 3.0, z) * (1.0 - side);                  // aloft it overhangs the inflow side
+        sd += 0.5 * (n1 - 0.5) + 1.2 * (n2 - 0.5) * side;                 // ragged, more so on the far side
+        float fall = lerp(0.9, 2.0 + 3.0 * tc, side);
+        float outD = max(sd, 0.0);
+        float across = exp(-pow(outD / fall, 2.0)) * ss(3.0 * fall, 2.0 * fall, outD) * (0.75 + 0.25 * ss(0.0, -2.0, sd));
+        // heaviest where the forward-flank core falls (carried off by the tilt), a little less back toward the hook
+        float tPeak = clamp(dot(loc(S_ffd.xy, B0), dirA) / len, 0.12, 0.55);
+        float alongP = 0.85 * exp(-pow(max(t - tPeak, 0.0) / 0.5, 2.0)) * (0.65 + 0.35 * ss(-0.1, tPeak, t)) + 0.15;
+        // reaching the ground as the shafts grow (as the volume's build), up to the shafts' top
+        float reachF = zb * (1.0 - saturate(S_ffd.w * 1.6));
+        float hgt = ss(reachF - 0.2, reachF + 0.3, z) * ss(precipTop + 0.5, precipTop - 0.8, z);
+        float rr = _RdZR.x * ffd * alongP * across * hgt * notch * eye * exp(1.1 * (2.0 * n1 - 1.0));
+        // big drops along the inflow edge (size sorting: the ZDR arc), melted ice elsewhere
+        float dm = lerp(_RdDm.y, _RdDm.x, saturate(ss(0.0, 1.6, -sd) * (1.0 - side) + side));
+        Z += ZR(rr, dm) * fzlIce * hailK;
+
+        // light rain round it, much further downstream under the anvil: a bigger, lumpier teardrop
+        float2 qe = loc(p.xy, fromLoc(B0, float2(-3.0, -0.3)));
+        qe += warp(qe, 3.2, 14.0, 4.1);
+        float alongE = dot(qe, dirA), dE = dirA.x * qe.y - dirA.y * qe.x;
+        float lenE = len * 1.6;
+        float sdE = sdTaper(float2(dE, alongE), 4.5, 6.0 + 5.0 * sF, lenE) + 1.5 * (cells(qe * 2.5, 8.2) - 0.5);
+        float sideE = ss(-2.0, 2.0, dE);
+        float env = exp(-pow(max(sdE, 0.0) / lerp(1.0, 2.2, sideE), 2.0)) * lerp(1.0, 0.45, saturate(alongE / lenE));
+        Z += ZR(0.45 * ffd * env * hgt * notch * eye * exp(1.0 * (2.0 * n2 - 1.0)), _RdDm.x) * fzlIce;
+    }
+
+    // ---- the hook: rear-flank rain carried cyclonically round the mesocyclone, from the shield's rear-right corner in
+    // to a ball at its tip (the tornado's, with one down). Low levels only; warm rain, small drops.
+    if (hookAmt > 0.0 && z < zb + 1.0)
+    {
+        float phi = degrees(atan2(vC.y, vC.x)); if (phi < 0.0) phi += 360.0;
+        if (phi < phi0 - 60.0) phi += 360.0;
+        float s = (phi - phi0) / (phi1 - phi0);
+        float r0 = 3.2 * hs;
+        float rc = lerp(r0, rTip, ss(0.0, 1.0, s)) + 0.35 * (n1 - 0.5);
+        float w = lerp(1.25, 0.5, saturate(s)) * hs * (1.0 + 0.8 * saturate(S_rfd.w));
+        float band = exp(-pow((rC - rc) / w, 2.0)) * ss(-0.35, 0.05, s) * ss(1.12, 0.98, s);
+        float2 tip = fromLoc(C, dirAt(phi1) * rTip);
+        float tq = length(p.xy - tip) / (0.6 * hs);
+        float ball = exp(-tq * tq);
+        float low = ss(zb + 1.0, zb - 0.2, z);
+        float rr = hookAmt * low * torClear * (70.0 * lerp(0.95, 0.6, saturate(s)) * band + 85.0 * ball) * exp(0.6 * (2.0 * n2 - 1.0));
+        Z += ZR(rr, _RdDm.z);
+    }
+
+    // ---- the debris ball of a tornado on the ground (rating from the detailed tornado; 1 when it has none)
+    if (S_tor.z > 0.15)
+    {
+        float ef = S_tor7.z > 0.0 ? S_tor7.z : 1.0;
+        float rd = max(0.3, 2.0 * S_tor2.x + 0.2);
+        float top = 0.4 + 0.5 * ef;
+        float dq = length(p.xy - S_tor.xy) / rd;
+        float w = saturate((S_tor.z - 0.15) / 0.5) * exp(-dq * dq) * ss(top + 0.3, top - 0.3, z);
+        if (w > 1e-4) Z += pow(10.0, 0.1 * (_RdHail.z + _RdHail.w * ef)) * w;
+    }
+
+    // ---- the anvil's snow aloft: light, downstream of the updraft
+    if (S_anvil.w > 0.0)
+    {
+        float2 a = p.xy - U;
+        float ax = dot(a, S_anvil.xy), ay = S_anvil.x * a.y - S_anvil.y * a.x;
+        float len = max(S_anvil.z, 1.0);
+        float shape = ss(-4.0, 2.0, ax) * ss(len, len * 0.6, ax) * exp(-pow(ay / (3.0 + 0.35 * max(ax, 0.0)), 2.0));
+        float layer = ss(S_anvil2.x - 1.0, S_anvil2.x, z) * ss(S_anvil2.y, S_anvil2.y - 1.5, z);
+        Z += ZR(1.2 * saturate(S_anvil.w) * shape * layer * exp(1.4 * (2.0 * n2 - 1.0)), _RdDm.x) * 0.224;
+    }
+    return Z;
+}
+
+// ---------------------------------------------------------------------------------------------------- scan
+bool inWedge(float az)
+{
+    if (_RdSweep.y >= 6.2831) return true;
+    float d = az - _RdSweep.x;
+    d -= 6.2831853 * floor(d / 6.2831853);
+    return d < _RdSweep.y;
+}
+
+[numthreads(8, 8, 1)]
+void Accumulate(uint3 id : SV_DispatchThreadID)
+{
+    uint n = (uint)_RdArea.w;
+    if (id.x >= n || id.y >= n) return;
+    float2 w = _RdArea.xy + (float2(id.xy) + 0.5) * _RdArea.z;
+    float2 d = w - _RdSite.xy;
+    float r = length(d);
+    float az = atan2(d.x, d.y); if (az < 0.0) az += 6.2831853;
+    if (!inWedge(az)) return;
+    float Z = 0.0;
+    if (_RdVol.x > 0.0 && r < _RdBeam.w)
+    {
+        // the centre of the range gate and radial this point falls in
+        float rg = (floor(r / _RdBeam.x) + 0.5) * _RdBeam.x;
+        float ag = (floor(az / _RdBeam.y) + 0.5) * _RdBeam.y;
+        float2 off = float2(sin(ag), cos(ag)) * rg / 1000.0;   // km from the antenna
+        float2 pxy = _RdStorm.xy + off;
+        if (all(abs(pxy) < 90.0))
+        {
+            if (_RdSweep.z < 0.5)
+            {
+                float rk = rg / 1000.0;
+                float h = sqrt(rk * rk + KA * KA + 2.0 * rk * KA * sin(_RdSite.w)) - KA;
+                float hw = rk * _RdBeam.z * 0.5;
+                float wsum = 0.0;
+                [unroll] for (int k = -2; k <= 2; k++)
+                {
+                    float f = k * 0.5;
+                    float wk = exp(-0.6931 * f * f);
+                    Z += wk * Zat(float3(pxy, _RdStorm.z + h + f * hw));
+                    wsum += wk;
+                }
+                Z /= wsum;
+            }
+            else
+            {
+                // composite: the most in the column (the most any tilt would see)
+                for (float z = 0.25; z < 15.0; z += 0.25) Z = max(Z, Zat(float3(pxy, z)));
+            }
+        }
+    }
+    _Z[id.xy] = _RdStorm.w > 0.5 ? Z : (_RdSweep.z < 0.5 ? _Z[id.xy] + Z : max(_Z[id.xy], Z));
+}
+
+float3 palette(float dbz)
+{
+    int n = (int)_RdShow.w;
+    if (dbz <= _RdPal[0].w) return _RdPal[0].rgb;
+    for (int i = 1; i < n; i++)
+        if (dbz < _RdPal[i].w) return lerp(_RdPal[i - 1].rgb, _RdPal[i].rgb, saturate((dbz - _RdPal[i - 1].w) / max(_RdPal[i].w - _RdPal[i - 1].w, 1e-3)));
+    return _RdPal[n - 1].rgb;
+}
+
+[numthreads(8, 8, 1)]
+void Finish(uint3 id : SV_DispatchThreadID)
+{
+    uint n = (uint)_RdArea.w;
+    if (id.x >= n || id.y >= n) return;
+    float2 d = _RdArea.xy + (float2(id.xy) + 0.5) * _RdArea.z - _RdSite.xy;
+    float r = length(d);
+    float az = atan2(d.x, d.y); if (az < 0.0) az += 6.2831853;
+    if (!inWedge(az)) return;
+    float Z = _Z[id.xy];
+    float dbz = Z > 1e-3 ? 10.0 * log10(Z) : -99.0;
+    // gate-to-gate fluctuation: each gate's estimate is a few pulses' average, new every scan
+    if (dbz > -50.0)
+    {
+        float2 g = float2(floor(r / _RdBeam.x), floor(az / _RdBeam.y));
+        float u = hash12(g + _RdSweep.w * 17.31) + hash12(g * 1.37 + _RdSweep.w * 5.11 + 91.7) - 1.0;
+        // a weak echo's estimate is noisier (lower signal to noise), so the lightest edges come out ragged and speckled
+        dbz += u * _RdZR.y * (1.0 + 1.6 * ss(25.0, 5.0, dbz));
+    }
+    _Dbz[id.xy] = dbz;
+    if (dbz < _RdShow.x) { _Img[id.xy] = float4(0, 0, 0, 0); return; }
+    _Img[id.xy] = float4(palette(dbz), lerp(_RdShow.y, 1.0, ss(_RdShow.x, _RdShow.z, dbz)));
+}

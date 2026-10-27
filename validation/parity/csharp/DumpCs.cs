@@ -38,6 +38,25 @@ static class DumpCs
             }
             return;
         }
+        if (args.Length > 0 && args[0] == "--tilt")
+        {
+            // the game's tilted updraft (StormTilt): its slope against the web build's, how far it carries the rain and
+            // hail, and the clear air round the base and a tornado, at each setup's first tornado (or mature cycle)
+            foreach (var pre in StormPreset.All)
+            {
+                var P = StormGame.Plan(pre.key, pre, 1, null); var F = new StormFrame();
+                double t = P.cycles != null ? P.cycles[0].times[3] : 50;
+                StormDesign.At(P, t, 0, F);
+                var tors = StormTornadoes.Build(P, StormTornadoes.RegionOf(pre.key));
+                StormTornadoes.Apply(P, tors, t, F);
+                double tilt0 = Math.Sqrt(P.tilt.x * P.tilt.x + P.tilt.y * P.tilt.y);
+                var (rain, hail) = StormTilt.Shift(P);
+                var (baseR, torR) = StormTilt.Clear(P, F);
+                Console.WriteLine($"{pre.key,-7} shear6 {tilt0 / 0.1 * 25:0} m/s, updraft {P.w:0} m/s, hp {P.hpness:0.00}: slope {StormTilt.Slope(P):0.00} (web {tilt0:0.00}); " +
+                                  $"rain {rain:0.0} km and hail {hail:0.0} km further off; rain-free base {baseR:0.0} km, tornado clear {torR:0.00} km (EF{F.param[24 * 4 + 2]:0})");
+            }
+            return;
+        }
         if (args.Length > 0 && args[0] == "--motion")
         {
             foreach (var pre in StormPreset.All)

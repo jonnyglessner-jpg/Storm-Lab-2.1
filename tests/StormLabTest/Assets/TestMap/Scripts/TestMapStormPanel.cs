@@ -236,6 +236,11 @@ namespace StormLab.TestMap
             if (GUILayout.Toggle(storm.wallBase == WallBase.Smooth, "smooth", "Button")) storm.wallBase = WallBase.Smooth;
             if (GUILayout.Toggle(storm.wallBase == WallBase.Website, "website (ragged)", "Button")) storm.wallBase = WallBase.Website;
             GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("rain layout", small, GUILayout.Width(110));
+            if (GUILayout.Toggle(storm.precip == PrecipLayout.Tilted, "tilted updraft", "Button")) storm.precip = PrecipLayout.Tilted;
+            if (GUILayout.Toggle(storm.precip == PrecipLayout.Website, "website", "Button")) storm.precip = PrecipLayout.Website;
+            GUILayout.EndHorizontal();
             if (storm.lighting == StormLighting.Physical)
             {
                 var L = storm.Lighting;

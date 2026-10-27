@@ -138,7 +138,7 @@ namespace StormLab
             r.sunSource = lookFrom.sunSource; r.sun = lookFrom.sun; r.moon = lookFrom.moon;
             r.sunAzimuth = lookFrom.sunAzimuth; r.sunElevation = lookFrom.sunElevation;
             r.solarHour = lookFrom.solarHour; r.latitude = lookFrom.latitude; r.dayOfYear = lookFrom.dayOfYear; r.moonPhase = lookFrom.moonPhase;
-            r.lighting = lookFrom.lighting; r.wallBase = lookFrom.wallBase; r.dropletDiameter = lookFrom.dropletDiameter;
+            r.lighting = lookFrom.lighting; r.wallBase = lookFrom.wallBase; r.precip = lookFrom.precip; r.dropletDiameter = lookFrom.dropletDiameter;
             r.nightBrightness = lookFrom.nightBrightness; r.nightFloor = lookFrom.nightFloor; r.purkinje = lookFrom.purkinje;
             r.lightPollution = lookFrom.lightPollution; r.nightFill = lookFrom.nightFill; r.nightAdaptation = lookFrom.nightAdaptation;
             r.exposure = lookFrom.exposure; r.toneMap = lookFrom.toneMap; r.luminanceScale = lookFrom.luminanceScale;

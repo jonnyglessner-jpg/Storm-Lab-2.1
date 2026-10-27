@@ -17,6 +17,9 @@ namespace StormLab
     public enum TornadoModel { Detailed, Website }
     /// <summary>Smooth: the game's wall-cloud underside (soft, with blended scud); Website: the web build's ragged fringe</summary>
     public enum WallBase { Smooth, Website }
+    /// <summary>Tilted: the game's leaning updraft drops its rain further off, with a rain-free base and clear air round
+    /// a tornado (StormTilt); Website: the web build's layout.</summary>
+    public enum PrecipLayout { Tilted, Website }
 
     [ExecuteAlways, DefaultExecutionOrder(100)]
     public class StormRenderer : MonoBehaviour
@@ -34,6 +37,8 @@ namespace StormLab
         [Tooltip("Smooth: a soft wall-cloud underside with scud blended in under it. Website: the web build's ragged fringe, " +
                  "drawn from noise round the wall cloud's centre (its streaks point at the centre)")]
         public WallBase wallBase = WallBase.Smooth;
+        [Tooltip("Tilted: the updraft leans with the shear and drops its rain further off, leaving a rain-free base and clear air round a tornado (StormTilt); Website: the web build's layout")]
+        public PrecipLayout precip = PrecipLayout.Tilted;
         /// <summary>storm minutes at which the storm begins to die (StormLife; DieLeaving sets it from a map); infinity:
         /// it lives out the web build's plan</summary>
         [NonSerialized] public double dieFrom = double.PositiveInfinity;
@@ -255,6 +260,18 @@ namespace StormLab
             origin = new Vector3((float)(ground.x - (u.x + TravelX(tMin)) * 1000.0), ground.y, (float)(ground.z - (u.y + TravelY(tMin)) * 1000.0));
         }
 
+        /// <summary>The rain-free base's radius and a tornado's clear radius now, km (StormTilt.Clear; zero for the web
+        /// build's layout): what the volume's build and the radar leave clear.</summary>
+        public Vector4 ClearParams
+        {
+            get
+            {
+                if (precip != PrecipLayout.Tilted || Plan == null) return Vector4.zero;
+                var (b, t) = StormTilt.Clear(Plan, Frame);
+                return new Vector4((float)b, (float)t, 0, 0);
+            }
+        }
+
         /// <summary>the tornado on the ground now, 0..1 (StormFrame.tornado)</summary>
         public float TornadoAmount => (float)Frame.tornado;
         /// <summary>where the tornado touches the ground now, world metres (meaningful while TornadoAmount > 0)</summary>
@@ -432,6 +449,7 @@ namespace StormLab
             StormTime = tMin; Clock = clock;
             StormDesign.At(Plan, tMin, clock, Frame);
             if (tornado == TornadoModel.Detailed) StormTornadoes.Apply(Plan, Tornadoes, tMin, Frame);
+            if (precip == PrecipLayout.Tilted) StormTilt.Apply(Plan, Frame);
             StormLife.Apply(Plan, tMin, Frame);
             Spin.Advance(Frame, tMin, clock, mesoSpinScale);
             if (frameCmd == null) frameCmd = new CommandBuffer { name = "Storm volume" };
@@ -443,6 +461,7 @@ namespace StormLab
             bool keyMoved = Vector3.Dot(lt.keyDir, lastKey) < 0.99995f || lt.keyIsMoon != lastKeyMoon;
             var wallP = new Vector4(wallBase == WallBase.Smooth ? 1 : 0, 0, 0, 0);
             if (wallP != Volume.wallParams) { Volume.wallParams = wallP; hasFrame = false; }
+            Volume.precipParams = ClearParams;
             if (!hasFrame || rebuildNow || double.IsNaN(lastBuilt))
             {
                 Volume.Update(frameCmd, Frame.param, noise, lt.keyDir);

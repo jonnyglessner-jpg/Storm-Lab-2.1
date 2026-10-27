@@ -166,7 +166,7 @@ public static class StormLabTests
         if (compare != null)
         {
             var list = JsonUtility.FromJson<CaseList>(File.ReadAllText(compare));
-            storm.lighting = StormLighting.Website; storm.tornado = TornadoModel.Website; storm.wallBase = WallBase.Website; storm.mesoSpinScale = 1;
+            storm.lighting = StormLighting.Website; storm.tornado = TornadoModel.Website; storm.wallBase = WallBase.Website; storm.precip = PrecipLayout.Website; storm.mesoSpinScale = 1;
             rep.AppendLine("## Website comparison").AppendLine();
             foreach (var k in list.cases)
             {

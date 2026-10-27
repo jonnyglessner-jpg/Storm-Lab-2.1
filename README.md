@@ -160,6 +160,34 @@ truck (at the camera in free flight); **M** mutes. `dotnet run --project validat
 `validation/audio/out/` (gitignored) and checks their levels; `python -I validation/audio/thunder/check.py` checks the
 thunder clips (`cut.py` remakes them from the raw recordings, `analyse.py` finds the events in them).
 
+**The tilted updraft** (`StormTilt`, `precip = Tilted`, a game adaptation beside the port; user, 2026-10-27). The web
+build leans the updraft at most 0.14 km a km and drops its rain at fixed places round the base. Here the updraft leans
+by its storm-relative wind over its speed (half the 0-6 km shear over the plan's updraft: 0.27 plains, 0.43 Dixie), and
+the rain lands where the lean and its fall through the storm-relative wind carry it: rain (5 m/s, about 15 minutes'
+fall) 4-5 km further off, hail (23 m/s) about 2 km, less drift in an HP storm. The base is rain-free on its inflow
+side (1.4-2.2 km), and a tornado has clear air round it, 0.35 km + 0.15 a rating step, 1.6x in a classic storm and
+1x in an HP one, whose rain wraps outside it. The volume's build applies it after the port's rain (`precipClear`), so
+the 3-D storm, its rain sound and the radar agree; `-- --tilt` in `validation/parity/csharp` lists it per setup, and
+the panel's "rain layout" switches it off. Parity and the website comparison use the web build's layout.
+
+**Map and radar** (user, 2026-10-27). On the test map a map in the bottom-right corner (`TestMapMinimap`) follows the
+truck, heading up, with the roads, the radar and the next turn; click it to open it full screen (north up: drag to pan,
+scroll to zoom, click a road to drive there, Esc closes). The GPS (`TestMapRoads`) routes over the whole road network
+(2,757 junctions and corners, every piece named: K-19, Rd 12, Ave 30), the fastest way by road class (state 65 mph,
+paved 55, gravel 45), with turn-by-turn steps, and plans again when the truck is 60 m off the route for 2.5 s. Its data
+is made by `tools/testmap/navmap.py` (the network from roads.py and a base map; gitignored with the rest of Generated/).
+The radar (`StormRadar`, `Runtime/Radar`) is a WSR-88D at KDDC's real site (Dodge City, just inside the map's south-west
+corner): base reflectivity at 0.5 deg with the beam's true height (4/3 Earth) and width, or composite; 250 m gates and
+0.5 deg radials; the antenna turns every 12 s and repaints the wedge it swept, with gate-to-gate noise new every scan.
+The echo is a supercell's laid out on each storm's own features, from the notes in `../meteorology`: Z = 300 RR^1.4
+(Stull) with each region's drops (Kumjian et al. 2015: melted ice in the forward flank, the largest drops along its inflow
+edge, warm small drops in the hook), hail lifting the rear of the core to 45 + 25 x its amount dBZ and tapering evenly
+into the rain round it (no separate disc), a debris ball at the tornado, |K|^2 for
+ice above the freezing level; laid out as the user's reference scans: a forward-flank shield with a sharp inflow edge,
+the inflow notch under the updraft, the hook wrapping cyclonically round the mesocyclone to a ball at its tip with a
+clear eye, first echo aloft, light rain round it and the anvil's snow aloft. Colours: smooth (RadarScope-like, default)
+or the NWS steps.
+
 Output: by default the storm's light is in HDRP's physical units under the game's exposure and tonemapping.
 `UseStandaloneLook()` gives the website's backdrop and display curve (HDRP tonemapping off).
 
@@ -193,6 +221,11 @@ Output: by default the storm's light is in HDRP's physical units under the game'
   3 min, `-slAudioWiring` for the first part only) in Play on the test map: the truck's gears and squeal, dry upwind and
   pouring under the core, the wind sound walking in to a tornado and the birds falling silent, thunder heard and nearer
   thunder louder. Report: `validation/reports/StormAudioCheck.md`. Last run: PASS.
+- **Map and radar**: **StormLab > Test Map > Map and Radar Check** (`TestMapMinimapCheck.RunFromCommandLine`): the road
+  network in one piece, 300 random trips routed (continuous, ending where asked, not much longer than by the section
+  grid), then in Play the radar through a plains storm's life and a Dixie storm (the inflow notch, the hook, the debris
+  ball) and the map drawn over the chaser's view, corner and full screen (`Screenshots/minimap_*.png`; the map's text is
+  IMGUI and is not in them). Report: `validation/reports/TestMapMinimapCheck.md`.
 
 Headless Unity: `"C:\Program Files\Unity\Hub\Editor\6000.6.6f1\Editor\Unity.exe" -batchmode -projectPath
 tests/StormLabTest -executeMethod <method> -logFile <log>`. Never with `-nographics`.

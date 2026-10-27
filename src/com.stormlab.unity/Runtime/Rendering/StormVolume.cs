@@ -22,6 +22,8 @@ namespace StormLab
 
         /// <summary>the wall-cloud underside the build draws (_WallP; StormRenderer.wallBase)</summary>
         public Vector4 wallParams;
+        /// <summary>the tilted updraft's rain-free base and a tornado's clear air (_PrecipP; StormTilt.Clear, km)</summary>
+        public Vector4 precipParams;
 
         public RenderTexture Dens => dens;
         public RenderTexture LightTex => light;
@@ -88,6 +90,7 @@ namespace StormLab
             p[20] = new Vector4(z0, 0, 0, 0);
             cmd.SetComputeVectorArrayParam(cs, "_SP", p);
             cmd.SetComputeVectorParam(cs, "_WallP", wallParams);
+            cmd.SetComputeVectorParam(cs, "_PrecipP", precipParams);
             cmd.SetComputeTextureParam(cs, kBuild, "_Noise", noise);
             cmd.SetComputeTextureParam(cs, kBuild, "_OutD", dens);
             cmd.DispatchCompute(cs, kBuild, G(NV, 4), G(NV, 4), G(nz, 4));
