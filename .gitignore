@@ -22,3 +22,6 @@ validation/parity/csharp/obj/
 validation/audio/bin/
 validation/audio/obj/
 validation/audio/out/
+
+# raw downloaded recordings (audio-sources/*/CREDITS.md lists them); the trimmed game clips are committed
+audio-sources/**/*.ogg
