@@ -27,8 +27,8 @@ Add `StormRenderer` to a GameObject in an HDRP scene. It installs its own custom
 supercell. The website's own seven presets stay in `StormPreset.Website` for the parity check and comparison, picked
 with `web:<key>`, e.g. `web:lp`), `varied` and `seed` (on: 2-4 irregular cycles with varied tornado shapes, as the
 website's "New storm"; off: the original teaching sequence), and place it with `origin` or `PlaceUpdraftAt(ground,
-minutes)`. `minutesPerSecond` is the storm clock: 1 is the website's 1x (an hour of storm in a minute), 1/60 is real
-time. For lightning, add `StormLightning` next to it: it adds the flashes, the bridge that lights the cloud, and storm-driven
+minutes)`. `minutesPerSecond` is the storm clock: 1/60 is real time (the default), 1 is the website's 1x (an hour of storm in a
+minute). For lightning, add `StormLightning` next to it: it adds the flashes, the bridge that lights the cloud, and storm-driven
 flash rates. For a floating origin call `ShiftOrigin(offset)` with the offset the game applied.
 
 On the test map, every new storm (Play, **N**, or a new setup or seed in the panel) starts at storm time 0, as towering
@@ -71,14 +71,23 @@ stovepipe on a high one (another shape when a neighbouring cycle already has it)
 their multiple-vortex start. A quicker build-up: the clear slot opening and the updraft wrapping round it take about
 1.5 storm min each (from about 4.5), the mature stage of a cycle without a tornado half as long, and everything after
 comes that much sooner (a mean plains storm runs 148 storm min instead of 170). `-- --runup` lists both per stage. The teaching sequence (varied off) is the
-web build's and keeps its second tornado, which starts as multiple vortices and grows into a mile-wide wedge.
+web build's and keeps its second tornado, which starts as multiple vortices and grows into a mile-wide wedge. No
+anticyclonic side (user, 2026-10-27, every game storm, the teaching sequence too): no anti-mesocyclone lowering at the
+surge's southern curl and no anticyclonic tornado; `-- --anti` checks that game plans have none.
 
-**Rotation** (`StormSpin`, a game addition beside the port): the mesocyclone and the detailed tornado turn by angles
+**Rotation** (`StormSpin`, a game addition beside the port): every turning cloud feature turns by an angle
 added up frame by frame, where the web build turns them by rate x wall clock. With a clock that has run for many minutes
 any change of rate swamped the rate itself: the mesocyclone looked fast while it spun up and slowed sharply once the
-wall cloud formed, a widening wedge turned backwards, and suction vortices whirled at touchdown. `mesoSpinScale` (3)
-keeps the mesocyclone at about the speed it seemed to have while spinning up; it winds down only as the storm dies.
-`-- --spin [preset]` lists, stage by stage, the speeds the web build's way showed and the speeds now.
+wall cloud formed, a widening wedge turned backwards, and suction vortices whirled at touchdown. With `spinRates = Real`
+(the default; user, 2026-10-27: everything at real-world speeds) each feature turns at a real wind over its own radius, so
+its edge moves at that wind in real time: the mesocyclone 14-37 m/s at the updraft's edge (a turn in about 20 min; the
+web build's rates had made it a 20-60x time-lapse), the wall cloud 12-26 m/s at its rim (4-16 min), the RFD lip 12 m/s,
+the anti-mesocyclone 10 m/s ("web:" presets only), the tornado's skin its own wind at the funnel's edge, its core solid-body inside the radius
+of maximum wind (Rankine), suction vortices 30 m/s about their axes orbiting at half the parent's wind, the dust whirl the
+1/r wind outside the core, satellite and anticyclonic ("web:" only) tornadoes 35 and 30 m/s. Constants and sources are in
+`StormSpin.cs`; `Website` gives the web build's rates (the website comparison uses it).
+`-- --spin [preset]` lists, stage by stage, the speeds the web build's way showed and the real ones, then every feature's
+time per turn.
 
 On the test map (**StormLab > Test Map > Open Test Map**), **Tab** opens the storm and lighting panel
 (`TestMapStormPanel`): setup, seed, storm time and speed, jumps to the next wall cloud or tornado, bringing the storm to
@@ -134,8 +143,14 @@ Tornado (`tornado`):
 
 Wall-cloud base (`wallBase`, also on the panel):
 - **Smooth** (default): a soft underside with scud hugging the base under its middle, more of it under a bigger, lower wall
-  cloud (`dotnet run --project validation/parity/csharp -- --wall` lists the wall clouds' sizes).
-- **Website**: the web build's ragged fringe (its streaks point at the wall cloud's centre); the website comparison uses it.
+  cloud (`dotnet run --project validation/parity/csharp -- --wall` lists the wall clouds' sizes). Its tail cloud (user,
+  2026-10-27) is a band about a kilometre across, tapering away, with a rounded underside that grows out of the wall
+  cloud's at about its level and eases up into the base, joined to it by a soft union; the render pass draws it at full
+  detail along its whole length (`inTailCloud`), where the web build's fine edge stopped at a ring round the wall cloud.
+  `StormLabTests.RunFromCommandLine -slTail` renders the web build's tail, the game's and none from four views
+  (`Screenshots/tail_sheet.png`, `validation/reports/TailChecks.md`).
+- **Website**: the web build's ragged fringe (its streaks point at the wall cloud's centre) and its tail cloud (a flat slab
+  over 2 km wide hanging below the wall cloud's rim); the website comparison uses it.
 
 **Sound** (`Runtime/Audio`). `StormAudio` (one per scene) hears every storm at the `player`: the tornado wind
 (`TornadoWindAt`), silent below 3 m/s, then a gusty rush, moaning and whistling round the truck, the low roar, debris

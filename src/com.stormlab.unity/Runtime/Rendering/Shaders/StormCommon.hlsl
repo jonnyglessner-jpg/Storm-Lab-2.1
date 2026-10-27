@@ -6,7 +6,7 @@
 #ifndef STORM_COMMON
 #define STORM_COMMON
 
-float4 _SP[31];
+float4 _SP[32];
 #define S_f      _SP[0]    // xy forward (storm motion) unit, zw left unit
 #define S_base   _SP[1]    // x cloud base, y storm top (EL), z clock s, w storm time min
 #define S_tower  _SP[2]    // x top height, y radius, z amount, w striation
@@ -38,9 +38,11 @@ float4 _SP[31];
 #define S_tor9   _SP[26]   // xyz colour of the soil it lofts (linear albedo), w how far that dirt stains the funnel's lower part
 #define S_tor10  _SP[27]   // sidewinder: xy direction its lower end is dragged in (unit), z drag km; w angle of the plane the funnel bends in
 #define S_tor11  _SP[28]   // satellite tornado: xy position, z amount 0..1, w visible radius km
-// ---- angles turned so far, rad (StormSpin.Advance: each rate added up frame by frame, not rate x clock)
+// ---- angles turned so far, rad, counter-clockwise positive (StormSpin.Advance: each rate added up frame by frame, not
+// rate x clock; real-world v / r by default, the web build's rates for the website comparison)
 #define S_spin   _SP[29]   // x mesocyclone, y funnel skin, z central core, w suction-vortex wisps
-#define S_spin2  _SP[30]   // x suction-vortex orbit, y dust whirl
+#define S_spin2  _SP[30]   // x suction-vortex orbit, y dust whirl, z wall cloud, w RFD lip
+#define S_spin3  _SP[31]   // x anti-mesocyclone (negative: clockwise), y satellite tornado, z anticyclonic tornado (negative)
 
 Texture3D<float> _Noise;
 SamplerState sampler_LinearRepeat;
@@ -149,7 +151,24 @@ float clearSlot(float3 p)
 // x 1: the game's wall-cloud underside (StormRenderer.wallBase Smooth): its ragged fringe drawn from noise in the cloud's
 // own turning frame rather than round its centre (whose streaks all pointed at the centre, with a seam where the angle
 // wraps), a softer underside, and scud: soft fragments hanging under the base that fade into it. 0: the web build's.
+// y 1: the game's tail cloud (a narrow band with a rounded underside, joined smoothly to the wall cloud); 0: the web build's.
 float4 _WallP;
+
+// where the game's tail cloud (_WallP.y) can be: a corridor from the wall cloud along the tail, aimed as nearField aims it.
+// The render pass draws near-ground cloud at full detail only near the wall cloud or where the coarse volume has some;
+// the tail runs well past the wall cloud, and its fine edge was cut off where that region ended (user, 2026-10-27)
+bool inTailCloud(float3 q)
+{
+    if (_WallP.y < 0.5 || S_wall.w <= 0.0 || S_wall2.z <= 0.0) return false;
+    if (q.z < S_base.x - S_wall2.x - 0.4 || q.z > S_base.x + 0.3) return false;
+    float2 wc = S_wall.xy; float Rw = S_wall.z;
+    float2 root = S_up.xy + S_f.xy * 2.5 + S_f.zw * 0.5;
+    float bend = 0.035 * (S_tail.z - 2.0) * (S_tail.z - 2.0) * 0.12 - 0.6 * sin(0.7);
+    float2 aim = root + S_tail.xy * 2.0 + float2(-S_tail.y, S_tail.x) * bend;
+    float2 td = normalize(aim - wc + float2(0.0001, 0.0));
+    float2 dw = q.xy - wc; float s = dot(dw, td);
+    return s > 0.0 && s < Rw + 5.0 && abs(dot(dw, float2(-td.y, td.x))) < 1.2;
+}
 
 float nearField(float3 p, float fine)
 {
@@ -162,7 +181,7 @@ float nearField(float3 p, float fine)
         if (rw < Rw + 5.5 && p.z < zb + 1.8 && p.z > max(0.06, zb - lw - 0.85))
         {
             // the wall cloud turns counter-clockwise: sample its texture in a frame turned back by the angle turned so far
-            float2 dr = rot2(dw, -S_wall2.y * clock);
+            float2 dr = rot2(dw, -S_spin2.z);
             float n = 0.5 * n3(float3(dr * 0.5, p.z * 1.0)) + 0.5 * lerp(0.5, n3(float3(dr * 1.9, p.z * 2.2) + float3(0.3, 0.7, 0.2)), fine);
             // ragged fringe hanging from the bottom: fine noise around the circumference, stretched vertically
             float ang = atan2(dr.y, dr.x);
@@ -211,11 +230,35 @@ float nearField(float3 p, float fine)
             float2 tailAim = beaverRoot + S_tail.xy * 2.0 + beaverNormal * beaverBend;
             float2 td = normalize(tailAim - wc + float2(0.0001, 0.0)); float s = dot(dw, td); float qq = dot(dw, float2(-td.y, td.x));
             float nt = n3(float3(s * 0.3, qq * 1.0, p.z * 1.5) + float3(0.2, 0.6, 0.1));
+            if (_WallP.z > 0.5) { }   // (checks: no tail cloud)
+            else if (_WallP.y > 0.5)
+            {
+                // the game's tail (user, 2026-10-27): the web build's was a flat slab over 2 km wide whose underside hung
+                // below the wall cloud's rim, so it met the wall cloud in a step. Here it is a narrow band about a
+                // kilometre across, tapering away; its underside is rounded (deepest along its middle, curving up to the
+                // base at its sides) and grows out of the wall cloud's own underside at about its level (a tail cloud hangs
+                // about as low as the wall cloud it feeds), easing up toward the base with distance
+                float far = saturate((s - Rw) / 4.5);
+                float hw = lerp(0.6, 0.25, far) * (0.85 + 0.3 * nt);
+                float x = abs(qq) / hw;
+                float wallD = lw * (0.15 + 0.85 * (1.0 - pow(saturate(s / Rw), 2.4)));
+                float tailD = (0.8 * lw + 0.05) * (1.0 - 0.6 * far);
+                float D = lerp(wallD, tailD, ss(0.3 * Rw, 1.1 * Rw, s));
+                float tb = zb - D * (1.0 - min(x * x * x, 1.0)) + (nt - 0.5) * 0.1;
+                float tg = ss(Rw * 0.3, Rw * 0.7, s) * (1.0 - ss(Rw + 2.5, Rw + 4.5, s + (nt - 0.5) * 1.2))
+                    * ss(1.0, 0.6, x + (nt - 0.5) * 0.3) * ss(tb - 0.06, tb + 0.1, p.z) * ss(zb + 0.22, zb - 0.04, p.z);
+                // joined to the wall cloud softly (a union, not the larger of the two), so no seam where they meet
+                float tv = S_wall2.z * tg * 0.9;
+                v = v + tv - v * tv;
+            }
+            else
+            {
             float wt = lerp(1.15, 0.45, saturate((s - Rw) / 4.5));
             float zt = zb - lw * 0.6 - 0.24 + 0.15 * saturate((s - Rw) / 4.5);
             float tl = ss(Rw * 0.4, Rw * 0.8, s) * (1.0 - ss(Rw + 3.0, Rw + 4.8, s + (nt - 0.5) * 1.5))
                 * ss(wt, wt * 0.4, abs(qq) + (nt - 0.5) * 0.6) * ss(zt - 0.08, zt + 0.08, p.z) * ss(zb + 0.22, zb - 0.04, p.z);
             v = max(v, S_wall2.z * tl * 0.9);
+            }
         }
     }
     if (S_rfdb.w > 0.0)
@@ -228,7 +271,7 @@ float nearField(float3 p, float fine)
         {
             float th = atan2(dot(db, S_f.zw), dot(db, S_f.xy));     // the arc runs from -170 deg (south arm) through the east to +60 (north arm)
             float am = horseshoeArc(th);
-            float2 dl = rot2(db, -0.06 * clock);
+            float2 dl = rot2(db, -S_spin2.w);
             float nl = 0.6 * n3(float3(dl * 0.6, p.z * 1.2) + float3(0.2, 0.4, 0.9)) + 0.4 * lerp(0.5, n3(float3(dl * 2.2, p.z * 2.6) + float3(0.8, 0.1, 0.3)), fine);
             float north = ss(0.3, 1.0, cos(th - 0.9)); float south = ss(0.5, 1.0, cos(th + 2.97));
             float D = S_rfdb.w * (0.16 + 0.08 * south + 0.15 * north + 0.25 * S_wall2.x * north) * (0.85 + 0.3 * nl);
@@ -254,7 +297,7 @@ float nearField(float3 p, float fine)
         float Ra = 0.45 + 0.4 * S_anti.z;
         if (ra < Ra + 1.0 && p.z < zb + 0.3 && p.z > zb - 0.7)
         {
-            float2 dra = rot2(da, 0.16 * clock);
+            float2 dra = rot2(da, -S_spin3.x);
             float na = 0.55 * n3(float3(dra * 0.9, p.z * 1.5) + float3(0.6, 0.2, 0.7)) + 0.45 * lerp(0.5, n3(float3(dra * 2.8, p.z * 3.0) + float3(0.1, 0.5, 0.2)), fine);
             float la = (0.1 + 0.25 * S_anti.z) * (1.0 - 0.5 * pow(min(ra / Ra, 1.2), 4.0));
             float bot = zb - la - (na - 0.5) * 0.12;

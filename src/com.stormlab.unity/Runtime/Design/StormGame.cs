@@ -6,6 +6,8 @@
 //   - A quicker build-up: the clear slot opening and the updraft wrapping round it take about 1.5 min each (BuildUpMin),
 //     and the mature mesocyclone of a cycle without a tornado RunUp of its time; every later milestone, and the storm's
 //     end, come sooner.
+//   - No anticyclonic side (user, 2026-10-27): no anti-mesocyclone lowering at the surge's southern curl and no
+//     anticyclonic tornado there, in every game storm (the teaching sequence too).
 // Not part of the web build's design: StormDesign stays as the website's, and parity does not see this.
 using System;
 
@@ -23,11 +25,13 @@ namespace StormLab
         static readonly TornadoShape[] LowBaseFor = { TornadoShape.Wedge, TornadoShape.Stovepipe, TornadoShape.Cone, TornadoShape.Rope };
         static readonly TornadoShape[] HighBaseFor = { TornadoShape.Stovepipe, TornadoShape.Cone, TornadoShape.Rope };
 
-        /// <summary>The game's plan from the web build's (a copy; P itself when it has no cycles, as the teaching sequence).</summary>
+        /// <summary>The game's plan from the web build's (a copy).</summary>
         public static StormPlan Adapt(StormPlan P)
         {
-            if (P == null || P.cycles == null) return P;
+            if (P == null) return P;
             var Q = P.Clone();
+            Q.antiMeso = 0; Q.antiTornado = false;
+            if (P.cycles == null) return Q;
             int n = P.cycles.Length;
             Q.cycles = new StormCycle[n];
             double shift = 0;

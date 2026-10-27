@@ -293,7 +293,7 @@ public static class TestMapMinimapCheck
         // ---- through the storm's life, and another setup: the features of a supercell on radar (user's references,
         // 2026-10-27): the inflow notch under the updraft, the hook behind the mesocyclone, the debris ball
         rep.AppendLine().AppendLine("## Through a storm's life").AppendLine();
-        rep.AppendLine("| storm | time | stage | most | 50+ dBZ | at the updraft (notch) | hook (most behind the wall cloud) | debris ball | picture |").AppendLine("| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
+        rep.AppendLine("| storm | time | stage | most | 50+ dBZ | inflow notch (rain-free base) | hook (most behind the wall cloud) | debris ball | picture |").AppendLine("| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
         var cases = new List<(string preset, string label, Func<StormPlan, float> at)>
         {
             ("plains", "first_echo", p => (float)p.cycles[0].start - 14f),
@@ -315,7 +315,11 @@ public static class TestMapMinimapCheck
             var d = ReadDbz(radar);
             if (d == null) { Check(false, "radar readback"); continue; }
             var uc = storm.UpdraftWorld(tc);
-            float notch = DbzAt(radar, d, uc, 300f), hook = HookDbz(storm, radar, d);
+            // the inflow notch: under the rain-free base, forward and right of the updraft (StormTilt; at the updraft
+            // itself the tornado and its debris ball sit within half a km)
+            var fa = storm.Frame.param; float baseR = storm.ClearParams.x;
+            var nc = new Vector2(fa[16 * 4], fa[16 * 4 + 1]) + (new Vector2(fa[0], fa[1]) - new Vector2(fa[2], fa[3])) * 0.42f * Mathf.Max(baseR, 1.5f);
+            float notch = DbzAt(radar, d, storm.StormToWorld(new Vector3(nc.x, nc.y, 0f)), 300f), hook = HookDbz(storm, radar, d);
             float debris = storm.TornadoAmount > 0.15f ? DbzAt(radar, d, storm.TornadoGroundWorld, 400f) : float.NaN;
             float cell = radar.Area.width / radar.Dbz.width;
             map.fullSpan = 30000f; map.CentreOn(new Vector2(uc.x, uc.z));
@@ -323,7 +327,10 @@ public static class TestMapMinimapCheck
             rep.AppendLine($"| {c.preset} seed {storm.seed} | {tc:0} min | {storm.Frame.stage} | {d.Max():0} | {d.Count(v => v >= 50f) * cell * cell / 1e6f:0} km² | {notch:0} | {hook:0} | {(float.IsNaN(debris) ? "-" : debris.ToString("0"))} | `minimap_life_{c.label}.png` |");
             if (c.label == "tornado" || c.label == "dixie_tornado")
             {
-                Check(notch < 30f, $"{c.label}: no echo in the inflow notch under the updraft ({notch:0} dBZ)");
+                // a classic storm keeps heavy rain out of its inflow notch (light rain and speckle may show); an HP storm's
+                // rain wraps round the mesocyclone and through it (the bear's cage), so it is only reported
+                if (storm.Plan.hpness < 0.5) Check(notch < 35f, $"{c.label}: no heavy rain in the inflow notch under the rain-free base ({notch:0} dBZ)");
+                else rep.AppendLine($"- {c.label}: HP, its rain wraps through the inflow notch ({notch:0} dBZ there)");
                 Check(hook > 40f, $"{c.label}: a hook behind the mesocyclone ({hook:0} dBZ)");
                 Check(float.IsNaN(debris) || debris >= 45f, $"{c.label}: a debris ball at the tornado ({debris:0} dBZ)");
             }
@@ -353,6 +360,18 @@ public static class TestMapMinimapCheck
                 string name = $"tilt_{key}_{layout.ToString().ToLowerInvariant()}_{km}km";
                 StormLabTestKit.Render(cam, Path.Combine(ShotDir, name + ".png"), 1600, 900, 6);
                 var cp = storm.ClearParams;
+                if (key == "dixie" && km == 4)
+                {
+                    // the same view with no rain at all: what of its outline is the cloud's, and what the rain's
+                    storm.hideRain = true;
+                    storm.StepTo(tt, storm.Clock, true);
+                    storm.ResetHistory(cam);
+                    foreach (var x in PlayerFrames(3)) yield return x;
+                    StormLabTestKit.Render(cam, Path.Combine(ShotDir, name + "_norain.png"), 1600, 900, 6);
+                    storm.hideRain = false;
+                    storm.StepTo(tt, storm.Clock, true);
+                    rep.AppendLine($"- {key} {layout}: `Screenshots/{name}_norain.png` (no rain: the cloud alone)");
+                }
                 rep.AppendLine($"- {key} {layout}: `Screenshots/{name}.png` (slope {(layout == PrecipLayout.Tilted ? StormTilt.Slope(pl) : Math.Sqrt(pl.tilt.x * pl.tilt.x + pl.tilt.y * pl.tilt.y)):0.00}, rain-free base {cp.x:0.0} km, tornado clear {cp.y:0.00} km)");
             }
         }

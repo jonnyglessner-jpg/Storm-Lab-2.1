@@ -13,13 +13,15 @@ README.md has the layout, use, checks and known gaps.
   order, same comments. Run `bash validation/parity/parity.sh` after touching the design (it must stay at difference 0).
 - Game adaptations go beside the port, not into it (as `lighting = Physical`, `tornado = Detailed`, scene depth, the
   lightning hook, `TornadoWindAt`). `StormTornadoes` (2.0's tornado character) post-processes the frame and owns slots
-  23-28; `StormDesign` fills 0-22 exactly as the website. `StormSpin` owns 29-30: the angles the mesocyclone and the
-  detailed tornado have turned, added up per frame. Never turn a feature by `rate x clock` when its rate can change (the
+  23-28; `StormDesign` fills 0-22 exactly as the website. `StormSpin` owns 29-31: the angles every turning cloud feature has turned
+  (mesocyclone, wall cloud, RFD lip, anti-mesocyclone, the detailed tornado's parts, satellite and anticyclonic tornadoes),
+  added up per frame. Rates are real-world winds over each feature's radius (`spinRates = Real`, user 2026-10-27: everything
+  at real speeds); `Website` gives the web build's rates for the website comparison. Never turn a feature by `rate x clock` when its rate can change (the
   speed seen is then rate + clock x d(rate)/dt: stalls, lurches, spin reversing); integrate it in `StormSpin` instead
   (`validation/parity/csharp -- --spin` compares the two). New random draws get their own `StormRng` stream.
   `StormScenario` (2.0's game layout) uses streams 500 (tiers, lanes, starts), 600+i (storm seeds), 700+i (precip);
   its storms reach the website plan only through `PlanOverrides` (precip, forced tornadic), which parity must not see.
-  Game changes to the plan itself (cycle shapes, timing) go in `StormGame.Adapt`, which every game plan passes through
+  Game changes to the plan itself (cycle shapes, timing, no anticyclonic side) go in `StormGame.Adapt`, which every game plan passes through
   (`StormGame.Plan` in the renderer, `StormScenario`, the game-facing `validation/parity/csharp` checks) and parity does not.
   Re-run the website comparison (README) after shader changes; it uses the website's lighting and tornado.
 - Setups: the game offers `StormPreset.All` (plains, lp = the website's hail environment renamed, dixie, ohio; the

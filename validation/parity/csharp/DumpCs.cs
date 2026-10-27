@@ -17,6 +17,31 @@ static class DumpCs
         if (args.Length > 0 && args[0] == "--runup") { RunUp(); return; }
         if (args.Length > 0 && args[0] == "--gameframes") { GameFrames(args[1], int.Parse(args[2]), int.Parse(args[3]), double.Parse(args[4], CultureInfo.InvariantCulture), double.Parse(args[5], CultureInfo.InvariantCulture)); return; }
         if (args.Length > 0 && args[0] == "--spin") { Spin(args.Length > 1 ? args[1] : "plains"); return; }
+        if (args.Length > 0 && args[0] == "--anti")
+        {
+            // game storms have no anticyclonic side (StormGame.Adapt, user 2026-10-27): storm minutes with an anti-mesocyclone
+            // lowering (S_anti.z) or an anticyclonic tornado (S_anti.w) in the web build's plans and the game's
+            var F = new StormFrame(); bool ok = true;
+            foreach (var pre in StormPreset.All)
+            {
+                double wm = 0, wt = 0, gm = 0, gt = 0;
+                for (int seed = 0; seed <= 120; seed++)
+                {
+                    var P = StormDesign.Plan(pre, seed == 0 ? (int?)null : seed);
+                    foreach (var (plan, game) in new[] { (P, false), (StormGame.Adapt(P), true) })
+                        for (double t = 0; t <= plan.duration; t += 0.1)
+                        {
+                            StormDesign.At(plan, t, 0, F);
+                            double m = F.param[19 * 4 + 2] > 0 ? 0.1 : 0, tt = F.param[19 * 4 + 3] > 0 ? 0.1 : 0;
+                            if (game) { gm += m; gt += tt; } else { wm += m; wt += tt; }
+                        }
+                }
+                ok &= gm == 0 && gt == 0;
+                Console.WriteLine($"{pre.key}: web anti-meso {wm:0} min, anticyclonic tornado {wt:0} min; game {gm:0} / {gt:0} min");
+            }
+            Console.WriteLine(ok ? "PASS" : "FAIL");
+            return;
+        }
         if (args.Length > 0 && args[0] == "--wall")
         {
             // the wall cloud's radius (S_wall.z) and lowering (S_wall2.x), km, where it is at least half formed
@@ -185,12 +210,13 @@ static class DumpCs
     /// The speed things are seen to turn, rad/s, the web build's way (angle = rate x clock, so seen speed = d(rate x clock)/dt)
     /// and StormSpin's (the rate), through the life of a storm with a wedge, on a game's clock (real time, life cycle at
     /// StormScenario's pace, wall clock from storm time 0). Per stage: the mesocyclone, the funnel's skin and the suction
-    /// vortices' orbit, and how much of the stage the web build's skin turned backwards (clockwise).
+    /// vortices' orbit, and how much of the stage the web build's skin turned backwards (clockwise). "now" is StormSpin's
+    /// real-world rate. Then every feature's real rate as seconds per turn, per stage (tornado parts while one is down).
     /// </summary>
     static void Spin(string key)
     {
         var pre = StormPreset.Find(key); var region = StormTornadoes.RegionOf(key);
-        double pace = StormScenario.DefaultPace, mesoScale = 3, dt = 0.25;
+        double pace = StormScenario.DefaultPace, dt = 0.25;
         int found = 0;
         for (int seed = 1; seed <= 400 && found < 2; seed++)
         {
@@ -204,36 +230,47 @@ static class DumpCs
             var F = new StormFrame(); var spin = new StormSpin();
             string stage = null; double t0 = 0; int n = 0, back = 0;
             double sMw = 0, sMn = 0, sSw = 0, sSn = 0, sOw = 0, sOn = 0;
+            var all = new System.Collections.Generic.List<string>(); var sum = new double[11]; int nt = 0;
+            string[] names = { "meso", "skin", "core", "wisps", "orbit", "dust", "wall", "RFD lip", "anti-meso", "satellite", "anti tor" };
+            string Turn(double r) => r <= 1e-9 ? "-" : 2 * Math.PI / r >= 120 ? $"{2 * Math.PI / r / 60:0.0} min" : $"{2 * Math.PI / r:0.0} s";
             double prevM = double.NaN, prevS = 0, prevO = 0, prevC = 0;
             void Flush(double t1)
             {
                 if (stage == null || n == 0) return;
                 Console.WriteLine($"| {stage} | {t0:0.0}-{t1:0.0} | {sMw / n:0.000} | {sMn / n:0.000} | {sSw / n:0.000} | {sSn / n:0.000} | {sOw / n:0.000} | {sOn / n:0.000} | {back * 100.0 / n:0}% |");
+                all.Add($"| {stage} | " + string.Join(" | ", sum.Select((v, i) => Turn(Math.Abs(v) / ((i >= 1 && i <= 5) ? Math.Max(nt, 1) : n)))) + " |");
             }
             for (double clock = 0; ; clock += dt)
             {
                 double t = clock * pace / 60;
                 if (t > P.duration) { Flush(t); break; }
                 StormDesign.At(P, t, clock, F); StormTornadoes.Apply(P, ch, t, F); StormLife.Apply(P, t, F);
-                spin.Advance(F, t, clock, mesoScale);
+                spin.Advance(F, t, clock);
                 double m = F.param[3 * 4 + 3], s = F.param[StormTornadoes.Slot0 * 4];
                 bool tor = s > 0;
                 double sk = C.Clamp(s, 0.02, 2.0), or = 0.55 * sk;
                 if (!double.IsNaN(prevM))
                 {
                     string st = F.stage;
-                    if (st != stage) { Flush(t); stage = st; t0 = t; n = 0; back = 0; sMw = sMn = sSw = sSn = sOw = sOn = 0; }
+                    if (st != stage) { Flush(t); stage = st; t0 = t; n = 0; back = 0; sMw = sMn = sSw = sSn = sOw = sOn = 0; Array.Clear(sum, 0, sum.Length); nt = 0; }
                     n++;
-                    sMw += (m * clock - prevM * prevC) / dt; sMn += m * mesoScale;
+                    sMw += (m * clock - prevM * prevC) / dt; sMn += spin.Rate(0);
+                    if (tor) nt++;
+                    for (int i = 0; i < sum.Length; i++) if (tor || i < 1 || i > 5) sum[i] += spin.Rate(i);
                     if (tor)
                     {
                         double skW = (sk * clock - prevS * prevC) / dt, orW = (or * clock - prevO * prevC) / dt;
-                        sSw += skW; sSn += sk; sOw += orW; sOn += or;
+                        sSw += skW; sSn += spin.Rate(1); sOw += orW; sOn += spin.Rate(4);
                         if (skW < 0) back++;
                     }
                 }
                 prevM = m; prevS = sk; prevO = or; prevC = clock;
             }
+            Console.WriteLine();
+            Console.WriteLine("Real rates, time per turn:");
+            Console.WriteLine("| stage | " + string.Join(" | ", names) + " |");
+            Console.WriteLine("|---|" + string.Concat(names.Select(_ => "---|")));
+            foreach (var l in all) Console.WriteLine(l);
             Console.WriteLine();
         }
     }

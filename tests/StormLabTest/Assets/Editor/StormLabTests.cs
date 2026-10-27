@@ -131,6 +131,56 @@ public static class StormLabTests
         rep.AppendLine().AppendLine("Sheet: `Screenshots/wall_sheet.png`.");
     }
 
+    /// <summary>The wall cloud's tail cloud (the low inflow band feeding it), the web build's (left) and the game's (right,
+    /// StormRenderer.wallBase Smooth): from beside the tail, down the tail into the wall cloud, from the south-east as a
+    /// chaser sees it, and from its other side. Before touchdown and with a tornado. Screenshots/tail_*.png and tail_sheet.png.</summary>
+    static void Tails(StringBuilder rep)
+    {
+        storm.lighting = StormLighting.Physical; storm.tornado = TornadoModel.Detailed; storm.wallBase = WallBase.Smooth;
+        storm.sunAzimuth = 250f; storm.sunElevation = 25f;
+        rep.AppendLine("## Tail cloud: web build's (left), the game's (middle) and none (right)").AppendLine();
+        var tiles = new List<string>();
+        storm.preset = "plains"; storm.varied = true; storm.seed = 42; storm.Replan();
+        var cy = storm.Plan.cycles[0];
+        foreach (var (when, t) in new[] { ("pre", (float)cy.times[2] - 0.5f), ("tor", (float)cy.times[3]) })
+        {
+            var k0 = new Case { seed = 42, t = t }; Show(k0);
+            var a = storm.Frame.param;
+            float zb = a[4];
+            var wc = new Vector2(a[24], a[25]); float Rw = a[26];
+            // the tail's direction, as StormCommon.hlsl nearField aims it
+            var f = new Vector2(a[0], a[1]); var l = new Vector2(a[2], a[3]); var tail = new Vector2(a[32], a[33]);
+            var root = new Vector2(a[64], a[65]) + f * 2.5f + l * 0.5f;
+            float bend = 0.035f * (a[34] - 2f) * (a[34] - 2f) * 0.12f - 0.6f * Mathf.Sin(0.7f);
+            var td = (root + tail * 2f + new Vector2(-tail.y, tail.x) * bend - wc).normalized;
+            var nrm = new Vector2(-td.y, td.x);
+            var join = wc + td * (Rw + 0.5f);
+            var views = new (string name, Vector2 at, Vector2 from, float h, float tz)[]
+            {
+                ("side", join, join + nrm * 4.5f, 0.002f, zb - 0.1f),
+                ("along", wc, wc + td * (Rw + 6f) + nrm * 1.0f, 0.002f, zb - 0.2f),
+                ("chaser", wc + td * 1.0f, wc + td * 3f - nrm * 5f, 0.002f, zb - 0.1f),
+                ("far side", join, join - nrm * 4.5f, 0.002f, zb - 0.1f),
+            };
+            foreach (var v in views)
+                foreach (int mode in new[] { 0, 1, 2 })
+                {
+                    bool web = mode == 0; storm.webTail = web; storm.hideTail = mode == 2;
+                    var k = new Case { seed = 42, t = t }; Show(k);
+                    var d = v.from - v.at;
+                    k.cam = new WebCam { az = Mathf.Atan2(d.y, d.x) * Mathf.Rad2Deg, dist = d.magnitude, h = v.h, tz = v.tz, tx = v.at.x, ty = v.at.y };
+                    Aim(k.cam, t); storm.ResetHistory(cam);
+                    string file = $"tail_{when}_{v.name.Replace(" ", "")}_{(mode == 0 ? "web" : mode == 1 ? "game" : "none")}.png";
+                    Shot(file, new Case { w = 1200, h = 675 }, 4);
+                    tiles.Add(Path.Combine(ShotDir, file));
+                }
+            rep.AppendLine($"- plains seed 42 at {t:0.0} min ({when}): {storm.Frame.stage}; wall cloud radius {Rw:0.00} km, lowering {a[28]:0.00} km, tail {a[30]:0.00}, base {zb:0.00} km");
+        }
+        storm.webTail = false; storm.hideTail = false;
+        Sheet(tiles, 3, Path.Combine(ShotDir, "tail_sheet.png"));
+        rep.AppendLine().AppendLine("Sheet: `Screenshots/tail_sheet.png`.");
+    }
+
     /// <summary>The opening view of the web build (CameraRig az -70, 24 km, 0.1 km up, looking 2.9 km up) at the updraft.</summary>
     static WebCam Opening()
     {
@@ -157,6 +207,12 @@ public static class StormLabTests
         int li = Array.IndexOf(argv, "-slTornadoLife");
         if (li >= 0 && li + 3 < argv.Length)
             return TornadoLife(argv[li + 1], int.Parse(argv[li + 2]), int.Parse(argv[li + 3]), li + 4 < argv.Length && !argv[li + 4].StartsWith("-") ? argv[li + 4] : "");
+        if (System.Environment.GetCommandLineArgs().Contains("-slTail"))
+        {
+            Tails(rep);
+            File.WriteAllText(Path.Combine(StormLabTestKit.RepoRoot, "validation", "reports", "TailChecks.md"), rep.ToString());
+            return ok;
+        }
         if (System.Environment.GetCommandLineArgs().Contains("-slWall"))
         {
             WallBases(rep);
@@ -166,7 +222,7 @@ public static class StormLabTests
         if (compare != null)
         {
             var list = JsonUtility.FromJson<CaseList>(File.ReadAllText(compare));
-            storm.lighting = StormLighting.Website; storm.tornado = TornadoModel.Website; storm.wallBase = WallBase.Website; storm.precip = PrecipLayout.Website; storm.mesoSpinScale = 1;
+            storm.lighting = StormLighting.Website; storm.tornado = TornadoModel.Website; storm.wallBase = WallBase.Website; storm.precip = PrecipLayout.Website; storm.spinRates = SpinRates.Website;
             rep.AppendLine("## Website comparison").AppendLine();
             foreach (var k in list.cases)
             {

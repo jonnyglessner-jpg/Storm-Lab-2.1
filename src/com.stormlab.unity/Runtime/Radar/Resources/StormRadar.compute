@@ -212,10 +212,10 @@ float Zat(float3 p)
         float s = (phi - phi0) / (phi1 - phi0);
         float r0 = 3.2 * hs;
         float rc = lerp(r0, rTip, ss(0.0, 1.0, s)) + 0.35 * (n1 - 0.5);
-        float w = lerp(1.25, 0.5, saturate(s)) * hs * (1.0 + 0.8 * saturate(S_rfd.w));
+        float w = lerp(0.75, 0.32, saturate(s)) * hs * (1.0 + 0.8 * saturate(S_rfd.w));   // a thin band: a hook, not a donut
         float band = exp(-pow((rC - rc) / w, 2.0)) * ss(-0.35, 0.05, s) * ss(1.12, 0.98, s);
         float2 tip = fromLoc(C, dirAt(phi1) * rTip);
-        float tq = length(p.xy - tip) / (0.6 * hs);
+        float tq = length(p.xy - tip) / (0.45 * hs);
         float ball = exp(-tq * tq);
         float low = ss(zb + 1.0, zb - 0.2, z);
         float rr = hookAmt * low * torClear * (70.0 * lerp(0.95, 0.6, saturate(s)) * band + 85.0 * ball) * exp(0.6 * (2.0 * n2 - 1.0));
@@ -226,7 +226,7 @@ float Zat(float3 p)
     if (S_tor.z > 0.15)
     {
         float ef = S_tor7.z > 0.0 ? S_tor7.z : 1.0;
-        float rd = max(0.3, 2.0 * S_tor2.x + 0.2);
+        float rd = clamp(1.5 * S_tor2.x + 0.2, 0.25, 0.8);   // the debris ball: about the tornado's size, well under 2 km across
         float top = 0.4 + 0.5 * ef;
         float dq = length(p.xy - S_tor.xy) / rd;
         float w = saturate((S_tor.z - 0.15) / 0.5) * exp(-dq * dq) * ss(top + 0.3, top - 0.3, z);

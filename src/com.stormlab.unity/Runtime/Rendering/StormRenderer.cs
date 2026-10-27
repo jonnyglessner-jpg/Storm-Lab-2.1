@@ -57,9 +57,9 @@ namespace StormLab
                  "origin.y (valleys); the scene depth stops them at the ground. Only with scene depth and no backdrop")]
         public float groundSink = 300f;
 
-        [Tooltip("how fast the mesocyclone turns, over the web build's rate (StormSpin). 3: about the speed it seemed to have " +
-                 "while it spun up, when the web build's rate x clock overstated it; 1 for the website comparison")]
-        public double mesoSpinScale = 3;
+        [Tooltip("how fast the clouds turn (StormSpin). Real: every feature at a real-world wind over its radius, in real " +
+                 "time (user, 2026-10-27); Website: the web build's rates, for the website comparison")]
+        public SpinRates spinRates = SpinRates.Real;
         [Tooltip("in Play, shade the scene the sun lights (terrain, roads, vehicles) with the storms' shadow: a cookie on the sun " +
                  "(StormSceneShadow), shared by every storm")]
         public bool castSceneShadow = true;
@@ -73,8 +73,9 @@ namespace StormLab
         [Header("Playback")]
         [Tooltip("storm time shown, minutes (StormTime holds it at full precision)")]
         public float stormMinutes;
-        [Tooltip("storm minutes per second: 1 is the web build's 1x (an hour of storm in a minute), 1/60 real time")]
-        public float minutesPerSecond = 1f;
+        [Tooltip("storm minutes per second: 1/60 real time (the default, user 2026-10-27: everything at real speed), 1 the web " +
+                 "build's 1x (an hour of storm in a minute)")]
+        public float minutesPerSecond = 1f / 60f;
         public bool playing = true;
 
         [Header("Quality")]
@@ -266,11 +267,20 @@ namespace StormLab
         {
             get
             {
-                if (precip != PrecipLayout.Tilted || Plan == null) return Vector4.zero;
+                float hide = hideRain ? 1 : 0;
+                if (precip != PrecipLayout.Tilted || Plan == null) return new Vector4(0, 0, hide, 0);
                 var (b, t) = StormTilt.Clear(Plan, Frame);
-                return new Vector4((float)b, (float)t, 0, 0);
+                return new Vector4((float)b, (float)t, hide, 0);
             }
         }
+        /// <summary>For checks: the volume's build leaves out all rain (to tell the cloud's shapes from the rain's).</summary>
+        [NonSerialized] public bool hideRain;
+        /// <summary>For checks: the web build's tail cloud under the game's wall-cloud base (to compare the two tails).</summary>
+        [NonSerialized] public bool webTail;
+        /// <summary>For checks: no tail cloud at all (to find it in a view).</summary>
+        [NonSerialized] public bool hideTail;
+        /// <summary>_WallP: x the game's wall-cloud underside, y its tail cloud (both with wallBase Smooth)</summary>
+        Vector4 WallParams => new Vector4(wallBase == WallBase.Smooth ? 1 : 0, wallBase == WallBase.Smooth && !webTail ? 1 : 0, hideTail ? 1 : 0, 0);
 
         /// <summary>the tornado on the ground now, 0..1 (StormFrame.tornado)</summary>
         public float TornadoAmount => (float)Frame.tornado;
@@ -451,7 +461,7 @@ namespace StormLab
             if (tornado == TornadoModel.Detailed) StormTornadoes.Apply(Plan, Tornadoes, tMin, Frame);
             if (precip == PrecipLayout.Tilted) StormTilt.Apply(Plan, Frame);
             StormLife.Apply(Plan, tMin, Frame);
-            Spin.Advance(Frame, tMin, clock, mesoSpinScale);
+            Spin.Advance(Frame, tMin, clock, spinRates);
             if (frameCmd == null) frameCmd = new CommandBuffer { name = "Storm volume" };
             frameCmd.Clear();
             frameCmd.BeginSample(VolumeSampler);
@@ -459,7 +469,7 @@ namespace StormLab
             var lt = Lighting;
             float wall = Application.isPlaying ? Time.realtimeSinceStartup : (float)(DateTime.Now.TimeOfDay.TotalSeconds);
             bool keyMoved = Vector3.Dot(lt.keyDir, lastKey) < 0.99995f || lt.keyIsMoon != lastKeyMoon;
-            var wallP = new Vector4(wallBase == WallBase.Smooth ? 1 : 0, 0, 0, 0);
+            var wallP = WallParams;
             if (wallP != Volume.wallParams) { Volume.wallParams = wallP; hasFrame = false; }
             Volume.precipParams = ClearParams;
             if (!hasFrame || rebuildNow || double.IsNaN(lastBuilt))
@@ -575,7 +585,7 @@ namespace StormLab
             cmd.SetComputeVectorParam(marchCs, "_SkyHor", bHor); cmd.SetComputeVectorParam(marchCs, "_SkyHorK", bHorK);
             cmd.SetComputeVectorParam(marchCs, "_MP", new Vector4(StormVolume.CloudMax, StormVolume.RainMax, exposure, st.frame++));
             cmd.SetComputeVectorParam(marchCs, "_TorP", new Vector4(tornado == TornadoModel.Detailed ? 1 : 0, 0, 0, 0));
-            cmd.SetComputeVectorParam(marchCs, "_WallP", new Vector4(wallBase == WallBase.Smooth ? 1 : 0, 0, 0, 0));
+            cmd.SetComputeVectorParam(marchCs, "_WallP", WallParams);
             // the ground pattern of the backdrop moves under the storm as it travels
             var travel = new Vector2((float)(TravelX(StormTime) + origin.x / 1000.0), (float)(TravelY(StormTime) + origin.z / 1000.0));
             cmd.SetComputeVectorParam(marchCs, "_Opt", new Vector4(travel.x, travel.y, drawBackdrop && backdrop ? 1 : 0, toneMap ? 1 : 0));

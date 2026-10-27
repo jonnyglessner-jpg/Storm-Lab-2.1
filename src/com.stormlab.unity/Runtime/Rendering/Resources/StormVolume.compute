@@ -15,12 +15,14 @@ RWTexture3D<float4> _OutD;
 
 // ---- game adaptation beside the port (StormTilt, user 2026-10-27): the tilted updraft's rain-free base and the clear
 // air round a tornado. x: the base's radius, y: the tornado's clear radius, km; zero for the web build's layout.
+// z: 1 leaves out all rain (StormRenderer.hideRain, for checks).
 float4 _PrecipP;
 // what is left of the rain at p: none under the updraft's base on its inflow side (forward and right of the updraft,
 // up into the vault) or round a tornado on the ground; flat inside, a soft edge out (a super-Gaussian), so the exposed
 // base and the curtains' inner faces stay smooth
 float precipClear(float3 p)
 {
+    if (_PrecipP.z > 0.5) return 0.0;
     float keep = 1.0;
     float zb = S_base.x;
     if (_PrecipP.x > 0.0)
