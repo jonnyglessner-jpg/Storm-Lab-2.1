@@ -249,15 +249,15 @@ public static class StormAudioCheck
         up = storm.UpdraftWorld(storm.StormTime);
         car.Teleport(Ground(up + Quaternion.Euler(0, 110, 0) * mv * 6000f), Quaternion.identity);
         int played0 = sa.ThunderPlayed; var heard = new List<string>(); var levels = new List<(float near, float db)>();
-        t0 = Time.realtimeSinceStartup; Thunder last = null;
+        t0 = Time.realtimeSinceStartup; StormAudio.ThunderHeard last = null;
+        rep.AppendLine($"- thunder from {sa.thunderSound}");
         while (Time.realtimeSinceStartup - t0 < 40f)
         {
             if (sa.LastThunder != last && sa.LastThunder != null)
             {
-                last = sa.LastThunder; float pk = 0f, e = 0f;
-                foreach (var v in last.samples) { pk = Mathf.Max(pk, Mathf.Abs(v)); e += v * v; }
-                levels.Add((last.nearestM, 10 * Mathf.Log10(e / last.samples.Length + 1e-12f)));
-                if (heard.Count < 12) heard.Add($"{last.nearestM / 1000f:0.0} km, delay {last.delaySeconds:0.0} s, {last.samples.Length / (float)last.sampleRate:0} s long, peak {20 * Mathf.Log10(pk + 1e-9f):0} dBFS, RMS {10 * Mathf.Log10(e / last.samples.Length + 1e-12f):0} dBFS ({last.character})");
+                last = sa.LastThunder;
+                levels.Add((last.nearestM, last.levelDb));
+                if (heard.Count < 12) heard.Add($"{last.nearestM / 1000f:0.0} km, delay {last.delaySeconds:0.0} s, {last.lengthSeconds:0} s long, level {last.levelDb:0} dBFS ({last.what})");
             }
             yield return null;
         }

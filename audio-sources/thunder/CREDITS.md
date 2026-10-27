@@ -5,7 +5,9 @@ conditions; credited here anyway). Chosen with the user on 2026-10-26 for the ga
 far away the strike sounds. Downloaded as Freesound's high-quality previews (Ogg Vorbis, 48 kHz stereo, 192 kbps); the
 originals (FLAC/WAV, some 4-channel) need a signed-in download from each page.
 
-These raw files are not committed (see `.gitignore`); the trimmed clips the game plays will be, with this list.
+These raw files are not committed (see `.gitignore`). The game plays 30 clips cut from them (close / medium / far) by
+`validation/audio/thunder/cut.py` into `src/com.stormlab.unity/Runtime/Audio/Resources/StormLab/Thunder/`, named
+`<tier>_<freesound id>_<n>.ogg`; `validation/audio/thunder/check.py` checks them.
 
 ## Close: cracks and claps
 

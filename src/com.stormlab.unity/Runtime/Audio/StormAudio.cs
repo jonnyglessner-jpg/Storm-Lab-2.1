@@ -1,7 +1,8 @@
 // The storms' sound at the player: tornado wind (StormRenderer.TornadoWindAt), rain and hail (the storm volume's
-// precipitation where the player is, read back from the GPU), and thunder for every flash (ThunderSynth, from the flash's
-// channel, distance and a seeded character; it replaces the lightning core's built-in thunder through
-// LightningSystem.ThunderOverride). Add it once to a scene; it finds the storms and their lightning itself unless a game
+// precipitation where the player is, read back from the GPU), and thunder for every flash: a real recording (CC0 field
+// recordings, Resources/StormLab/Thunder, cut by validation/audio/thunder/cut.py) chosen by how far the flash is, or
+// ThunderSynth's sound made from the flash's channel. Either replaces the lightning core's built-in thunder through
+// LightningSystem.ThunderOverride. Add it once to a scene; it finds the storms and their lightning itself unless a game
 // hands it its storms (Storms).
 using System;
 using System.Collections.Concurrent;
@@ -26,6 +27,10 @@ namespace StormLab.Audio
         [Tooltip("thunder on (off for now at the user's request, 2026-10-26; the old built-in thunder stays silent too)")]
         public bool thunder;
         [Range(0f, 1f)] public float thunderVolume = 1f;
+        [Tooltip("Recordings: real thunder, close / medium / far by the flash's distance. Synthesized: made from the flash's channel")]
+        public ThunderSound thunderSound = ThunderSound.Recordings;
+        [Tooltip("a recording plays at full level this near, m, and falls off beyond as (distance)^-0.9")]
+        public float thunderFullLevelM = 700f;
         [Tooltip("wind speeds (m/s) at which the wind sound starts and reaches full intensity")]
         public Vector2 windRange = new Vector2(3f, 80f);
         [Tooltip("air temperature for the speed of sound, C")]
@@ -48,7 +53,11 @@ namespace StormLab.Audio
         public int ThunderPlaying => voices.Count;
         /// <summary>thunder started since enabled, and the last one (its distance, delay and character)</summary>
         public int ThunderPlayed { get; private set; }
-        public Thunder LastThunder { get; private set; }
+        public ThunderHeard LastThunder { get; private set; }
+
+        public enum ThunderSound { Recordings, Synthesized }
+        /// <summary>a thunder started: how far, how long after the flash, how loud (dBFS, the loudest 2 s) and what</summary>
+        public sealed class ThunderHeard { public float nearestM, delaySeconds, lengthSeconds, levelDb; public string what; }
 
         WindSynth wind; RainSynth rain;
         ProceduralAudio windOut, rainOut;
@@ -59,8 +68,15 @@ namespace StormLab.Audio
         readonly List<Voice> voices = new List<Voice>();
         float rainTimer, hookTimer;
         Action<LightningFlash, double> onThunder;
+        // the recordings by tier (close, medium, far), each drawn from a shuffled bag so none repeats soon
+        readonly List<AudioClip>[] recordings = { new List<AudioClip>(), new List<AudioClip>(), new List<AudioClip>() };
+        readonly List<AudioClip>[] bags = { new List<AudioClip>(), new List<AudioClip>(), new List<AudioClip>() };
+        readonly System.Random pick = new System.Random(17);
+        static readonly string[] Tiers = { "close", "medium", "far" };
+        const float RecordingDb = -20f;   // the clips' loudest 2 s, dBFS (cut.py)
 
         sealed class Pending { public Thunder sound; public double flashDsp; public Vector3 from; }
+        // (clip: made for this voice and destroyed with it; a recording is shared and only played)
         sealed class Voice { public AudioSource source; public AudioClip clip; public double startsAt, endsAt; public float nearestM; }
 
         void OnEnable()
@@ -71,6 +87,12 @@ namespace StormLab.Audio
             if (!rainOut) rainOut = ProceduralAudio.Create(transform, "Rain", rain, false);
             onThunder = OnThunder;
             hookTimer = 0f;
+            if (recordings[0].Count + recordings[1].Count + recordings[2].Count == 0)
+                foreach (var c in Resources.LoadAll<AudioClip>("StormLab/Thunder"))
+                {
+                    int t = Array.FindIndex(Tiers, x => c.name.StartsWith(x + "_"));
+                    if (t >= 0) recordings[t].Add(c);
+                }
         }
 
         void OnDisable()
@@ -190,12 +212,15 @@ namespace StormLab.Audio
             float near = float.MaxValue;
             foreach (var pt in flash.Channels[0].points) near = Mathf.Min(near, NVector3.Distance(pt, e));
             if (near > ThunderSynth.AudibleRangeM || (voices.Count + done.Count >= maxThunderVoices && Farthest(near) < 0)) return;
-            var input = ThunderFlash.From(flash, e, temperatureC);
-            var pending = new Pending
+            var from = new Vector3(flash.LightPosition.X, flash.LightPosition.Y, flash.LightPosition.Z);
+            double flashDsp = AudioSettings.dspTime - lateSeconds + ThunderFlash.StrokeOffset(flash);
+            if (thunderSound == ThunderSound.Recordings && recordings[0].Count + recordings[1].Count + recordings[2].Count > 0)
             {
-                flashDsp = AudioSettings.dspTime - lateSeconds + ThunderFlash.StrokeOffset(flash),
-                from = new Vector3(flash.LightPosition.X, flash.LightPosition.Y, flash.LightPosition.Z),
-            };
+                PlayRecording(near, flashDsp, from, ears);
+                return;
+            }
+            var input = ThunderFlash.From(flash, e, temperatureC);
+            var pending = new Pending { flashDsp = flashDsp, from = from };
             Task.Run(() =>
             {
                 try { pending.sound = ThunderSynth.Synthesize(input); if (pending.sound != null) done.Enqueue(pending); }
@@ -247,7 +272,50 @@ namespace StormLab.Audio
             src.panStereo = Vector3.Dot(ears.right, (p.from - ears.position).normalized) * 0.7f;
             if (start > now) src.PlayScheduled(start); else src.Play();
             voices.Add(new Voice { source = src, clip = clip, startsAt = start, endsAt = Math.Max(start, now) + clip.length + 0.2, nearestM = th.nearestM });
-            ThunderPlayed++; LastThunder = th;
+            float e = 0f; foreach (var v in samples) e += v * v;
+            ThunderPlayed++;
+            LastThunder = new ThunderHeard { nearestM = th.nearestM, delaySeconds = th.delaySeconds, lengthSeconds = clip.length,
+                                             levelDb = 10f * Mathf.Log10(e / samples.Length + 1e-12f) + 20f * Mathf.Log10(thunderVolume + 1e-6f), what = th.character };
+        }
+
+        /// <summary>A recording for a flash `nearM` away: close within ~2 km, medium to ~6 km, far beyond (mixed across
+        /// the edges), started when the sound of the channel's nearest point arrives, fainter and duller with distance.</summary>
+        void PlayRecording(float nearM, double flashDsp, Vector3 from, Transform ears)
+        {
+            if (voices.Count >= maxThunderVoices)
+            {
+                int f = Farthest(nearM);
+                if (f < 0) return;
+                Release(voices[f]); voices.RemoveAt(f);
+            }
+            float u = (float)pick.NextDouble();
+            int tier = nearM < Mathf.Lerp(1500f, 2600f, u) ? 0 : nearM < Mathf.Lerp(4500f, 8000f, u) ? 1 : 2;
+            while (recordings[tier].Count == 0) tier = (tier + 1) % 3;
+            var bag = bags[tier];
+            if (bag.Count == 0)
+            {
+                bag.AddRange(recordings[tier]);
+                for (int i = bag.Count - 1; i > 0; i--) { int j = pick.Next(i + 1); (bag[i], bag[j]) = (bag[j], bag[i]); }
+            }
+            var clip = bag[bag.Count - 1]; bag.RemoveAt(bag.Count - 1);
+
+            float c = 331.3f + 0.606f * temperatureC, delay = nearM / c;
+            double now = AudioSettings.dspTime, start = Math.Max(flashDsp + delay, now + 0.02);
+            float gain = thunderVolume * Mathf.Min(1f, Mathf.Pow(thunderFullLevelM / Mathf.Max(nearM, 30f), 0.9f));
+            float pitch = Mathf.Lerp(0.94f, 1.04f, (float)pick.NextDouble());
+            var go = new GameObject("Thunder"); go.transform.SetParent(transform, false); go.hideFlags = HideFlags.DontSave;
+            var src = go.AddComponent<AudioSource>();
+            src.playOnAwake = false; src.clip = clip; src.volume = gain; src.pitch = pitch;
+            src.spatialBlend = 0f;
+            src.panStereo = Vector3.Dot(ears.right, (from - ears.position).normalized) * 0.6f;
+            // air takes the highs: 11 kHz at 2 km, 5.5 kHz at 6 km, 2.6 kHz at 15 km
+            var lp = go.AddComponent<AudioLowPassFilter>();
+            lp.cutoffFrequency = Mathf.Clamp(22000f / (1f + nearM / 2000f), 900f, 22000f); lp.lowpassResonanceQ = 1f;
+            src.PlayScheduled(start);
+            voices.Add(new Voice { source = src, startsAt = start, endsAt = start + clip.length / pitch + 0.2, nearestM = nearM });
+            ThunderPlayed++;
+            LastThunder = new ThunderHeard { nearestM = nearM, delaySeconds = delay, lengthSeconds = clip.length / pitch,
+                                             levelDb = RecordingDb + 20f * Mathf.Log10(gain + 1e-6f), what = $"{clip.name}, low-pass {lp.cutoffFrequency:0} Hz" };
         }
 
         static void Release(Voice v)

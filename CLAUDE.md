@@ -31,8 +31,10 @@ README.md has the layout, use, checks and known gaps.
 - Funnels are smooth (no vertical grooves), as in 2.0.
 - `Runtime/Lightning` (core) is 2.0's unchanged code but for its namespace and the `ThunderOverride` hook (2026-10-26,
   for `StormAudio`'s thunder); fixes there should go back to 2.0 too.
-- Sound (`Runtime/Audio`) is procedural; the synths in `Synth/` stay plain C# (no UnityEngine) so `validation/audio`
-  can render and check them. Run it after changing a synth, and `StormAudioCheck` after changing what drives them.
+- Sound (`Runtime/Audio`): thunder plays CC0 recordings (`Resources/StormLab/Thunder`, cut by
+  `validation/audio/thunder/cut.py` from `audio-sources/thunder`, credited in its CREDITS.md; new recordings must be
+  CC0 or CC-BY and listed there; run `check.py` after a re-cut). The rest is procedural; the synths in `Synth/` stay plain
+  C# (no UnityEngine) so `validation/audio` can render and check them. Run it after changing a synth, and `StormAudioCheck` after changing what drives them.
 - C: is nearly full (about 14 GB free on 2026-10-24); the test map's generated data is about 2 GB.
 
 ## Running
