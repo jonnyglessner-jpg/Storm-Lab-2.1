@@ -60,6 +60,9 @@ float4 _TP;
 // checks only, 1 = without its sun and horizon tests, 2 = without its fields (its fine steps only), 3 = write each pixel's
 // step counts instead of its colour
 float4 _TorP;
+// x: 1 = the enhanced cloud detail (StormRenderer.cloudDetail; a game adaptation), 0 = the web build's
+float4 _CD;
+Texture3D<float> _DetailNoise;
 
 float3 uvw(float3 p) { float L = S_grid.z; return float3((p.x + L) / (2.0 * L), (p.y + L) / (2.0 * L), p.z / S_grid.w); }
 float hash(float2 p) { return frac(sin(dot(p, float2(12.9898, 78.233))) * 43758.5453); }
@@ -178,6 +181,16 @@ float detail(float3 q, float turb, float lod)
     if (turb > 0.02) lobes = 0.88 * billow(q) + 0.12 * f2;
     return lerp(soft, lobes, turb);
 }
+// The enhanced detail (a game adaptation, _CD.x): billows finer than detail()'s, two lookups of DetailNoise's 64-texel
+// tile at about 400 m and 140 m (cells 25-100 m and 9-36 m). Each takes the mip level whose texels are about the pixel's
+// footprint (g_fp) and fades to neutral as that level averages it out, so it shows within a few km and never sparkles.
+float fineOctave(float3 q, float k, float3 o)
+{
+    float l = max(0.0, log2(max(g_fp * 96.0 * k, 1e-6)));   // 64 texels per tile, x 1.5
+    if (l > 2.5) return 0.5;
+    return lerp(_DetailNoise.SampleLevel(sampler_LinearRepeat, q * k + o, l), 0.5, ss(1.25, 2.5, l));
+}
+float fineDetail(float3 q) { return 0.8 * fineOctave(q, 2.5, float3(0.13, 0.57, 0.31)) + 0.2 * fineOctave(q, 7.0, float3(0.71, 0.23, 0.89)); }
 // striations: grooves stacked up the side of the rotating updraft, rings with a slow wave in them; ang and w are
 // taken in the rotating frame, so the wave (and with it the grooves) visibly turns
 // av: angle from the inflow vault in the still frame; the bands sweep down toward it from both sides, so the
@@ -824,12 +837,16 @@ void March(uint3 gid : SV_DispatchThreadID)
                 float m = S_tilt.w > 0.0 ? (1.0 - ss(1.25 * radAt, 2.0 * radAt, ur)) * (1.0 - ss(6.0, 9.0, zr)) * ss(-0.6, -0.1, zr) : 0.0;
                 float nn = 0.5; float stri = 0.0;
                 float lod = ss(3.0, 18.0, t);
+                // the enhanced detail shows where its coarser lookup is still finer than its fade (fineOctave)
+                bool fineOn = _CD.x > 0.5 && g_fp * 240.0 < 5.6;
+                float fd = 0.5;
                 if (ice < 0.99)
                 {
                     // one detail lookup at a position blended between the still and the rotating frame: continuous, so no seam
                     float3 qr = q; float2 udr = ud;
                     if (m > 0.01) { udr = rot2(ud, -S_spin.x); qr = float3(lerp(q.xy, uc + udr, m), q.z); }
                     nn = detail(qr, turb, lod);
+                    if (fineOn) fd = fineDetail(qr);
                     if (m > 0.01)
                     {
                         float lam = saturate(1.7 * S_tower.w) * (1.0 - ss(4.0, 7.5, zr)) * ss(0.15, 0.7, zr);   // on the sides, not the ragged base
@@ -843,6 +860,9 @@ void March(uint3 gid : SV_DispatchThreadID)
                 stri *= 1.0 - interior;
                 // water cloud: the field plus billowed detail, cut at a crisp threshold
                 float v = s.r + (nn - 0.5) * lerp(0.2, 0.5, turb) - 0.25 * stri;
+                // the enhanced detail erodes the surface into finer billows, more on cauliflower than on smooth cloud
+                float fineAmp = lerp(0.15, 0.45, turb);
+                v += (fd - 0.5) * fineAmp;
                 float lowSoft = 1.0 - ss(S_base.x + 0.2, S_base.x + 0.8, q.z);   // undersides: soft and ragged
                 float edgeSoft = max(lowSoft, 0.35 * interior);
                 float ddW = lerp(ss(0.26, 0.4, v), ss(0.18, 0.55, v), edgeSoft) * (0.4 + 0.6 * ss(0.4, 0.75, v));
@@ -885,6 +905,16 @@ void March(uint3 gid : SV_DispatchThreadID)
                         }
                         float v1 = _Dens.SampleLevel(sampler_LinearClamp, uvw(q1), 0).r + probeDetail;
                         selfSh = 1.0 - 0.75 * turb * saturate((v1 - 0.3) * 2.2);
+                        // the enhanced detail's short probe, 60 m sunward with all the detail: a small lobe's side turned
+                        // from the sun is in its own shade (denser toward the sun than here); the side facing it is unchanged
+                        if (fineOn)
+                        {
+                            float3 q2 = q + _Sun.xyz * 0.06;
+                            float3 qr2 = float3(lerp(q2.xy, uc + rot2(q2.xy - uc, -S_spin.x), m), q2.z);
+                            float v2 = _Dens.SampleLevel(sampler_LinearClamp, uvw(q2), 0).r + (detail(qr2, turb, lod) - 0.5) * lerp(0.2, 0.5, turb)
+                                + (fineDetail(qr2) - 0.5) * fineAmp;
+                            selfSh *= 1.0 - 0.5 * turb * saturate((v2 - (v + 0.25 * stri)) * 3.0);
+                        }
                     }
                     // undersides of bases and shelves get little sky (light grid b); the anvil's underside sits in the shade of
                     // the ice above it (light grid a)

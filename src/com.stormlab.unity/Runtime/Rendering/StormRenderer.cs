@@ -20,6 +20,9 @@ namespace StormLab
     /// <summary>Tilted: the game's leaning updraft drops its rain further off, with a rain-free base and clear air round
     /// a tornado (StormTilt); Website: the web build's layout.</summary>
     public enum PrecipLayout { Tilted, Website }
+    /// <summary>Enhanced: finer billows on water cloud near the camera (DetailNoise) and a short self-shadow probe that shades
+    /// them; Website: the web build's detail.</summary>
+    public enum CloudDetail { Enhanced, Website }
 
     [ExecuteAlways, DefaultExecutionOrder(100)]
     public class StormRenderer : MonoBehaviour
@@ -83,6 +86,10 @@ namespace StormLab
         [Tooltip("ray-march resolution relative to the camera")]
         [Range(0.25f, 1f)] public float renderScale = 0.5f;
         [Range(64, 1024)] public int maxSteps = 700;
+        [Tooltip("Enhanced: finer billows (about 10-100 m) on water cloud within a few km, faded by each pixel's footprint, and " +
+                 "a self-shadow probe 60 m sunward so the small lobes shade themselves (user, 2026-10-27). Only the march's " +
+                 "look changes: the volume, light grid, radar, sound and lightning are the same. Website: the web build's detail")]
+        public CloudDetail cloudDetail = CloudDetail.Enhanced;
         [Tooltip("the detailed tornado's fine march step as a share of the radius of its narrowest part, 6 to 50 m (0: 2.0's " +
                  "fixed 6 m, whose cost near a tornado grew with its width)")]
         [Range(0f, 0.25f)] public float tornadoStep = 0.12f;
@@ -614,6 +621,8 @@ namespace StormLab
             cmd.SetComputeTextureParam(marchCs, kM, "_SkyVis", Volume.SkyVisTex);
             cmd.SetComputeTextureParam(marchCs, kM, "_Ground", Volume.GroundTex);
             cmd.SetComputeTextureParam(marchCs, kM, "_Noise", noise);
+            cmd.SetComputeTextureParam(marchCs, kM, "_DetailNoise", DetailNoise.Get());
+            cmd.SetComputeVectorParam(marchCs, "_CD", new Vector4(cloudDetail == CloudDetail.Enhanced ? 1 : 0, 0, 0, 0));
             cmd.SetComputeTextureParam(marchCs, kM, "_Out", st.cur);
             cmd.SetComputeTextureParam(marchCs, kM, "_OutDist", st.dist);
             cmd.SetComputeTextureParam(marchCs, kM, "_OutHalf", st.half);

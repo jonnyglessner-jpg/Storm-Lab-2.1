@@ -162,6 +162,16 @@ Wall-cloud base (`wallBase`, also on the panel):
 - **Website**: the web build's ragged fringe (its streaks point at the wall cloud's centre) and its tail cloud (a flat slab
   over 2 km wide hanging below the wall cloud's rim); the website comparison uses it.
 
+Cloud detail (`cloudDetail`, also on the panel; user, 2026-10-27):
+- **Enhanced** (default): finer billows on water cloud near the camera. `DetailNoise` is a 64-texel tiling noise of
+  inverted Worley cells, read twice by the march (tiles of about 400 m and 140 m, cells 9-100 m). Each read takes the mip
+  level of the pixel's footprint and fades out by about 6 km at 1080p, so far cloud does not sparkle. A second
+  self-shadow probe 60 m toward the sun shades the side of each small lobe that faces away from it. Only the march
+  changes: the volume, light grid, radar, sound, lightning and scene shadow read nothing new. Cost at 1080p (half-
+  resolution march, 7900 XT): +0.2 to +0.7 ms in close views of cauliflower, about nothing under the base or in rain.
+- **Website**: the web build's detail (`CloudNoise`'s octaves only). It draws the same image as before the switch existed
+  (0.00-0.01 % mean difference, against 0.05-0.3 % between two identical runs); the website comparison uses it.
+
 **Sound** (`Runtime/Audio`). `StormAudio` (one per scene) hears every storm at the `player`: the tornado wind
 (`TornadoWindAt`), silent below 3 m/s, then a gusty rush, moaning and whistling round the truck, the low roar, debris
 strikes and buffeting as it rises to full intensity at 80 m/s (`windRange`); rain and hail where the player is, read back
@@ -240,6 +250,11 @@ Output: by default the storm's light is in HDRP's physical units under the game'
 - **Play mode on the test map**: `-executeMethod StormPlayCheck.RunFromCommandLine` (about 3 min). Real time and 10x
   (storm clock, lightning clock, flashes, strikes on the terrain, thunder), a floating-origin shift of 36 km, and the frame
   cost at the game's half-resolution march. Report: `validation/reports/StormPlayCheck.md`. Last run: PASS (below).
+- **Cloud detail**: **StormLab > Test Map > Cloud Detail Check** (`CloudDetailCheck.RunFromCommandLine`, about 2 min): six
+  fixed views of the plains storm (young cumulonimbus at 4 and 6 km, the tower from 14 km, the base from 8 km, the wall
+  cloud from 3 km, the storm from 25 km), each drawn with the website's and the enhanced detail: the march's GPU time,
+  each image's fine-detail energy above the horizon, and sheets with both frames and 1:1 crops
+  (`Screenshots/detail_<view>_sheet.png`). Report: `validation/reports/CloudDetailCheck.md`. Last run: PASS.
 - **Sound**: `dotnet run --project validation/audio` (the synths offline: wind and rain grow with their drivers, thunder
   falls off with distance, nothing clips; WAVs to listen to); `python -I validation/audio/thunder/check.py` (the thunder
   clips: tiers, levels, import settings, credits; a preview by distance). `-executeMethod StormAudioCheck.RunFromCommandLine` (about

@@ -241,6 +241,11 @@ namespace StormLab.TestMap
             if (GUILayout.Toggle(storm.precip == PrecipLayout.Tilted, "tilted updraft", "Button")) storm.precip = PrecipLayout.Tilted;
             if (GUILayout.Toggle(storm.precip == PrecipLayout.Website, "website", "Button")) storm.precip = PrecipLayout.Website;
             GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("cloud detail", small, GUILayout.Width(110));
+            if (GUILayout.Toggle(storm.cloudDetail == CloudDetail.Enhanced, "enhanced", "Button")) storm.cloudDetail = CloudDetail.Enhanced;
+            if (GUILayout.Toggle(storm.cloudDetail == CloudDetail.Website, "website", "Button")) storm.cloudDetail = CloudDetail.Website;
+            GUILayout.EndHorizontal();
             if (storm.lighting == StormLighting.Physical)
             {
                 var L = storm.Lighting;
