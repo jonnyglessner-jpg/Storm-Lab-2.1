@@ -141,7 +141,7 @@ Wall-cloud base (`wallBase`, also on the panel):
 `player`: the tornado wind (`TornadoWindAt`), silent below 3 m/s, then a gusty rush, moaning and whistling round the truck,
 the low roar, debris strikes and buffeting as it rises to full intensity at 80 m/s (`windRange`); rain and hail where the
 player is, read back from the storm volume's precipitation (so it follows the shafts and curtains you see), from scattered
-drops ticking on the truck to a downpour's hiss and roar, with hail clatter in the hail core; and thunder for every flash
+drops ticking on the truck to a downpour's hiss and roar, with big hailstones thudding into the ground round the truck in the hail core; and thunder for every flash
 (`ThunderSynth`, through `LightningSystem.ThunderOverride`): each short segment of the flash's channel sends a pulse that
 arrives at its own time and falls off as 1/distance, so a channel across the line of sight claps and one along it rolls;
 air takes the highs first (a near strike rips and cracks, a distant one grumbles), the delay is the real sound travel

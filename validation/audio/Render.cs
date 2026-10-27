@@ -81,6 +81,18 @@ static class Render
             Check(x > prev, $"rain louder at {lvl}"); prev = x;
         }
         Console.WriteLine(line + $"   hail:{Db(Rms(o, 43 * Fs * 2, 48 * Fs * 2))}");
+
+        // hail alone, then in light rain: blunt thuds, low and dull (baseballs on the ground), not knocks on metal
+        var hr = new RainSynth(Fs, 13);
+        var ho = Run(hr, 24f, t => { hr.hail = t < 12f ? 0.3f + 0.7f * t / 12f : 1f; hr.rain = t < 12f ? 0f : 0.25f; });
+        Sane(ho, "hail"); Wav(Path.Combine(dir, "hail_thuds.wav"), ho, 2, Fs);
+        OnePole lp = default, hp = default; lp.Set(300f, Fs); hp.Set(1500f, Fs);
+        double lo = 0, hi = 0;
+        for (int i = 0; i < 12 * Fs; i++) { float x = 0.5f * (ho[i * 2] + ho[i * 2 + 1]); float l = lp.Low(x), h = hp.High(x); lo += l * l; hi += h * h; }
+        float lowShare = (float)(10 * Math.Log10(lo / Math.Max(hi, 1e-12)));
+        Console.WriteLine($"  hail alone: below 300 Hz {lowShare:0.0} dB over above 1.5 kHz, flattened {Hot(ho):P3}, peak {Db(Peak(ho))}, RMS {Db(Rms(ho, 0, 12 * Fs * 2))}");
+        Check(lowShare > 10f, "hail is low thuds (energy below 300 Hz well over that above 1.5 kHz)");
+        Check(Hot(ho) == 0f, "hail never flattens against full scale");
     }
 
     static void Thunder(string dir)
