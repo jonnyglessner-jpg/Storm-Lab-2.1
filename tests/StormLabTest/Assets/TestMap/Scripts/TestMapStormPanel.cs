@@ -136,7 +136,7 @@ namespace StormLab.TestMap
         // ------------------------------------------------------------------ the window
         void OnGUI()
         {
-            if (!show || !storm || storm.Plan == null) return;
+            if (!show || (world && world.hudHidden) || !storm || storm.Plan == null) return;
             if (head == null)
             {
                 head = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold, fontSize = 14 };

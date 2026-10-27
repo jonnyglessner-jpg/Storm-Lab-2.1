@@ -8,6 +8,7 @@
 //   G  game mode: a StormScenario's two storms on one hour-long game clock (StormScenarioRunner) in place of the test
 //      storm; T, P, [ ] and N then work on the game clock and the game's seed
 //   M  sound on / off (TestMapAudio: tornado wind, rain, thunder, the truck, birds)
+//   F1  hide all the HUD (the readouts, help and the Tab panel), for clean views and screenshots
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -49,6 +50,8 @@ namespace StormLab.TestMap
         [Tooltip("elevation (m NAVD88) of world y = 0")]
         public float datum = 680f;
         public bool showHelp = true;
+        [Tooltip("all the HUD hidden (F1): the readouts, help and the storm panel")]
+        public bool hudHidden;
         [Tooltip("push the car with the tornadoes' wind (drag on a car-sized body)")]
         public bool tornadoWind = true;
         public int startSpot;
@@ -122,6 +125,7 @@ namespace StormLab.TestMap
                 for (int i = 0; i < Mathf.Min(9, spots.Length); i++)
                     if (kb[(Key)((int)Key.Digit1 + i)].wasPressedThisFrame) TeleportTo(i);
                 if (kb.hKey.wasPressedThisFrame) showHelp = !showHelp;
+                if (kb.f1Key.wasPressedThisFrame) hudHidden = !hudHidden;
                 if (kb.gKey.wasPressedThisFrame) SetGameMode(!gameMode);
                 if (InGame)
                 {
@@ -254,7 +258,7 @@ namespace StormLab.TestMap
                 small = new GUIStyle(GUI.skin.label) { fontSize = 15 };
                 big.normal.textColor = small.normal.textColor = Color.white;
             }
-            if (!car) return;
+            if (!car || hudHidden) return;
             float h = Screen.height;
             var p = car.transform.position;
             GUI.Box(new Rect(16, h - 132, 420, 116), GUIContent.none);
@@ -324,10 +328,10 @@ namespace StormLab.TestMap
 
             if (!showHelp) return;
             string help = "W/S or arrows  throttle / brake / reverse    A/D  steer\nSpace  handbrake    R  reset car    L  headlights (auto / on / off)    C  camera (chase / roof; hold right mouse to look)    F  free flight (V: truck here)\n" +
-                          "T  storm clock speed    P  pause    [ ]  -/+ 5 min    N  new storm    H  hide help    M  sound on / off\n" +
+                          "T  storm clock speed    P  pause    [ ]  -/+ 5 min    N  new storm    H  hide help (F1: all HUD)    M  sound on / off\n" +
                           "Tab  storm and lighting panel (24 hour clock)    G  game mode (two storms, one hour)\n";
             for (int i = 0; i < Mathf.Min(9, spots.Length); i++) help += $"\n{i + 1}  {spots[i].name}";
-            float ph = 105 + 19 * Mathf.Min(9, spots.Length);
+            float ph = small.CalcHeight(new GUIContent(help), 450) + 12;
             GUI.Box(new Rect(16, 16, 470, ph), GUIContent.none);
             GUI.Label(new Rect(28, 22, 450, ph), help, small);
         }
