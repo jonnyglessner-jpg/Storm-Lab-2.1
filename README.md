@@ -142,8 +142,8 @@ Wall-cloud base (`wallBase`, also on the panel):
 strikes and buffeting as it rises to full intensity at 80 m/s (`windRange`); rain and hail where the player is, read back
 from the storm volume's precipitation (so it follows the shafts and curtains you see), from scattered drops ticking on the
 truck to a downpour's hiss and roar, with big hailstones thudding into the ground round the truck in the hail core; and
-thunder for every flash, through `LightningSystem.ThunderOverride`. Thunder is **off for now** (`thunder`, user
-2026-10-26). By default (`thunderSound = Recordings`) it is real thunder: 30 clips cut from 18 CC0 Freesound field
+thunder for every flash, through `LightningSystem.ThunderOverride`. `thunder` switches it on and off (on).
+By default (`thunderSound = Recordings`) it is real thunder: 30 clips cut from 18 CC0 Freesound field
 recordings (listed in `audio-sources/thunder/CREDITS.md`) into `Resources/StormLab/Thunder`, sorted close (a crack or
 clap, within ~2 km), medium (~2-6 km) and far (low rolling); each flash plays one from its distance's tier (none repeats
 until the tier has been through), starting when the sound of the channel's nearest point arrives, at full level within

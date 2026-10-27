@@ -24,8 +24,8 @@ namespace StormLab.Audio
         public Transform listener;
         [Range(0f, 1f)] public float windVolume = 1f;
         [Range(0f, 1f)] public float rainVolume = 0.8f;
-        [Tooltip("thunder on (off for now at the user's request, 2026-10-26; the old built-in thunder stays silent too)")]
-        public bool thunder;
+        [Tooltip("thunder on (when off, the lightning core's built-in thunder stays silent too)")]
+        public bool thunder = true;
         [Range(0f, 1f)] public float thunderVolume = 1f;
         [Tooltip("Recordings: real thunder, close / medium / far by the flash's distance. Synthesized: made from the flash's channel")]
         public ThunderSound thunderSound = ThunderSound.Recordings;
