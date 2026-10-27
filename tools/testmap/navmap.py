@@ -11,10 +11,11 @@ cover splats, buildings), and writes into the Unity project's Resources (gitigno
 - TestMapNavBase.png: 2048 x 2048 (39 m a pixel), north up: land cover in the splat colours, hillshade, rivers and
   creeks, farmsteads. Roads are not in it: the minimap draws them as lines.
 
-For the Dixie map (--map dixie): DixieMapNav.json and DixieMapNavBase.png in Assets/TestMap/GeneratedDixie/Resources,
-every road piece named after its real road, and the radar site KDGX (Jackson / Brandon, MS).
+For the real-data maps (--map dixie, --map midwest): DixieMapNav / MidwestMapNav (.json and Base.png) in
+Assets/TestMap/Generated<Map>/Resources, every road piece named after its real road, the water polygons in the base map,
+and the radar site from map_config (KDGX for Dixie, KILX for the Midwest).
 
-Run after world.py: python -I tools/testmap/navmap.py [--map dixie] [build dir]. The build dir defaults to data/raw/testmap/build and
+Run after world.py (or real/places.py): python -I tools/testmap/navmap.py [--map dixie|midwest] [build dir]. The build dir defaults to data/raw/testmap/build and
 falls back to Supercell Lab 2.0's (../supercell-lab-2/data/raw/testmap/build), where this map's network was made.
 """
 import json
@@ -28,20 +29,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import map_config as cfg
 
 OUT = cfg.UNITY_GEN / "Resources"
-NAME = "DixieMapNav" if cfg.MAP == "dixie" else "TestMapNav"
+NAME = {"dixie": "DixieMapNav", "midwest": "MidwestMapNav"}.get(cfg.MAP, "TestMapNav")
 RES = 2048
 CLASSES = {"state": 0, "paved": 1, "gravel": 2}
 # WSR-88D KDDC (Dodge City, KS): 37.7608 N, 99.9689 W, the site about 789 m above sea level (NWS site list); the
 # antenna is taken 20 m up its tower
 RADAR = dict(name="KDDC", lat=37.76083, lon=-99.96889, elev=789.0 + 20.0)
-if cfg.MAP == "dixie":
-    # WSR-88D KDGX (Jackson / Brandon, MS), the nearest radar to Natchez, about 160 km to the north-east. Site
-    # position and ground elevation as remembered, not yet checked against the NWS site list; antenna 20 m up
-    RADAR = dict(name="KDGX", lat=32.27994, lon=-89.98444, elev=151.0 + 20.0)
+if "real" in cfg.SPEC:            # the real-data maps' radar (map_config: site, and how sure it is)
+    RADAR = cfg.SPEC["real"]["radar"]
 # the splat layers' colours (world.py's preview)
 COLOURS = np.array([(196, 168, 112), (78, 106, 44), (120, 96, 70), (140, 128, 86), (86, 106, 46), (150, 80, 42),
                     (190, 172, 140), (126, 114, 98)]) / 255.0
-if cfg.MAP == "dixie":           # dixie/places.py's layer colours
+if "real" in cfg.SPEC:            # real/places.py's layer colours
     COLOURS = np.array([(96, 124, 52), (92, 80, 66), (88, 104, 60), (52, 66, 34), (90, 120, 50), (70, 80, 52),
                         (192, 176, 144), (146, 122, 90)]) / 255.0
 
@@ -144,7 +143,7 @@ def base_map(meta, streams, buildings):
     shade = np.clip((-gx * lx - gz * ly + lz) / np.sqrt(gx * gx + gz * gz + 1.0), 0, 1)
     img = np.clip(img * (0.45 + 0.75 * shade[..., None]), 0, 1)
     wz = build_dir() / "water.npz"
-    if wz.exists():                  # the Dixie map's river and lakes (polygons, not stream lines)
+    if wz.exists():                  # the real-data maps' rivers and lakes (polygons, not stream lines)
         k = np.load(wz)["kind"][::step, ::step][:T * R, :T * R]
         img[k > 0] = np.array([58, 92, 120]) / 255.0
     im = Image.fromarray((img[::-1] * 255 + 0.5).astype(np.uint8)).resize((RES, RES), Image.LANCZOS)

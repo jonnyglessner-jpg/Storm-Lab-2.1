@@ -558,7 +558,7 @@ def build_bridges(tm, profs, ground):
 def build_water(tm, streams):
     n = 0
     for st in streams:
-        if st["width"] <= 0 or st.get("polygon"):         # (polygon: water drawn from its area, dixie/places.py)
+        if st["width"] <= 0 or st.get("polygon"):         # (polygon: water drawn from its area, real/places.py)
             continue
         p = np.asarray(st["pts"])
         lvl = np.asarray(st["level"])

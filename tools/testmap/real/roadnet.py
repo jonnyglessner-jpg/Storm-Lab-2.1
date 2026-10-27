@@ -1,24 +1,25 @@
-"""Stage 2 of the Dixie map: the road network, a close recreation of the real one.
+"""Stage 2 of a real-data map (dixie, midwest): the road network, a close recreation of the real one.
 
-The plains map's roads are designed on the section grid. Here the land has no grid, so the network follows the
-USGS National Transportation Dataset, generalised the way a game map needs it:
+The plains map's roads are designed on the section grid. Here the network follows the USGS National Transportation
+Dataset, generalised the way a game map needs it:
 
-- What is kept: every US and state route (US 61, 84, 98, 65, 425, MS 33, 553, 555, LA 15, 129, 131, ...) and the
-  Natchez Trace Parkway as state-class roads; the arterials without a route number as paved roads; named rural roads
-  that run at least 800 m (paved when they run 6 km or more, else gravel), so the hills keep their ridge roads and
-  the delta its farm roads; and the named streets of Natchez. Private drives, streets of the other towns (which
-  land.py smoothed away) and short stubs are left out.
-- One road over the Mississippi, as in life: the Natchez-Vidalia bridge (US 84 / 65 / 425). Anything else that
-  would cross the river is cut at the bank.
+- What is kept: every interstate, US and state route (and the Natchez Trace Parkway) as state-class roads; the
+  arterials without a route number as paved roads; named rural roads that run at least 800 m (paved when they run 6 km
+  or more, else gravel), so the hills keep their ridge roads, the delta its farm roads and the Illinois grid its
+  section-line roads; and the named streets of the map's one town. Private drives, the streets of the other towns
+  (which land.py smoothed away) and short stubs are left out.
+- Dixie: one road over the Mississippi, as in life, the Natchez-Vidalia bridge (US 84 / 65 / 425). Anything else
+  that would cross the river is cut at the bank.
 - Divided highways become one two-lane road: the network is drawn into a 10 m raster (highways 50 m wide, so both
   carriageways merge), thinned to its centre line and traced back into lines. Then the lines are simplified
-  (Douglas-Peucker, 4 m), junctions closer than 30 m merged, skeleton whiskers removed, and short dead ends pruned
-  (longer ones stay: hill roads end at the last house).
-- Every road keeps the name and class of the real road under it; strokes, corner rounding and the checks are the
-  plains map's (roads.py).
+  (Douglas-Peucker, 4 m), junctions closer than 45 m merged, skeleton whiskers, bubbles and interchange loops removed,
+  forks squared up, and short dead ends pruned (longer ones stay: hill roads end at the last house). There is no
+  grade separation: an interstate meets the roads it crossed over at a junction.
+- Every road keeps the name and class of the real road under it (I-57, US 45, IL 33, ...); strokes, corner rounding
+  and the checks are the plains map's (roads.py).
 
-Writes build/network.json, updates the Mississippi's bridge length in build/streams.json, and docs/testmap/dixie/
-network.png. Run after land.py: python -I tools/testmap/dixie/roadnet.py
+Writes build/network.json, updates the big river's bridge length in build/streams.json (dixie), and
+docs/testmap/<map>/network.png. Run after land.py: python -I tools/testmap/real/roadnet.py --map dixie|midwest
 """
 import json
 import math
@@ -47,7 +48,8 @@ DEAD_END_KEEP_M = 1200.0
 TOWN_DEAD_END_M = 100.0
 DESIGN = dict(R.DESIGN, sparse_bridges={}, corner_radius={"gravel": 60.0, "paved": 80.0, "state": 250.0},
               bridge_da_km2=100.0)
-ROUTE = re.compile(r"^(US Hwy|State Hwy|State Rte|Hwy|LA Hwy|Natchez Trace)", re.I)
+ROUTE = re.compile(r"^(Interstate|I-|US Hwy|State Hwy|State Rte|Hwy|LA Hwy|IL Hwy|Natchez Trace)", re.I)
+REAL = cfg.SPEC["real"]
 SKIP = re.compile(r"(private|driveway|pvt|access|parking|alley|service|ramp|^NA |unnamed)", re.I)
 
 
@@ -56,6 +58,18 @@ def log(msg):
 
 
 # --------------------------------------------------------------------------------------------------------- selection
+
+def route_label(r):
+    """The route numbers on an NTD segment as signed: "I-57,I-70", "US 84,US 425", "IL 33" (business routes left out)."""
+    out = []
+    st = {"MI": "MS", "LO": "LA"}.get(r.get("state", ""), r.get("state", ""))      # (cuts made before fetch.ABBR)
+    for key, fmt in (("interstate", "I-{}"), ("us_route", "US {}"), ("state_route", st + " {}")):
+        for t in str(r.get(key) or "").replace(";", ",").split(","):
+            t = t.strip()
+            if t and t.lower() != "bus" and any(c.isdigit() for c in t):
+                out.append(fmt.format(t.lstrip("I-").strip()))
+    return ",".join(dict.fromkeys(out))
+
 
 def classify(r):
     """Class for one NTD segment, or None to leave it out. Rural / town is decided later."""
@@ -71,7 +85,7 @@ def classify(r):
 
 def load_roads():
     raw = json.load(open(cfg.RAW / "tran_roads.json"))
-    natchez = np.load(cfg.OUT / "natchez.npy")
+    natchez = np.load(cfg.OUT / "town.npy")
     cov = np.load(cfg.OUT / "cover.npy")
     others = ndimage.binary_dilation(ndimage.uniform_filter((cov == 50).astype(np.float32), 25) > 0.10, iterations=10) & ~natchez
     segs = []
@@ -92,7 +106,7 @@ def load_roads():
             if cls == "local" and other:
                 continue
             segs.append(dict(name=r.get("name") or "", cls=cls, town=town, pts=a,
-                             route=",".join(x for x in (r.get("us_route"), r.get("state_route")) if x)))
+                             route=route_label(r)))
     # rural local roads: chain by name, keep the long ones
     by = {}
     for s in segs:
@@ -107,7 +121,7 @@ def load_roads():
             k = int(np.argmin([p.distance(ls.centroid) for p in parts]))
             s["cls"] = None if k not in long else ("paved" if parts[k].length >= PAVED_RURAL_M else "gravel")
     for s in segs:
-        if s["cls"] == "local":          # Natchez streets
+        if s["cls"] == "local":          # the town's streets
             s["cls"] = "paved"
     segs = [s for s in segs if s["cls"]]
     log(f"kept {len(segs)} road segments: " + ", ".join(f"{c} {sum(LineString(s['pts']).length for s in segs if s['cls'] == c) / 1000:.0f} km"
@@ -118,7 +132,7 @@ def load_roads():
 # ------------------------------------------------------------------------------------------------------ skeleton
 
 def draw(segs, water):
-    """Roads into a 10 m raster (row 0 = south); the Mississippi is cut out except under the one bridge."""
+    """Roads into a 10 m raster (row 0 = south); dixie: the Mississippi is cut out except under the one bridge."""
     img = Image.new("L", (N, N), 0)
     d = ImageDraw.Draw(img)
     for cls in ("gravel", "paved", "state"):
@@ -131,6 +145,8 @@ def draw(segs, water):
             for p in (pts[0], pts[-1]):
                 d.ellipse([p[0] - w / 2, p[1] - w / 2, p[0] + w / 2, p[1] + w / 2], fill=1)
     m = np.asarray(img).astype(bool)
+    if not REAL["big_river"]:
+        return m, np.zeros_like(m)
     river = ndimage.binary_dilation(water, iterations=2)
     bridge = bridge_corridor(segs)
     # the twin spans and their approaches, within 1.5 km of the water, drawn as one 140 m band (one road)
@@ -143,11 +159,11 @@ def draw(segs, water):
 
 
 def bridge_corridor(segs):
-    """The Natchez-Vidalia bridge: the US 84 segments over the river, drawn 60 m wide."""
+    """The big river's one bridge (dixie: Natchez-Vidalia): its route's segments, drawn 60 m wide."""
     img = Image.new("L", (N, N), 0)
     d = ImageDraw.Draw(img)
     for s in segs:
-        if s["cls"] == "state" and "84" in s["route"].split(","):
+        if s["cls"] == "state" and REAL["bridge_route"] in s["route"].split(","):
             d.line([(x / STEP, z / STEP) for x, z in s["pts"]], fill=1, width=6)
     return np.asarray(img).astype(bool)
 
@@ -302,7 +318,7 @@ def clean_graph(nodes, E):
         return q[0] <= 1 or q[1] <= 1 or q[0] >= cfg.SIZE_M - 1 or q[1] >= cfg.SIZE_M - 1
     # whiskers (skeleton spurs under 80 m), repeatedly; then dead ends shorter than DEAD_END_KEEP_M (in Natchez,
     # TOWN_DEAD_END_M: its short streets and cul-de-sacs stay), once
-    town = np.load(cfg.OUT / "natchez.npy")
+    town = np.load(cfg.OUT / "town.npy")
 
     def in_town(g):
         q = pos[g]
@@ -360,17 +376,21 @@ def clean_graph(nodes, E):
 
 
 def label(E, segs):
-    """Class and name of the real road under each edge: the highest class covering at least 40 % of it."""
+    """Class and name of the real road under each edge: the highest class covering at least 40 % of it. A real road
+    counts at a sample point when it runs within 30 m (a highway: its carriageways are off the merged centre line) or
+    15 m (any other road); the samples keep off the edge's ends, where the roads it meets are near."""
     lines = [LineString(s["pts"]) for s in segs]
     tree = shapely.STRtree(lines)
     out = []
     for a, b, p in E:
         ln = LineString(p)
-        q = [ln.interpolate(t, normalized=True) for t in np.linspace(0.05, 0.95, 12)]
+        q = [ln.interpolate(t, normalized=True) for t in np.linspace(0.15, 0.85, 12)]
         votes = {}
         for pt in q:
-            for k in tree.query(pt.buffer(35.0)):
+            for k in tree.query(pt, predicate="dwithin", distance=30.0):
                 s = segs[k]
+                if s["cls"] != "state" and lines[k].distance(pt) > 15.0:
+                    continue
                 key = (s["cls"], s["route"] or s["name"])
                 votes[key] = votes.get(key, 0) + 1
         if not votes:
@@ -386,9 +406,8 @@ def label(E, segs):
 
 
 def pretty(name):
-    if re.fullmatch(r"[0-9A-Za-z,]+", name or "") and any(c.isdigit() for c in name):
-        return " / ".join(("US " + t if t in ("61", "84", "98", "65", "425") else ("Hwy " + t)) for t in name.split(",") if t != "Bus")
-    return name
+    """A route label ("US 61,US 84") as shown: "US 61 / US 84"; a street name as it is."""
+    return (name or "").replace(",", " / ")
 
 
 SMOOTH_M = {"state": 25.0, "paved": 12.0, "gravel": 10.0}
@@ -599,8 +618,8 @@ def preview(stks, streams, water, path):
             ax.text(p[0], p[1], st["name"], color="#a00000", fontsize=11, weight="bold")
     ax.set_xlim(0, cfg.SIZE_M)
     ax.set_ylim(0, cfg.SIZE_M)
-    ax.set_title("Dixie map: roads from the USGS National Transportation Dataset, generalised (red US / state routes, "
-                 "black paved, white gravel; blue bridged streams)")
+    ax.set_title(f"{cfg.SPEC['title']}: roads from the USGS National Transportation Dataset, generalised (red interstate, "
+                 "US and state routes, black paved, white gravel; blue bridged streams)")
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=60, bbox_inches="tight")
 
@@ -614,7 +633,8 @@ def main():
     segs = load_roads()
     nodes, stks, deg, radii = network(segs, water10, streams)
     n = mississippi_crossing(stks, streams, wk == 1)
-    log(f"roads over the Mississippi: {n}")
+    if REAL["big_river"]:
+        log(f"roads over the {REAL['big_river']}: {n}")
     for st in streams:
         st["_line"] = LineString(st["pts"])
     for ln in R.report(nodes, stks, deg, radii, streams):

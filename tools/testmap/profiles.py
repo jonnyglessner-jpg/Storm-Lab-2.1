@@ -30,7 +30,7 @@ SUPER_E = 0.04
 NO_PASS_SIGHT_M = 300.0
 EYE = 1.08
 # Dixie map: a junction height far from a road's own profile (a highway on a fill or in a cut) is blended in over a
-# length that keeps the road under its grade limit, not over the fixed BLEND_M (set by dixie/places.py)
+# length that keeps the road under its grade limit, not over the fixed BLEND_M (set by real/places.py)
 ADAPTIVE_BLEND = False
 
 

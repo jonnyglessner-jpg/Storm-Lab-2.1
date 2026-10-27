@@ -1,20 +1,19 @@
-"""Download the source data for the Dixie map (Natchez, MS) and cut it down to the map.
+"""Download the source data for a real-data map (dixie, midwest) and cut it down to the map.
 
 Everything comes from The National Map's staged products on S3 (prd-tnm.s3.amazonaws.com) and ESA's WorldCover
-bucket, so no ArcGIS service has to be up:
+bucket, so no ArcGIS service has to be up. The tiles, basins and states for each map are in map_config (SPEC["real"]):
 
-- USGS 3DEP 1/3 arc-second DEM tiles n32w092 and n32w091 (about 10 m, lidar-derived here) -> dem13/
+- USGS 3DEP 1/3 arc-second DEM tiles over the map (about 10 m, lidar-derived) -> dem13/
 - USGS 3DEP 1 arc-second DEM tiles over three map widths for the horizon skirt -> dem1/
-- USGS NHDPlus High Resolution for HU4 0804-0807 (flowlines with drainage area, the river and lake polygons, and
-  NHD's levee lines) -> nhd_*.json, in the map frame
-- USGS National Transportation Dataset, Mississippi and Louisiana (the real highways the designed roads follow)
-  -> tran_roads.json, in the map frame
-- ESA WorldCover 2021 v200, 10 m (tile N30W093) for land cover: tree cover, cropland, grassland, built-up, wetland.
-  The plains map uses USDA's Cropland Data Layer; its server is not needed here and the Delta's crop type matters
-  little in the storm season (bare tilled ground in March and April)
+- USGS NHDPlus High Resolution for the map's HU4 basins (flowlines with drainage area, the river and lake polygons)
+  -> nhd_*.json, in the map frame
+- USGS National Transportation Dataset for the map's states (the real roads the network follows) -> tran_roads.json
+- ESA WorldCover 2021 v200, 10 m, for land cover: tree cover, cropland, grassland, built-up, wetland. The plains map
+  uses USDA's Cropland Data Layer; its server is not needed here, and crop type matters little in the storm season
+  (tilled ground and young crops)
 
-Downloads are cached in data/raw/testmap/dixie (about 3 GB, the zips can be deleted after the cut). Run:
-python -I tools/testmap/dixie/fetch.py
+Downloads are cached in data/raw/testmap/<map> (2-4 GB, the zips can be deleted after the cut). Run:
+python -I tools/testmap/real/fetch.py --map dixie|midwest
 """
 import json
 import sqlite3
@@ -33,11 +32,10 @@ from pyproj import Transformer
 import map_config as cfg
 
 TNM = "https://prd-tnm.s3.amazonaws.com/StagedProducts"
-WORLDCOVER = "https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_N30W093_Map.tif"
-DEM13 = ["n32w092", "n32w091"]
-DEM1 = [f"n{la}w{lo:03d}" for la in (31, 32, 33) for lo in (93, 92, 91)]
-HU4 = ["0804", "0805", "0806", "0807"]
-STATES = ["Mississippi", "Louisiana"]
+WORLDCOVER = "https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_{}_Map.tif"
+REAL = cfg.SPEC["real"]
+DEM13, DEM1, HU4, STATES = REAL["dem13"], REAL["dem1"], REAL["hu4"], REAL["states"]
+ABBR = {"Mississippi": "MS", "Louisiana": "LA", "Illinois": "IL"}
 PAD = 3000.0                       # metres of data kept around the map
 
 
@@ -228,7 +226,7 @@ def cut_tran():
             g = to_map(g, srs).intersection(box)
             if g.is_empty:
                 continue
-            roads.append(dict(state=st[:2].upper(), **{k.lower(): v for k, v in a.items()}, lines=coords(g)))
+            roads.append(dict(state=ABBR.get(st, st[:2].upper()), **{k.lower(): v for k, v in a.items()}, lines=coords(g)))
         gp.unlink()
         print(f"Transportation {st}: {len(roads)} road segments so far", flush=True)
     out.write_text(json.dumps(roads))
@@ -240,7 +238,9 @@ def main():
         download(f"{TNM}/Elevation/13/TIFF/current/{t}/USGS_13_{t}.tif", cfg.RAW / "dem13" / f"USGS_13_{t}.tif")
     for t in DEM1:
         download(f"{TNM}/Elevation/1/TIFF/current/{t}/USGS_1_{t}.tif", cfg.RAW / "dem1" / f"USGS_1_{t}.tif")
-    download(WORLDCOVER, cfg.RAW / "worldcover" / WORLDCOVER.rsplit("/", 1)[1])
+    for t in REAL["worldcover"]:
+        url = WORLDCOVER.format(t)
+        download(url, cfg.RAW / "worldcover" / url.rsplit("/", 1)[1])
     if not (cfg.RAW / "nhd_flowlines.json").exists():
         for h in HU4:
             download(f"{TNM}/Hydrography/NHDPlusHR/VPU/Current/GPKG/NHDPLUS_H_{h}_HU4_GPKG.zip",

@@ -1,24 +1,26 @@
-"""Stage 3 of the Dixie map: everything on the ground, written out for the Unity builder in the plains map's format.
+"""Stage 3 of a real-data map (dixie, midwest): everything on the ground, written out for the Unity builder in the
+plains map's format.
 
 1. Road profiles, grading, junction pads, bridges and stream ribbons: the plains map's (profiles.py, world.py,
-   meshes.py). The Natchez-Vidalia bridge clears the river by 26 m and runs on long spans over the batture.
+   meshes.py). Junction heights far from a road's own profile are blended in over a grade-keeping length
+   (profiles.ADAPTIVE_BLEND). Roads over lakes ride 1.5 m above the water. Dixie: the Natchez-Vidalia bridge clears
+   the river by 26 m and runs on long spans over the batture.
 2. The water polygons (land.py): the ground under them is carved 1-6 m below the water level and a flat water
-   surface is laid at the level, run by run on the height grid; the Mississippi and the other rivers are muddy brown,
-   lakes and ponds dark.
-3. Natchez: downtown on the bluff (two- and three-storey brick rows on the street line), houses along every other
-   street, stores with parking along the US routes, a few churches. Lots are skipped where the ground under them falls
-   more than 2.5 m (the ravines) or a road, a stream or another building is in the way.
+   surface is laid at the level, run by run on the height grid; rivers are muddy brown, lakes and ponds dark.
+3. The town (Natchez, Effingham): downtown, two- and three-storey brick rows on the street line; houses along every
+   other street; stores with parking along the highways; a few churches. Lots are skipped where the ground under
+   them falls more than 2.5 m or a road, a stream or another building is in the way.
 4. The countryside: a house or a mobile home every few hundred metres along the roads, with a shed and yard trees;
-   now and then a delta farm headquarters (shop, bins) on the floodplain. Yards are graded flat.
-5. Forest: WorldCover's tree cover is 67 % of the map, far too many trees to draw one by one. Its interior is a
-   canopy shell (a 31 m mesh at crown height, 18-26 m, with a crown texture) and real trees stand where the shell
-   would show its edge: a band along every forest edge within 400 m of a road, and in the forest each side of a
-   road. Pines in the hills, oaks and sweetgums on the floodplain, bald cypress round the lakes.
+   farm headquarters (shop, bins) on the delta floodplain (dixie) or on any farm road (midwest). Yards are graded flat.
+5. Forest: a canopy shell over the woods' interior (a 31 m mesh at crown height, 18-26 m, with a crown texture) and
+   real trees where the shell would show its edge: the front row along every road, the forest edges within 45 m of a
+   road, and the town's wooded lots. Dixie: pines in the hills, oaks and sweetgums on the floodplain, bald cypress
+   round the lakes. Midwest: oak-hickory timber, a few planted pines.
 6. Land cover splats from WorldCover (pasture, tilled and young crops on a field patchwork, forest floor, wetland,
    lawn in town and yards, sand bars, mown verges), power lines, the horizon skirt (3DEP 1 arc-second), the spawn
-   points and routes, meta.json, and previews in docs/testmap/dixie.
+   points and routes, meta.json, and previews in docs/testmap/<map>.
 
-Run after land.py, roadnet.py and groundtex.py: python -I tools/testmap/dixie/places.py
+Run after land.py, roadnet.py and groundtex.py: python -I tools/testmap/real/places.py --map dixie|midwest
 """
 import json
 import math
@@ -43,13 +45,14 @@ from groundtex import CANOPY_M, LAYERS
 from land import COVER_STEP, NCOV, GeoTiles, WC_BARE, WC_BUILT, WC_CROP, WC_GRASS, WC_SHRUB, WC_TREE, WC_WATER, WC_WETLAND
 from terrain import sample
 
-rng = np.random.default_rng(1817)          # (the year Mississippi became a state)
+REAL = cfg.SPEC["real"]
+rng = np.random.default_rng({"dixie": 1817, "midwest": 1818}.get(cfg.MAP, 0))     # (the years of statehood)
 T0 = time.time()
 L_PASTURE, L_TILLED, L_YOUNG, L_FOREST, L_LAWN, L_WETLAND, L_SAND, L_DIRT = range(8)
 M.MAT += ["river", "canopy_hard", "canopy_pine"]
 M_RIVER, M_CANOPY_HARD, M_CANOPY_PINE = len(M.MAT) - 3, len(M.MAT) - 2, len(M.MAT) - 1
-DOWNTOWN = (cfg.SIZE_M / 2 + 250.0, cfg.SIZE_M / 2)     # Main Street, a block in from the bluff
-DOWNTOWN_R = 650.0
+DOWNTOWN = (cfg.SIZE_M / 2 + REAL["downtown"][0], cfg.SIZE_M / 2 + REAL["downtown"][1])
+DOWNTOWN_R = REAL["downtown_r"]
 TREE_PINE, TREE_OAK, TREE_CYPRESS, TREE_SHRUB = range(4)
 CANOPY_G = 4                                            # canopy shell grid: every 4th height sample (31 m)
 SHELL_CLEAR_M = 22.0                                    # the shell starts this far from a road's edge ...
@@ -195,7 +198,7 @@ def building(kind, x, z, yaw, w, l, h, roof, wall, roofc, base, fall):
 
 
 def town(profs, natchez, clear, water_edge, dem, taken):
-    """Natchez's buildings, lot by lot along both sides of every road inside the town."""
+    """The town's buildings, lot by lot along both sides of every road inside it."""
     out, trees, lots = [], [], []
     for k, pr in enumerate(profs):
         pts, s = pr["pts"], pr["s"]
@@ -255,13 +258,14 @@ def town(profs, natchez, clear, water_edge, dem, taken):
                             tp = c + n[i] * side * rng.uniform(-fl, fl * 1.5) + t[i] * rng.uniform(-step / 2, step / 2)
                             trees.append((TREE_OAK if rng.random() < 0.8 else TREE_PINE, tp, float(rng.uniform(0.7, 1.2))))
                 q += step
-    log(f"Natchez: {sum(1 for b in out if b['kind'] == 'house')} houses, {sum(1 for b in out if b['kind'] == 'store')} "
+    log(f"{REAL['town']}: {sum(1 for b in out if b['kind'] == 'house')} houses, {sum(1 for b in out if b['kind'] == 'store')} "
         f"stores, {sum(1 for b in out if b['kind'] == 'steeple')} churches, {len(lots)} parking lots")
     return out, trees, lots
 
 
 def countryside(profs, natchez, clear, water_edge, dem, taken, flood):
-    """Homes along the rural roads; a delta farm headquarters now and then on the floodplain."""
+    """Homes along the rural roads; a farm headquarters now and then where farms are (flood: the delta floodplain,
+    or everywhere)."""
     homes = []
     junction_pts = np.array([pr["pts"][v] for pr in profs for n, v in pr["junctions"]])
     jt = cKDTree(junction_pts)
@@ -281,7 +285,7 @@ def countryside(profs, natchez, clear, water_edge, dem, taken, flood):
                 q += gap
                 continue
             side = rng.choice([-1, 1])
-            farm = bool(flood[cells(p[0], p[1])]) and rng.random() < 0.18
+            farm = bool(flood[cells(p[0], p[1])]) and rng.random() < REAL["farm_p"]
             setback = w + (rng.uniform(45, 70) if farm else rng.uniform(22, 40))
             c = p + n[i] * side * setback
             if not (150 < c[0] < cfg.SIZE_M - 150 and 150 < c[1] < cfg.SIZE_M - 150):
@@ -410,20 +414,29 @@ def smooth_noise(shape, feature_cells, seed):
     return ndimage.zoom(g, feature_cells, order=1)[:shape[0], :shape[1]]
 
 
+def lowland(dem):
+    """The floodplain: ground whose surroundings (300 m opening) lie below REAL["lowland_m"]; none on the midwest map."""
+    if REAL["lowland_m"] is None:
+        return np.zeros(dem.shape, bool)
+    base = ndimage.grey_opening(dem[::8, ::8], size=(31, 31))
+    return ndimage.zoom((base < REAL["lowland_m"]).astype(np.float32), 8, order=1)[:cfg.GRID, :cfg.GRID] > 0.5
+
+
 def forest_plan(forest, clear, water_edge, yards, dem, town):
-    """Forest mask, where the canopy shell goes (not in Natchez, whose trees stand one by one), and the pine share."""
+    """Forest mask, where the canopy shell goes (not in the town, whose trees stand one by one), the pine share and the
+    floodplain (dixie: bottomland forest, cypress round the lakes)."""
     f = ndimage.gaussian_filter(forest.astype(np.float32), 1.0) > 0.5
     f &= (clear.astype(np.float32) > 7) & (water_edge.astype(np.float32) > 3) & ~yards
     shell = ndimage.binary_erosion(f, iterations=2) & (clear.astype(np.float32) > SHELL_CLEAR_M) & ~town
-    base = ndimage.grey_opening(dem[::8, ::8], size=(31, 31))
-    plain = ndimage.zoom((base < 32).astype(np.float32), 8, order=1)[:cfg.GRID, :cfg.GRID] > 0.5
-    pine = np.where(plain, 0.04, 0.25 + 0.6 * smooth_noise(forest.shape, 160, 3)).astype(np.float16)
+    plain = lowland(dem)
+    lo, hi = REAL["pine"]
+    pine = np.where(plain, 0.04, lo + (hi - lo) * smooth_noise(forest.shape, 160, 3)).astype(np.float16)
     return f, shell, pine, plain
 
 
 def edge_trees(f, shell, pine, plain, clear, water_kind, town, spacing=8.0):
     """Trees on a jittered grid where the forest shows but the shell does not: the front row of the woods along the
-    roads (in front of the shell's edge), the forest edges within EDGE_TREES_M of a road, and Natchez's wooded lots
+    roads (in front of the shell's edge), the forest edges within EDGE_TREES_M of a road, and the town's wooded lots
     and ravines."""
     cl = clear.astype(np.float32)
     band = f & ~shell & ((cl < EDGE_TREES_M) | town)
@@ -681,7 +694,8 @@ def write_skirt(dem, datum, cov_full):
 # ------------------------------------------------------------------------------------------------------------ spawns
 
 def spawn_points(profs, datum):
-    """Where the car can start (keys 1-9): downtown Natchez first, then the bridge, the highways, a river and the delta."""
+    """Where the car can start (keys 1-9): downtown first, then the big river's bridge (dixie), the highways listed in
+    REAL["spawns"], and river bridges."""
     half = cfg.SIZE_M / 2
 
     def at(pr, i, name):
@@ -690,16 +704,16 @@ def spawn_points(profs, datum):
         return dict(name=name, x=float(pr["pts"][i, 0] - half), y=float(pr["h"][i] - datum + 0.3),
                     z=float(pr["pts"][i, 1] - half), yaw=float(math.degrees(math.atan2(t[1, 0], t[1, 1]))))
     out = []
-    # Main Street: the paved stroke named Main St nearest downtown
+    # downtown: the town street nearest the town's centre (Main Street in Natchez)
     best = None
     for pr in profs:
-        if "Main St" in pr["name"]:
+        if pr["cls"] == "paved" and (cfg.MAP != "dixie" or "Main St" in pr["name"]):
             d = np.hypot(pr["pts"][:, 0] - DOWNTOWN[0], pr["pts"][:, 1] - DOWNTOWN[1])
             i = int(np.argmin(d))
             if best is None or d[i] < best[0]:
                 best = (d[i], pr, i)
     if best:
-        out.append(at(best[1], best[2], "Natchez, Main Street"))
+        out.append(at(best[1], best[2], f"{REAL['town']}, {best[1]['name'] or 'downtown'}"))
     for pr in profs:
         for s0, s1, deck, river, k in pr["spans"]:
             if s1 - s0 > 600:        # the Mississippi: start on the Louisiana side, facing the bridge
@@ -710,8 +724,7 @@ def spawn_points(profs, datum):
                     sp["yaw"] = (sp["yaw"] + 180.0) % 360.0
                 out.append(sp)
     seen = set()
-    for key, label in (("US 61", "US 61"), ("Natchez Trace", "Natchez Trace Parkway"), ("US 84 / US 98", "US 84 / US 98"),
-                       ("Hwy 15", "LA 15, the delta"), ("Hwy 33", "MS 33")):
+    for key, label in REAL["spawns"]:
         cand = [pr for pr in profs if pr["cls"] == "state" and key in pr["name"] and len(pr["s"]) > 200]
         if cand and label not in seen:
             pr = max(cand, key=lambda p: p["s"][-1])
@@ -783,13 +796,16 @@ def main():
     wz = np.load(cfg.OUT / "water.npz")
     kind, level = wz["kind"], wz["level"]
     cov = np.load(cfg.OUT / "cover.npy")
-    natchez = np.load(cfg.OUT / "natchez.npy")
+    natchez = np.load(cfg.OUT / "town.npy")
     forest = np.load(cfg.OUT / "forest.npy").astype(np.float32) > 0.5
     datum = float(np.round(np.median(dem[::20, ::20]) / 10) * 10)
     log(f"datum {datum:.0f} m")
 
     P.ADAPTIVE_BLEND = True
-    profs, _ = P.all_profiles(net, dem, streams)
+    # roads that cross a lake or a river polygon (causeways, the dam roads) ride 1.5 m above its water
+    over_water = np.where(kind > 0, np.maximum(dem, level + 1.5), dem).astype(np.float32)
+    profs, _ = P.all_profiles(net, over_water, streams)
+    del over_water
     for ln in P.summary(profs):
         log(ln)
     seeds = W.road_seeds(profs)
@@ -804,8 +820,7 @@ def main():
     del poly_edge, rib_edge
     log("water carved")
 
-    base = ndimage.grey_opening(dem[::8, ::8], size=(31, 31))
-    flood = ndimage.zoom((base < 32).astype(np.float32), 8, order=1)[:cfg.GRID, :cfg.GRID] > 0.5
+    flood = lowland(dem) if REAL["lowland_m"] is not None else np.ones(dem.shape, bool)
     taken = Taken()
     town_b, town_trees, lots = town(profs, natchez, clear, water_edge, graded, taken)
     homes = countryside(profs, natchez, clear, water_edge, graded, taken, flood)
@@ -854,7 +869,6 @@ def main():
     hmin, hmax = write_tiles(graded, datum, (cov, fields, natchez, graded, clear, water_edge, kind, f, yards))
     write_objects(trees, buildings, lines, datum)
     skirt = write_skirt(graded, datum, cov)
-    half = cfg.SIZE_M / 2
     spawns = spawn_points(profs, datum)
     meta = dict(sizeM=cfg.SIZE_M, tiles=cfg.TILES, tileM=cfg.TILE_M, tileRes=cfg.TILE_RES, splatRes=cfg.SPLAT_RES,
                 datum=datum, hmin=hmin, hmax=hmax, layers=LAYERS, materials=M.MAT, skirt=skirt,
@@ -869,9 +883,10 @@ def main():
     np.save(cfg.OUT / "dem_final.npy", graded)
     cfg.PREVIEW.mkdir(parents=True, exist_ok=True)
     preview(graded, profs, buildings, kind, cfg.PREVIEW / "landcover.png",
-            "Dixie map: land cover (WorldCover on the 3DEP hillshade), roads, buildings")
-    preview(graded, profs, buildings, kind, cfg.PREVIEW / "natchez.png", "Natchez and the bridge to Vidalia",
-            window=(half - 5000, half + 4000, half - 4500, half + 4500), step=2)
+            f"{cfg.SPEC['title']}: land cover (WorldCover on the 3DEP hillshade), roads, buildings")
+    preview(graded, profs, buildings, kind, cfg.PREVIEW / "town.png",
+            REAL["town"] + (" and the bridge to Vidalia" if cfg.MAP == "dixie" else ""),
+            window=(DOWNTOWN[0] - 5250, DOWNTOWN[0] + 3750, DOWNTOWN[1] - 4500, DOWNTOWN[1] + 4500), step=2)
     log("done")
 
 

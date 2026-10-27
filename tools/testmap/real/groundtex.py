@@ -1,11 +1,13 @@
-"""Procedural textures for the Dixie map: eight tiling ground layers (with normal maps), the forest canopy seen from
-above, and the plains map's road surfaces (textures.py).
+"""Procedural textures for a real-data map (dixie, midwest): eight tiling ground layers (with normal maps), the
+forest canopy seen from above, and the plains map's road surfaces (textures.py).
 
-The season is the Dixie storm season, March to May: pastures and hay meadows fresh green, delta fields tilled dark
-grey-brown or with young cotton, corn and soybean rows, hardwoods in new leaf, pines dark, sand bars pale. Colours are
-sRGB and, like the plains map's, picked by eye; they are not calibrated against photographs of the region yet.
+The season is the storm season: March to May in Dixie, April to June in the Midwest. Pastures and hay meadows are
+fresh green, fields tilled or with young cotton, corn and soybean rows, hardwoods in new leaf, pines dark, sand bars
+pale. The soil is the map's own (SOIL): the delta's grey-brown alluvial clay, or central Illinois's near-black prairie
+loam. Colours are sRGB and, like the plains map's, picked by eye; they are not calibrated against photographs yet.
 
-Writes tests/StormLabTest/Assets/TestMap/GeneratedDixie/Textures/*.png. Run: python -I tools/testmap/dixie/groundtex.py
+Writes tests/StormLabTest/Assets/TestMap/Generated<Map>/Textures/*.png.
+Run: python -I tools/testmap/real/groundtex.py --map dixie|midwest
 """
 import json
 import sys
@@ -15,10 +17,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _paths  # noqa: F401,E402
 import numpy as np
 
+import map_config as cfg
 import textures as T
 from textures import N, colourise, fbm, normal_map, pnoise, rows, save, specks
 
 # terrain layer order is shared with places.py and the Unity builder
+# tilled soil and the soil between young crop rows, darkest to lightest
+SOIL = {"dixie": ([(60, 52, 44), (82, 72, 60), (104, 92, 76), (126, 114, 96)], [(72, 62, 50), (96, 84, 68), (120, 108, 90)]),
+        "midwest": ([(34, 28, 24), (52, 44, 36), (72, 62, 50), (94, 82, 66)], [(44, 36, 30), (66, 56, 46), (90, 78, 62)])}
+TILLED, BETWEEN = SOIL.get(cfg.MAP, SOIL["dixie"])
 LAYERS = ["pasture", "tilled", "youngcrop", "forest", "lawn", "wetland", "sand", "dirt"]
 SMOOTH = {"pasture": 0.2, "tilled": 0.12, "youngcrop": 0.18, "forest": 0.12, "lawn": 0.22, "wetland": 0.35,
           "sand": 0.15, "dirt": 0.1}
@@ -37,15 +44,14 @@ def ground_layers():
     clods = fbm(S, (20, 80, 300), (0.6, 0.6, 0.5))
     r = rows(S, 0.97, 1.2, 0.03)
     h = clods + 1.2 * r
-    col = colourise(clods * 0.8 + 0.5 * r, [(-2, (60, 52, 44)), (-0.4, (82, 72, 60)), (0.7, (104, 92, 76)),
-                                             (2, (126, 114, 96))])
+    col = colourise(clods * 0.8 + 0.5 * r, list(zip((-2, -0.4, 0.7, 2), TILLED)))
     col += specks(S, 0.015, 1)[..., None] * 35
     info["tilled"] = (col, h, 2.0)
     # young crop: emerging cotton / soybean rows over the same soil
     plants = (rows(S, 0.97, 4.0, 0.03) > 0.6) * np.clip(0.6 + 0.6 * pnoise(S, 200), 0, 1)
     soil = fbm(S, (20, 90, 300), (0.6, 0.5, 0.4))
     h = soil + 1.5 * plants
-    col = colourise(soil, [(-2, (72, 62, 50)), (0, (96, 84, 68)), (2, (120, 108, 90))])
+    col = colourise(soil, list(zip((-2, 0, 2), BETWEEN)))
     green = colourise(pnoise(S, 150), [(-2, (52, 80, 30)), (2, (98, 128, 52))])
     col = col * (1 - plants[..., None]) + green * plants[..., None]
     info["youngcrop"] = (col, h, 1.6)

@@ -1,23 +1,24 @@
-"""Stage 1 of the Dixie map: the real ground, its water and its cover.
+"""Stage 1 of a real-data map (dixie, midwest): the real ground, its water and its cover.
 
-- DEM: the two USGS 3DEP 1/3 arc-second tiles resampled (bilinear) onto the map grid (GRID x GRID, row 0 = south).
-- Cleanup: on the flat delta and floodplain, the narrow fills of the real roads and railways are clipped as on the
-  plains map (terrain.clean); in the loess hills, where the same filter would shave the real knife-edge ridges, the
-  ground is kept. The Mississippi River levees are kept everywhere: they are the delta's horizon. NHD has no levee
-  lines here, so they are found in the DEM (ridges 3.5 m and more above the floodplain, 1.5 km and longer).
-- Towns: every built-up area in WorldCover except Natchez is smoothed into the land around it (Vidalia, Ferriday,
-  Fayette, Washington, ...). Natchez keeps its ground; places.py lays out its streets and buildings.
-- Water: the Mississippi (NHD area polygons), the oxbow lakes and ponds (NHD waterbodies of 0.4 ha and up) where the
-  lidar's hydro-flattened surface says there is water at the time of the survey (sandbars stay dry ground), except
-  the Mississippi, which fills its polygon (high water, the storm season). Each piece of water gets a level from that
-  flattened surface.
-- Streams: NHDPlus HR flowlines draining 6 km2 or more, moved onto the DEM's channel as on the plains map; named
-  rivers (Homochitto, Buffalo, Tensas, ...) are wider and always bridged. The Mississippi is in the list too (kind
-  "river", polygon = true), so the road tools see its crossing, but its water is the polygon, not a ribbon.
+- DEM: the USGS 3DEP 1/3 arc-second tiles resampled (bilinear) onto the map grid (GRID x GRID, row 0 = south).
+- Cleanup: on flat ground the narrow fills of the real roads and railways are clipped as on the plains map
+  (terrain.clean); in hills, where the same filter would shave real knife-edge ridges, the ground is kept. Dixie: the
+  Mississippi River levees are kept everywhere (the delta's horizon); NHD has no levee lines there, so they are found
+  in the DEM (ridges 3.5 m and more above the floodplain, 1.5 km and longer).
+- Towns: every built-up area in WorldCover except the map's one town (Natchez, Effingham) is smoothed into the land
+  around it. The town keeps its ground; roadnet.py keeps its streets and places.py lays out its buildings.
+- Water: NHD area polygons (rivers) and waterbodies (lakes, reservoirs, ponds of 0.4 ha and up), wet where the lidar's
+  hydro-flattened surface says there is water at the time of the survey (sand bars stay dry ground). Dixie: the
+  Mississippi fills its polygon (high water, the storm season). Each piece of water gets a level from that flattened
+  surface.
+- Streams: NHDPlus HR flowlines draining 6 km2 or more, moved onto the DEM's channel as on the plains map; rivers are
+  wider and always bridged. Dixie: the Mississippi is in the list too (kind "river", polygon = true), so the road tools
+  see its crossing, but its water is the polygon, not a ribbon.
 - Land cover: ESA WorldCover 2021 (10 m) resampled onto a 10 m map grid; forest fraction per height cell.
 
-Writes build/dem_raw.npy, dem.npy, water.npz, streams.json, cover.npy (10 m), forest.npy, natchez.npy, levees.json.
-Run after fetch.py: python -I tools/testmap/dixie/land.py [--fresh] (--fresh: mosaic and resample again, not reuse)
+Writes build/dem_raw.npy, dem.npy, water.npz, streams.json, cover.npy (10 m), forest.npy, town.npy, levees.json.
+Run after fetch.py: python -I tools/testmap/real/land.py --map dixie|midwest [--fresh]
+(--fresh: mosaic and resample again, not reuse)
 """
 import json
 import sys
@@ -36,7 +37,9 @@ import map_config as cfg
 from terrain import clean, resample, sample, snap, water_level
 
 T0 = time.time()
-NATCHEZ = (cfg.SIZE_M / 2, cfg.SIZE_M / 2)      # the map centre is downtown Natchez
+REAL = cfg.SPEC["real"]
+BIG = REAL["big_river"]                           # the Mississippi (dixie), or None
+DOWNTOWN = (cfg.SIZE_M / 2 + REAL["downtown"][0], cfg.SIZE_M / 2 + REAL["downtown"][1])   # the town's centre
 COVER_STEP = 10.0
 NCOV = int(round(cfg.SIZE_M / COVER_STEP))       # 8047
 # WorldCover classes
@@ -182,31 +185,35 @@ def ground(dem, levee):
     return out.astype(np.float32)
 
 
-def natchez_mask(cov, water):
-    """Natchez: where the streets are town-dense (USGS transportation: 5 km of road a km2 or more, over 500 m) or
-    WorldCover is built up, connected to downtown, on the Mississippi side of the river (10 m grid)."""
-    built = (cov == WC_BUILT).astype(np.float32)
-    dens = ndimage.uniform_filter(built, 31) > 0.12                 # 300 m windows at least 12 % built
+def town_mask(cov, water):
+    """The town (Natchez, Effingham): where the streets are town-dense (USGS transportation, interstates left out: 5 km
+    of road a km2 or more over 500 m, or 3 km where WorldCover is built up), connected to downtown; dixie: only on the
+    Mississippi side of the river. (Built-up alone is not enough: WorldCover counts an interstate's pavement and
+    median as built up, and the town would run out along it.)"""
+    built = ndimage.uniform_filter((cov == WC_BUILT).astype(np.float32), 31) > 0.12     # 300 m windows, 12 % built
     img = Image.new("L", (NCOV, NCOV), 0)
     d = ImageDraw.Draw(img)
     for r in json.load(open(cfg.RAW / "tran_roads.json")):
+        if r.get("tnmfrc") == 1 or r.get("interstate"):
+            continue
         for ln in r["lines"]:
             if len(ln) >= 2:
                 d.line([(x / COVER_STEP, z / COVER_STEP) for x, z in ln], fill=1, width=1)
     km_per_km2 = ndimage.uniform_filter(np.asarray(img).astype(np.float32), 51) * (1000.0 / COVER_STEP)
-    dens |= km_per_km2 > 5.0
+    dens = (km_per_km2 > 5.0) | (built & (km_per_km2 > 3.0))
     lab, n = ndimage.label(dens)
-    ci, cj = int(NATCHEZ[0] / COVER_STEP), int(NATCHEZ[1] / COVER_STEP)
+    ci, cj = int(DOWNTOWN[0] / COVER_STEP), int(DOWNTOWN[1] / COVER_STEP)
     near = lab[cj - 60:cj + 61, ci - 60:ci + 61]
     ids = [k for k in np.unique(near) if k]
     town = np.isin(lab, ids)
     # cut it at the river: only what lies east of the water at each row
-    yy, xx = np.nonzero(town)
-    rx = river_x(water, yy * COVER_STEP)
-    town[yy[xx * COVER_STEP < rx], xx[xx * COVER_STEP < rx]] = False
+    if BIG:
+        yy, xx = np.nonzero(town)
+        rx = river_x(water, yy * COVER_STEP)
+        town[yy[xx * COVER_STEP < rx], xx[xx * COVER_STEP < rx]] = False
     lab, _ = ndimage.label(ndimage.binary_dilation(town, iterations=8))
     town = lab == lab[cj, ci] if lab[cj, ci] else lab == np.argmax(np.bincount(lab.ravel())[1:]) + 1
-    log(f"Natchez: {town.sum() * COVER_STEP ** 2 / 1e6:.1f} km2")
+    log(f"{REAL['town']}: {town.sum() * COVER_STEP ** 2 / 1e6:.1f} km2")
     return town
 
 
@@ -223,9 +230,9 @@ def river_x(water_kind, z):
     return out
 
 
-def flatten_towns(dem, cov, natchez):
+def flatten_towns(dem, cov, keep):
     """Every other town is smoothed into the land around it (plains terrain.flatten_towns, 10 m cover)."""
-    dev = ((cov == WC_BUILT) & ~natchez).astype(np.float32)
+    dev = ((cov == WC_BUILT) & ~keep).astype(np.float32)
     town = ndimage.uniform_filter(dev, 25) > 0.10
     town = ndimage.binary_dilation(town, iterations=10)
     w = to_cells(ndimage.gaussian_filter(town.astype(np.float32), 8), COVER_STEP)
@@ -316,7 +323,7 @@ def water(dem_raw, flow):
     # the Mississippi: area polygons (stream / river) that the Mississippi's own flowlines run through
     river_polys = polys_of(areas, lambda a: a["ftype"] == 460)
     riv = rasterise(river_polys, cfg.CELL, n).astype(bool)
-    msl = burn_lines([ln for f in flow if f["name"] == "Mississippi River" for ln in f["lines"]], cfg.CELL, n, 30)
+    msl = burn_lines([ln for f in flow if BIG and f["name"] == BIG for ln in f["lines"]], cfg.CELL, n, 30)
     lab, _ = ndimage.label(riv)
     ids = np.unique(lab[msl & riv])
     # the polygons touching the Mississippi's line, but only within 2.5 km of it: the Homochitto's and the Buffalo's
@@ -327,12 +334,10 @@ def water(dem_raw, flow):
     miss = np.isin(lab, ids[ids > 0]) & near
     other_river = riv & ~miss
     lakes = rasterise(polys_of(bodies, lambda b: b["ftype"] in (390, 436) and _area(b) >= POND_KM2 * 1e6), cfg.CELL, n).astype(bool)
-    log(f"water polygons: Mississippi {miss.mean() * 100:.2f} %, other rivers {other_river.mean() * 100:.2f} %, "
+    log(f"water polygons: {BIG or 'big river'} {miss.mean() * 100:.2f} %, other rivers {other_river.mean() * 100:.2f} %, "
         f"lakes and ponds {lakes.mean() * 100:.2f} % of the map")
     kind = np.zeros((n, n), np.uint8)
     level = np.full((n, n), np.nan, np.float32)
-    # the river: the hydro-flattened surface is the lowest ground in the polygon; a smooth level that only falls
-    # downstream (south) and cells within 0.4 m of it are water, the rest (bars) is land
     # the rivers: the lidar's hydro-flattened surface is the lowest ground in the polygon nearby (it steps by a metre
     # or two between survey reaches, so the test is local); cells within 0.5 m of it are water, the rest (bars) land
     # The Mississippi itself is filled bank to bank (NHD's polygon): the lidar caught it at low water, with bars a
@@ -354,7 +359,7 @@ def water(dem_raw, flow):
         wet = (lab > 0) & (dem_raw <= lv + 0.3)
         kind[wet] = 2
         level[wet] = lv[wet]
-    log(f"water: Mississippi {(kind == 1).mean() * 100:.2f} %, lakes and ponds {(kind == 2).mean() * 100:.2f} %, "
+    log(f"water: {BIG or 'big river'} {(kind == 1).mean() * 100:.2f} %, lakes and ponds {(kind == 2).mean() * 100:.2f} %, "
         f"other rivers {(kind == 3).mean() * 100:.2f} %; {nl} lakes and ponds")
     return kind, level
 
@@ -450,14 +455,14 @@ def streams(dem, flow, kind):
                 first.setdefault(f["name"], []).append(a[0])
     rivers = []
     for nm, da in names.items():
-        if nm == "Mississippi River":
+        if nm == BIG:
             rivers.append(nm)
             continue
         if nm in SIDE_CHANNELS or nm not in first:
             continue
         poly = share[nm]
         x, z = np.mean(first[nm], axis=0)
-        hills = x > river_x(kind, np.array([z]))[0] + 500
+        hills = x > river_x(kind, np.array([z]))[0] + 500 if BIG else True
         if poly[0] / max(poly[1], 1) > 0.5 or (hills and da >= RIVER_DA_KM2):
             rivers.append(nm)
     log("rivers: " + ", ".join(f"{nm} ({names[nm]:,.0f} km2)" for nm in sorted(rivers, key=lambda k: -names[k])))
@@ -465,7 +470,7 @@ def streams(dem, flow, kind):
         pts = chain_named(flow, nm)
         if pts is None or len(pts) < 2:
             continue
-        if nm == "Mississippi River":
+        if nm == BIG:
             pts = resample(pts, 20.0)
             out.append(dict(name=nm, kind="river", da=names[nm], width=0.0, polygon=True, clear=26.0,
                             pts=pts, level=np.zeros(len(pts))))
@@ -498,7 +503,7 @@ COVER_RGB = {WC_TREE: (52, 82, 40), WC_SHRUB: (110, 120, 70), WC_GRASS: (130, 15
              WC_BUILT: (150, 150, 150), WC_BARE: (200, 185, 150), WC_WATER: (60, 90, 110), WC_WETLAND: (90, 110, 90)}
 
 
-def preview(dem, cov, kind, st, levee_lines, natchez, path, step=8):
+def preview(dem, cov, kind, st, levee_lines, town, path, step=8):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -516,7 +521,7 @@ def preview(dem, cov, kind, st, levee_lines, natchez, path, step=8):
     img[w == 1] = (0.45, 0.38, 0.28)
     img[w == 2] = (0.20, 0.32, 0.40)
     img[w == 3] = (0.40, 0.36, 0.28)
-    tn = natchez[np.ix_(ci, ci)]
+    tn = town[np.ix_(ci, ci)]
     img[tn] = img[tn] * 0.6 + 0.4 * np.array([0.85, 0.3, 0.3])
     fig, ax = plt.subplots(figsize=(20, 20))
     ax.imshow(np.clip(img, 0, 1), origin="lower", extent=(0, cfg.SIZE_M, 0, cfg.SIZE_M))
@@ -533,8 +538,8 @@ def preview(dem, cov, kind, st, levee_lines, natchez, path, step=8):
         ax.plot(p[:, 0], p[:, 1], color="#ffd000", lw=1.5)
     ax.set_xlim(0, cfg.SIZE_M)
     ax.set_ylim(0, cfg.SIZE_M)
-    ax.set_title("Dixie map, stage 1: WorldCover land cover on the 3DEP hillshade; water (NHD, where the lidar is wet), "
-                 "rivers and creeks (NHDPlus HR), levees (yellow), Natchez (red)")
+    ax.set_title(f"{cfg.SPEC['title']}, stage 1: WorldCover land cover on the 3DEP hillshade; water (NHD, where the lidar "
+                 f"is wet), rivers and creeks (NHDPlus HR), levees (yellow), {REAL['town']} (red)")
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=60, bbox_inches="tight")
 
@@ -552,7 +557,10 @@ def main():
     log(f"mosaic {dem_raw.shape}, {dem_raw.min():.1f}..{dem_raw.max():.1f} m")
     flow = load_flow()
     kind, level = water(dem_raw, flow)
-    levee, levee_lines = detect_levees(dem_raw)
+    if REAL["levees"]:
+        levee, levee_lines = detect_levees(dem_raw)
+    else:
+        levee, levee_lines = np.zeros(dem_raw.shape, bool), []
     json.dump(levee_lines, open(cfg.OUT / "levees.json", "w"))
     dem = ground(dem_raw, levee)
     if fresh:
@@ -561,9 +569,9 @@ def main():
     else:
         cov = np.load(cfg.OUT / "cover.npy")
     log("cover: " + ", ".join(f"{c} {(cov == c).mean() * 100:.1f} %" for c in np.unique(cov)))
-    natchez = natchez_mask(cov, kind)
-    np.save(cfg.OUT / "natchez.npy", natchez)
-    dem = flatten_towns(dem, cov, natchez)
+    town = town_mask(cov, kind)
+    np.save(cfg.OUT / "town.npy", town)
+    dem = flatten_towns(dem, cov, town)
     np.save(cfg.OUT / "dem.npy", dem)
     forest = to_cells(ndimage.uniform_filter((cov == WC_TREE).astype(np.float32), 3), COVER_STEP)
     np.save(cfg.OUT / "forest.npy", forest.astype(np.float16))
@@ -579,7 +587,7 @@ def main():
               open(cfg.OUT / "streams.json", "w"))
     kinds = {k: sum(1 for s in st if s["kind"] == k) for k in ("river", "creek", "draw")}
     log(f"streams: {kinds}")
-    preview(dem, cov, kind, st, levee_lines, natchez, cfg.PREVIEW / "land.png")
+    preview(dem, cov, kind, st, levee_lines, town, cfg.PREVIEW / "land.png")
 
 
 if __name__ == "__main__":

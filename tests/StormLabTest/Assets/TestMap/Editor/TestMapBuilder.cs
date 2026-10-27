@@ -1,5 +1,6 @@
 // Builds the plains test map (Assets/Scenes/TestMap.unity) from TestMapData/, which tools/testmap/*.py write,
-// or the Dixie map (Assets/Scenes/DixieMap.unity) from DixieMapData/, which tools/testmap/dixie/*.py write:
+// or a real-data map from its own data, which tools/testmap/real/*.py write: the Dixie map (Assets/Scenes/DixieMap.unity,
+// DixieMapData/) or the Midwest map (Assets/Scenes/MidwestMap.unity, MidwestMapData/):
 // 100 terrain tiles of 5 x 5 miles with eight ground layers and their trees, the road, bridge and water meshes, the
 // farmsteads, the power lines, a horizon skirt three map widths across, then the scene: HDRP sky and sun, the car and
 // its camera, and a StormLab storm (StormRenderer with lightning) whose track crosses the map.
@@ -7,8 +8,10 @@
 //   StormLab > Test Map > Open Test Map     opens the scene and presses Play (builds it first if missing)
 //   StormLab > Test Map > Rebuild Farmsteads and Lights   only the farmsteads, their yard lights and the truck's
 //                                           headlights, in the scene as it is (keeps everything else in it)
-//   StormLab > Dixie Map > Build World / Open Dixie Map   the same for the Dixie map (Natchez, MS)
-// Batch: -executeMethod TestMapBuilder.BuildFromCommandLine (or RebuildFarmsteadsFromCommandLine, BuildDixieFromCommandLine)
+//   StormLab > Dixie Map > Build World / Open Dixie Map         the same for the Dixie map (Natchez, MS)
+//   StormLab > Midwest Map > Build World / Open Midwest Map     the same for the Midwest map (Effingham, IL)
+// Batch: -executeMethod TestMapBuilder.BuildFromCommandLine (or RebuildFarmsteadsFromCommandLine, BuildDixieFromCommandLine,
+// BuildMidwestFromCommandLine)
 // Generated assets are not in git; the Python tools and this builder recreate them (README in tools/testmap).
 using System;
 using System.Collections.Generic;
@@ -30,14 +33,16 @@ public static class TestMapBuilder
     public sealed class MapSpec
     {
         public string data, gen, scene, world, nav, preset;
-        public bool dixie;
+        public bool real;          // built from real data (tools/testmap/real): canopy shell, real trees, road names
         public static readonly MapSpec Plains = new MapSpec { data = "TestMapData", gen = "Assets/TestMap/Generated",
             scene = "Assets/Scenes/TestMap.unity", world = "Plains Test Map", nav = "TestMapNav", preset = "plains" };
         public static readonly MapSpec Dixie = new MapSpec { data = "DixieMapData", gen = "Assets/TestMap/GeneratedDixie",
-            scene = "Assets/Scenes/DixieMap.unity", world = "Dixie Map", nav = "DixieMapNav", preset = "dixie", dixie = true };
+            scene = "Assets/Scenes/DixieMap.unity", world = "Dixie Map", nav = "DixieMapNav", preset = "dixie", real = true };
+        public static readonly MapSpec Midwest = new MapSpec { data = "MidwestMapData", gen = "Assets/TestMap/GeneratedMidwest",
+            scene = "Assets/Scenes/MidwestMap.unity", world = "Midwest Map", nav = "MidwestMapNav", preset = "ohio", real = true };
     }
 
-    /// <summary>The map the builder works on (plains unless a Dixie menu or command set it).</summary>
+    /// <summary>The map the builder works on (plains unless a Dixie or Midwest menu or command set it).</summary>
     public static MapSpec Map = MapSpec.Plains;
     public static string Gen => Map.gen;
     public static string ScenePath => Map.scene;
@@ -79,6 +84,14 @@ public static class TestMapBuilder
     public static void OpenDixie() { Map = MapSpec.Dixie; try { Open(); } finally { Map = MapSpec.Plains; } }
 
     public static void BuildDixieFromCommandLine() { Map = MapSpec.Dixie; BuildFromCommandLine(); }
+
+    [MenuItem("StormLab/Midwest Map/Build World")]
+    public static void BuildMidwestMenu() { Map = MapSpec.Midwest; try { Build(); } finally { Map = MapSpec.Plains; } }
+
+    [MenuItem("StormLab/Midwest Map/Open Midwest Map")]
+    public static void OpenMidwest() { Map = MapSpec.Midwest; try { Open(); } finally { Map = MapSpec.Plains; } }
+
+    public static void BuildMidwestFromCommandLine() { Map = MapSpec.Midwest; BuildFromCommandLine(); }
 
     [MenuItem("StormLab/Test Map/Open Test Map")]
     public static void OpenMenu() { Map = MapSpec.Plains; Open(); }
@@ -135,8 +148,8 @@ public static class TestMapBuilder
     {
         var t0 = DateTime.Now;
         if (!File.Exists(Path.Combine(DataDir, "meta.json")))
-            throw new FileNotFoundException(Map.dixie
-                ? "DixieMapData/meta.json is missing: run tools/testmap/dixie (fetch, land, roadnet, groundtex, places, navmap) first"
+            throw new FileNotFoundException(Map.real
+                ? $"{Map.data}/meta.json is missing: run tools/testmap/real (fetch, land, roadnet, groundtex, places, then navmap.py) first"
                 : "TestMapData/meta.json is missing: run tools/testmap (fetch_terrain, terrain, roads, textures, world) first");
         var meta = LoadMeta();
         try
@@ -230,7 +243,7 @@ public static class TestMapBuilder
             ["concrete"] = Lit("concrete", Tex("concrete"), Color.white, 0.25f),
             ["water"] = Lit("water", null, new Color(0.16f, 0.2f, 0.2f), 0.93f),
         };
-        if (Map.dixie)
+        if (Map.real)
         {
             byName["river"] = Lit("river", null, new Color(0.33f, 0.28f, 0.20f), 0.9f);    // the Mississippi's silt
             byName["canopy_hard"] = Lit("canopy_hard", Tex("canopy_hard"), Color.white, 0.1f);
@@ -270,12 +283,12 @@ public static class TestMapBuilder
     // ---------------------------------------------------------------------------------------------------- trees
 
     // plains: 0 cottonwood, 1 elm / hackberry, 2 eastern red cedar, 3 shrub (plum, Russian olive)
-    // Dixie: 0 loblolly pine, 1 oak / sweetgum, 2 bald cypress, 3 understory (yaupon, privet)
+    // real-data maps: 0 loblolly pine, 1 oak / sweetgum / hickory, 2 bald cypress, 3 understory (yaupon, privet)
     static TreePrototype[] TreePrototypes()
     {
         var bark = Lit("bark", null, new Color(0.30f, 0.27f, 0.23f), 0.1f);
-        var leafTex = Tex(Map.dixie ? "ground_lawn" : "ground_grass");
-        var leaves = Map.dixie ? new[]
+        var leafTex = Tex(Map.real ? "ground_lawn" : "ground_grass");
+        var leaves = Map.real ? new[]
         {
             Lit("leaves_pine", leafTex, new Color(0.36f, 0.46f, 0.34f), 0.15f),
             Lit("leaves_oak", leafTex, new Color(0.58f, 0.74f, 0.46f), 0.2f),
@@ -292,7 +305,7 @@ public static class TestMapBuilder
         for (int k = 0; k < 4; k++)
         {
             string path = $"{Gen}/Trees/tree_{k}.prefab";
-            var mesh = Map.dixie ? DixieTreeMesh(k) : TreeMesh(k);
+            var mesh = Map.real ? RealTreeMesh(k) : TreeMesh(k);
             mesh.name = $"tree_{k}";
             string mpath = $"{Gen}/Trees/tree_{k}.asset";
             AssetDatabase.DeleteAsset(mpath);
@@ -300,10 +313,10 @@ public static class TestMapBuilder
             var go = new GameObject($"tree_{k}");
             go.AddComponent<MeshFilter>().sharedMesh = mesh;
             go.AddComponent<MeshRenderer>().sharedMaterials = new[] { bark, leaves[k] };
-            if (k <= (Map.dixie ? 2 : 1))
+            if (k <= (Map.real ? 2 : 1))
             {
                 var cap = go.AddComponent<CapsuleCollider>();
-                cap.radius = k == 0 && !Map.dixie ? 0.45f : 0.3f; cap.height = 6f; cap.center = new Vector3(0, 3f, 0);
+                cap.radius = k == 0 && !Map.real ? 0.45f : 0.3f; cap.height = 6f; cap.center = new Vector3(0, 3f, 0);
             }
             var prefab = PrefabUtility.SaveAsPrefabAsset(go, path);
             Object.DestroyImmediate(go);
@@ -349,7 +362,7 @@ public static class TestMapBuilder
         return b.ToMesh(true);
     }
 
-    static Mesh DixieTreeMesh(int type)
+    static Mesh RealTreeMesh(int type)
     {
         var rnd = new System.Random(31 + type);
         var b = new MeshBuilder(2);
@@ -463,7 +476,7 @@ public static class TestMapBuilder
                 t.materialTemplate = mat;
                 t.heightmapPixelError = 4f;
                 t.basemapDistance = 2500f;
-                t.treeDistance = Map.dixie ? 3000f : 5000f;      // (Dixie: the canopy shell carries the forest beyond)
+                t.treeDistance = Map.real ? 3000f : 5000f;      // (real-data maps: the canopy shell carries the forest beyond)
                 t.treeBillboardDistance = t.treeDistance;
                 t.treeMaximumFullLODCount = 100000;
                 t.drawInstanced = true;
@@ -879,7 +892,7 @@ public static class TestMapBuilder
         rig.storm = storm;
 
         var w = world.AddComponent<TestMapWorld>();
-        w.car = car; w.cameraRig = rig; w.storm = storm; w.sizeM = meta.sizeM; w.datum = meta.datum; w.navResource = Map.nav; w.sectionGrid = !Map.dixie;
+        w.car = car; w.cameraRig = rig; w.storm = storm; w.sizeM = meta.sizeM; w.datum = meta.datum; w.navResource = Map.nav; w.sectionGrid = !Map.real;
         // the storm and lighting panel (Tab): storm controls and a 24 hour clock for the sun, moon and exposure
         var panel = world.AddComponent<TestMapStormPanel>(); panel.world = w; panel.storm = storm; panel.sun = sun;
         w.spots = meta.spawns.Select(s => new TestMapWorld.Spot { name = s.name, position = new Vector3(s.x, s.y, s.z), heading = s.yaw }).ToArray();

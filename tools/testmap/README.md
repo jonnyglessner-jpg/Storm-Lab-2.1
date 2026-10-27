@@ -3,8 +3,9 @@
 A 50 x 50 mile drivable stretch of south-west Kansas for testing the storms: real ground, a designed road grid.
 Scene: `tests/StormLabTest/Assets/Scenes/TestMap.unity` (**StormLab > Test Map > Open Test Map**).
 
-The second map, Dixie (50 x 50 miles round Natchez, MS), is built by the scripts in [dixie/](dixie/README.md) with
-this folder's road, profile, mesh and GPS code (`navmap.py --map dixie`; `map_config.py` holds both maps' frames).
+Two more maps, Dixie (50 x 50 miles round Natchez, MS) and Midwest (round Effingham, IL), are built from real data by
+the scripts in [real/](real/README.md) with this folder's road, profile, mesh and GPS code (`navmap.py --map dixie|midwest`;
+`map_config.py` holds all three maps' frames).
 
 ![land cover](../../docs/testmap/landcover.png)
 
