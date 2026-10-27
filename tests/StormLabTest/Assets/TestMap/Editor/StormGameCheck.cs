@@ -276,10 +276,15 @@ public static class StormGameCheck
             float t0 = Time.realtimeSinceStartup;
             while (game.gameMinutes < v[2] && Time.realtimeSinceStartup - t0 < 120f) yield return null;
             var heights = v.Length > 7 ? v.Skip(7).ToArray() : new[] { 0f };
+            // -slGameSpotPitch deg: looking up that far (negative: down); 5 up by default
+            var argv = System.Environment.GetCommandLineArgs(); int pi = Array.IndexOf(argv, "-slGameSpotPitch");
+            float pitchUp = pi >= 0 && pi + 1 < argv.Length ? float.Parse(argv[pi + 1], CultureInfo.InvariantCulture) : 5f;
+            // -slGameSpot20: 2.0's tornado march (6 m steps, its lighting and reach), to compare with the game's
+            if (argv.Contains("-slGameSpot20")) foreach (var r in game.Storms) { r.tornadoStep = 0f; r.tornadoLightAll = true; }
             foreach (var up in heights)
             for (int h = (int)v[4]; h <= (int)v[5]; h += 30)
             {
-                cam.transform.SetPositionAndRotation(at + Vector3.up * up * 1000f, Quaternion.Euler(-5f, h, 0f));
+                cam.transform.SetPositionAndRotation(at + Vector3.up * up * 1000f, Quaternion.Euler(-pitchUp, h, 0f));
                 foreach (var x in Frames(20)) yield return x;
                 var name = $"spot_live_{up:00}km_{h:000}.png";
                 var rt = new RenderTexture(1600, 900, 24);

@@ -54,7 +54,11 @@ float4 _GroundP;
 float4 _ZB;
 // x: blend weight of the new frame (1 = no history), y: 1 = checkerboard (each frame marches half the pixels)
 float4 _TP;
-// x: 1 = the detailed tornado (StormLab 2.0's), 0 = the web build's
+// x: 1 = the detailed tornado (StormLab 2.0's), 0 = the web build's; y: its fine step as a share of its narrowest part's
+// radius (0: 2.0's fixed 6 m); z: 1 = as 2.0 lit and bounded it (every sample its fields touch lit, the wider reach
+// round a wedge; timing checks only); w: timing
+// checks only, 1 = without its sun and horizon tests, 2 = without its fields (its fine steps only), 3 = write each pixel's
+// step counts instead of its colour
 float4 _TorP;
 
 float3 uvw(float3 p) { float L = S_grid.z; return float3((p.x + L) / (2.0 * L), (p.y + L) / (2.0 * L), p.z / S_grid.w); }
@@ -225,33 +229,48 @@ float tornadoBound() { return max(S_tor2.y * 1.6, S_tor2.x * max(S_tor6.w, 1.0) 
 // bent axis strays from the straight one (sway, the smoothstep lean, a sidewinder's drag, the polyline's window).
 // Inside the bounding cylinder this, not the cylinder, decides where the march takes fine steps: the cylinder is ~1 km
 // round at every height, and fine steps through its clear air were most of a close view's cost (7x the rest).
-float tornadoReach(float z0, float z1)
+// tornadoTube: the part of that round the bent axis itself (funnel, vortices, collar, sheath; 0 above the base), which
+// tornadoField also uses, with the distance to the bent axis, to stride through the clear air inside the reach
+float tornadoTube(float z0, float z1)
 {
     float zb = S_base.x;
+    if (z0 > zb + 0.15) return 0.0;
     float ztop = max(zb - 0.6 * S_wall2.x, 0.3);
-    float lean = length(S_tor3.xy - S_tor.xy);
     float rr = 0.18 * (S_tor8.y > 0.0 ? S_tor8.y : 1.0) + 0.02 * S_tor8.w;
-    float reach = 0.0;
-    if (z0 <= zb + 0.15)
+    float f;
     {
         float zh = min(z1, zb + 0.15);
         float collar = ss(0.72 * ztop, ztop + 0.1, zh);
         float flare = min(0.25 * S_wall.z + 0.3 * S_tor2.y, 1.6 * S_tor2.y + 0.1);
         float rad = lerp(S_tor2.x, S_tor2.y, pow(saturate(zh / ztop), lerp(3.0, 0.7, S_tor.w))) + collar * collar * flare * (1.0 - 0.4 * S_tor2.w);
         // (a wedge breaking up into scud as it ropes out tears its edge up to 0.3 radii further out)
-        float f = rad * ((S_tor4.w > 0.5 ? 1.35 + 0.3 * ss(0.0, 0.3, S_tor4.z) : 1.25) + rr);
+        f = rad * ((S_tor4.w > 0.5 ? 1.35 + 0.3 * ss(0.0, 0.3, S_tor4.z) : 1.25) + rr);
         if (S_tor4.w > 0.5)
         {
             f = max(f, max(S_tor4.x, 0.02) * lerp(1.0, 1.6, pow(saturate(zh / ztop), 1.5)) * 1.45);
             float ro = S_tor5.x * rad;
             f = max(f, ro + max(S_tor5.y, 0.2 * ro) * 1.7 * (1.3 + rr));
-            f = max(f, (S_tor2.y * 1.2 + 0.1) * (1.2 + 0.8 * rr));
+            // (2.0 also took 1.35 x the top's radius at every height, though nothing here is drawn that wide below the
+            // top: round a wedge's narrower foot that was a kilometre of fine steps through clear air. Kept for 2.0's
+            // march in the timing check, so its comparison is with 2.0's)
+            if (_TorP.z > 0.5) f = max(f, (S_tor2.y * 1.2 + 0.1) * (1.2 + 0.8 * rr));
         }
-        if (z0 < 0.4 * zb) f = max(f, 2.1 * max(rad, 0.02));   // the sheath
-        reach = f + 1.05 * tornadoAxisAmp(ztop) + 0.26 * lean + 1.2 * S_tor10.z + 0.12 * lean / ztop + 0.03;
+        if (z0 < 0.4 * zb) f = max(f, (S_tor6.w < 2.0 ? 1.5 : 2.1) * max(rad, 0.02));   // the sheath (a wide envelope's hugs it)
     }
-    float wh = 1.15 * (0.1 + 0.36 * S_tor.w * (1.0 - S_tor2.w) + 0.12 * (1.0 - S_tor2.z));
-    if (z0 < wh) reach = max(reach, 1.475 * max(S_tor2.x * S_tor6.w + 0.06, 0.08) + 1.2 * S_tor10.z + lean * saturate(min(z1, wh) / ztop) + 0.03);   // the whirl
+    return f;
+}
+// the dust whirl: its height, and how far it reaches from the axis' foot (tornadoAxis at the ground)
+float tornadoWhirlTop() { return 1.15 * (0.1 + 0.36 * S_tor.w * (1.0 - S_tor2.w) + 0.12 * (1.0 - S_tor2.z)); }
+float tornadoWhirlR() { return 1.475 * max(S_tor2.x * S_tor6.w + 0.06, 0.08); }
+float tornadoReach(float z0, float z1)
+{
+    float zb = S_base.x;
+    float ztop = max(zb - 0.6 * S_wall2.x, 0.3);
+    float lean = length(S_tor3.xy - S_tor.xy);
+    float reach = 0.0;
+    if (z0 <= zb + 0.15) reach = tornadoTube(z0, z1) + 1.05 * tornadoAxisAmp(ztop) + 0.26 * lean + 1.2 * S_tor10.z + 0.12 * lean / ztop + 0.03;
+    float wh = tornadoWhirlTop();
+    if (z0 < wh) reach = max(reach, tornadoWhirlR() + 1.2 * S_tor10.z + lean * saturate(min(z1, wh) / ztop) + 0.03);   // the whirl
     return reach;
 }
 
@@ -287,11 +306,16 @@ float2 tornadoAxis(float z, float ztop, float clock)
 
 // the funnel's outward direction at the last sample (horizontal unit), for its rounded shading in the march
 static float2 g_torN = float2(1.0, 0.0);
+// the step the march may take from the last sample, km: how far it is from anything tornadoField draws (a lower bound),
+// or inside the dust whirl but clear of the funnel and its sheath, a tenth of the whirl's radius (the scale of its texture)
+static float g_torClear = 0.0;
 
 float3 tornadoField(float3 q)
 {
     float zb = S_base.x;
-    if (S_tor.z <= 0.0 || q.z > zb + 0.15) return 0.0;
+    g_torClear = 1e9;
+    if (S_tor.z <= 0.0) return 0.0;
+    if (q.z > zb + 0.15) { g_torClear = q.z - zb - 0.15; return 0.0; }
     q.z = max(q.z, 0.0);   // below the ground plane (terrain lower than it) the foot and its dust go straight down
     float ztop = max(zb - 0.6 * S_wall2.x, 0.3);
     float h = saturate(q.z / ztop);
@@ -310,6 +334,23 @@ float3 tornadoField(float3 q)
         p0 = p1;
     }
     float d = sqrt(bestD2);
+    // Clear of everything it draws by at least: the distance to the bent axis less the widest its parts reach round it,
+    // and the distance to the dust whirl round the axis' foot, sideways or from above. The reach (tornadoReach) allows
+    // for every way the bent axis can stray from the straight one, so a slender rope's was ~0.3 km round: 6 m steps
+    // through all of it. The axis is measured within W of this height (further is further than W): within the
+    // polyline's 0.12 km exactly, beyond it by how far the axis strays sideways there (sampled: it bends over ~ztop).
+    float whirlClear = max(length(q.xy - tornadoAxis(0.0, ztop, clock)) - tornadoWhirlR(), q.z - tornadoWhirlTop());
+    float tubeClear = min(d, 0.12) - tornadoTube(q.z - 0.12, q.z + 0.12);
+    float dAx = length(q.xy - ax);
+    if (dAx > tornadoTube(q.z - 0.12, q.z + 0.12) + 0.05)
+    {
+        float W = tornadoTube(q.z - 0.12, q.z + 0.12) + 0.15;
+        float dev = 0.0;
+        [unroll] for (int j = -2; j <= 2; j++)
+            if (j != 0) dev = max(dev, length(tornadoAxis(max(q.z + 0.5 * W * j, 0.0), ztop, clock) - ax));
+        tubeClear = max(tubeClear, min(W, max(dAx - dev - 0.02, min(d, 0.12))) - tornadoTube(q.z - W, q.z + W));
+    }
+    g_torClear = (whirlClear > 0.0 ? min(tubeClear, whirlClear) : min(tubeClear, 0.1 * tornadoWhirlR() / 1.475)) - 0.01;
     float rad = lerp(S_tor2.x, S_tor2.y, pow(h, lerp(3.0, 0.7, S_tor.w)));
     // collar: the funnel flares smoothly, like a trumpet, into the lowering under the wall cloud, so the two are one cloud.
     // In the photos the flare is the top quarter or so and a few funnel widths across, leaving the funnel exposed below.
@@ -669,7 +710,7 @@ void March(uint3 gid : SV_DispatchThreadID)
     float torR = max(S_tor2.y * 1.3 + 0.25 * S_wall.z, S_tor2.x * 2.4 + 0.06) * 1.2 + 0.4;
     float2 torC = 0.5 * (S_tor.xy + S_tor3.xy);
     float3 col = 0.0; float T = 1.0; float dsum = 0.0, wsum = 0.0; float tHalf = 1e9;
-    int nSteps = 0; float lastBe = 0.0;
+    int nSteps = 0, nTorSteps = 0; float lastBe = 0.0;
     int maxSteps = (int)_DepthP.w;
     bool det = _TorP.x > 0.5;
     float pixA = 2.0 * _CamTan.y * _Res.w;   // radians per march pixel (the detailed tornado's filtered noise)
@@ -703,6 +744,23 @@ void March(uint3 gid : SV_DispatchThreadID)
                 trOut = tt;
             }
         }
+        // The fine step through it, km. 2.0's 6 m suits ropes tens of metres across, but a mile-wide wedge took the same
+        // steps through hundreds of metres of clear air and soft rim inside its reach, so a close view's cost grew with the
+        // tornado's width (user, 2026-10-27). A share of the radius of its narrowest drawn part (the funnel's foot, a
+        // wedge's central core and suction vortices, its rope-out scud), from 6 m to 50 m.
+        float torFine = 0.006;
+        if (_TorP.y > 0.0 && S_tor.z > 0.0)
+        {
+            float rmin = S_tor2.x;
+            if (S_tor4.w > 0.5)
+            {
+                rmin *= 1.0 - 0.7 * S_tor4.z;
+                if (S_tor4.x > 0.005) rmin = min(rmin, S_tor4.x * (1.0 - 0.4 * S_tor2.w));
+                if (S_tor4.y > 0.0) rmin = min(rmin, S_tor5.y);
+                if (S_tor4.z > 0.0) rmin = min(rmin, 0.1);
+            }
+            torFine = clamp(_TorP.y * rmin, 0.006, 0.05);
+        }
         float2 satP = satelliteMid(); float satR = satelliteBound();
         for (int i = 0; i < maxSteps; i++)
         {
@@ -726,14 +784,17 @@ void March(uint3 gid : SV_DispatchThreadID)
             else if (nearOn) dt = min(dt, 0.035 + t * 0.003);
             else if (s.r <= 0.004 && s.g <= 0.004 && s.b <= 0.004) dt = max(dt, 0.45 * (1.0 + t / 40.0));   // empty air: stride
             // the detailed tornado: fine steps where the ray may meet it, and never step over it (2.0)
-            bool inTor = false;
+            float dtFree = dt;
+            bool inTor = false, torSlender = false;
             if (torOn && q.z < torTop)
             {
                 float dc = t < trIn ? trIn - t : (t <= trOut ? -1.0 : 1e9);
                 float da = S_anti.w > 0.0 ? length(q.xy - antiP) - 0.4 : 1e9;
                 float dsat = S_tor11.z > 0.0 ? length(q.xy - satP) - satR : 1e9;
                 float dmin = min(min(dc, da), dsat);
-                if (dmin < 0.0) { inTor = true; dt = min(dt, 0.006 + t * 0.0012); }
+                // (the satellite and the anticyclonic tornado are slender: they keep 2.0's step)
+                torSlender = da < 0.0 || dsat < 0.0;
+                if (dmin < 0.0) { inTor = true; dt = min(dt, (torSlender ? 0.006 : torFine) + t * 0.0012); }
                 else dt = min(dt, max(dmin, 0.006) + 0.004);
             }
             else if (torOn && t < trIn) dt = min(dt, max(trIn - t, 0.006) + 0.004);   // coming down from above it
@@ -866,9 +927,12 @@ void March(uint3 gid : SV_DispatchThreadID)
             // cloud is drawn analytically and softer, so the flare (from 0.7 of the way up to where it meets the lowering)
             // is handed to the wall cloud's union below, as the web build's own funnel is, and the funnel fades out there
             float3 tfD = 0.0; float2 avD = 0.0, satD = 0.0; float jw = 0.0;
-            if (inTor)
+            if (inTor && abs(_TorP.w - 2.0) > 0.5)
             {
                 tfD = tornadoField(q); avD = antiTornadoField(q); satD = satelliteField(q);
+                nTorSteps++;
+                // in clear air inside its reach, stride to where it may draw something, as far as the rest of the storm allows
+                if (_TorP.y > 0.0 && !torSlender && g_torClear > dt) dt = min(g_torClear, dtFree);
                 float ztJ = max(S_base.x - 0.6 * S_wall2.x, 0.3);
                 jw = ss(0.7 * ztJ, ztJ, q.z) * step(0.01, S_wall.w);
             }
@@ -921,12 +985,17 @@ void March(uint3 gid : SV_DispatchThreadID)
             // light shafts: haze under the storm (where the sky is hidden overhead) lit where sunlight gets through, i.e. the
             // clear slot. It only adds light: where the sun is blocked it is left out, rather than darkening what is behind
             // it, which painted a dark haze with a hard edge under the anvil. Both ends of its extent fade out smoothly.
+            // The step as far as scene geometry, when the ray ends on it: the whole step (up to half a kilometre in clear
+            // air) went on past the terrain, so how much haze or dust a ray took depended on where its last step fell
+            // short of the ground. That drew arcs of equal distance on the ground and layers in a tornado's dust at its
+            // foot (user, 2026-10-27; 2.0's march did it too). Without scene depth the rays end as the web build's do.
+            float dtI = min(dt, max(tScene - t, 0.0));
             float shaftFade = (1.0 - ss(0.55, 0.9, lt.g)) * (1.0 - ss(S_base.x - 0.3, S_base.x + 0.5, q.z));
             if (shaftFade > 0.0)
             {
                 float ks = 0.05 * (1.0 - lt.g) * shaftFade;
                 float3 sc = sunz * sunL * (0.25 + 2.4 * pow(max(cosg, 0.0), 6.0)) * 0.9;
-                col += T * (1.0 - exp(-ks * dt)) * sc;
+                col += T * (1.0 - exp(-ks * dtI)) * sc;
             }
             if (inTor)
             {
@@ -934,25 +1003,28 @@ void March(uint3 gid : SV_DispatchThreadID)
                 float2 tv = float2(max(tf.x, max(av.x, sat.x)), tf.y + av.y + sat.y);
                 // the soil it lofts (1.0's brown when the block has none)
                 float3 soil = S_tor9.x + S_tor9.y + S_tor9.z > 0.0 ? S_tor9.xyz : float3(0.5, 0.44, 0.37);
+                // the funnel: a cloud surface (sharp threshold), lit like the cloud base it hangs from, darker low down;
+                // bright white or rain-laden grey by its brightness, stained low down by the dirt it lofts, and a
+                // translucent one is a soft, thin veil
+                float ghost = S_tor8.z;
+                // a wedge's envelope has a soft rim: rain and debris thin it out over its outer tenth or so
+                // Opaque unless it is a ghost: 3.5x the cloud's extinction is optical depth 4 across 30 m, so a rope or
+                // the narrow foot of a cone does not show the horizon through it (1.3x was about 1). A ghost keeps its thin veil
+                float e = 0.06 + 1.5 * g_fp + 0.25 * ghost + (S_tor4.w > 0.5 ? 0.09 : 0.0);
+                float bf = ss(0.3 - e, 0.3 + e, tv.x) * _MP.x * 3.5 * lerp(1.0, 0.067, ghost);
+                if (tf.x >= max(av.x, sat.x)) bf *= 1.0 - jw;   // the flare is drawn with the wall cloud (above)
+                // lit only where it draws: its soft field reaches about a quarter of a radius past the threshold, and on a
+                // wide funnel lighting that rim (the sun and horizon tests, 45 lookups) was most of a close view's cost
+                bool funnelLit = bf > 0.0 || (_TorP.z > 0.5 && tv.x > 0.0);
                 // its own sun test, and the bright horizon it sees all round from under the base (the light grid's sky
                 // term is the sky overhead, which the base hides)
-                float tsun = (tv.x > 0.0 || tv.y > 0.0) ? max(sunL, tornadoSun(q)) : 0.0;
+                float tsun = (funnelLit || tv.y > 0.0) ? (_TorP.w > 0.5 ? sunL : max(sunL, tornadoSun(q))) : 0.0;
                 float3 hzLight = skyc * 0.2 + hazec * 0.08;
                 // the funnel's vertical sides see the horizon under the base, which the base's underside does not (the
                 // painted path's version; the physical path takes it from the sky bands below)
                 float3 sideLight = skyc * 0.42 + hazec * 0.3;
-                if (tv.x > 0.0)
+                if (funnelLit)
                 {
-                    // the funnel: a cloud surface (sharp threshold), lit like the cloud base it hangs from, darker low down;
-                    // bright white or rain-laden grey by its brightness, stained low down by the dirt it lofts, and a
-                    // translucent one is a soft, thin veil
-                    float ghost = S_tor8.z;
-                    // a wedge's envelope has a soft rim: rain and debris thin it out over its outer tenth or so
-                    // Opaque unless it is a ghost: 3.5x the cloud's extinction is optical depth 4 across 30 m, so a rope or
-                    // the narrow foot of a cone does not show the horizon through it (1.3x was about 1). A ghost keeps its thin veil
-                    float e = 0.06 + 1.5 * g_fp + 0.25 * ghost + (S_tor4.w > 0.5 ? 0.09 : 0.0);
-                    float bf = ss(0.3 - e, 0.3 + e, tv.x) * _MP.x * 3.5 * lerp(1.0, 0.067, ghost);
-                    if (tf.x >= max(av.x, sat.x)) bf *= 1.0 - jw;   // the flare is drawn with the wall cloud (above)
                     float hz = saturate(q.z / max(S_base.x, 0.3));
                     float alb = S_tor8.x > 0.0 ? S_tor8.x : 1.0;
                     float tone = tf.x >= max(av.x, sat.x) ? tf.z : 1.0;
@@ -989,7 +1061,7 @@ void March(uint3 gid : SV_DispatchThreadID)
                         float capV = svT.r, sideV = 1.0;
                         float visN = saturate(svT.b + (svT.a - svT.b) * cs);
                         float3 horL = max(g_hor + (g_horK - g_hor) * cs, 0.6 * g_hor);
-                        float3 horN = horL * (0.07 * visN * sideV + 0.14 * tornadoHorizon(q, g_torN));
+                        float3 horN = horL * (0.07 * visN * sideV + 0.14 * (_TorP.w > 0.5 ? 0.5 : tornadoHorizon(q, g_torN)));
                         amb = (0.045 * g_zen * capV + (0.24 * g_mid * svT.g * sideV + horN) * wedgeK) * _PL2.x + skyFill() + groundLight(q, sunc);
                         // It is the same cloud as the lowering it hangs from, so in shadow it is never darker than that
                         // cloud's sky light (1.25 undoes the albedo tint below; a wedge may go a little darker)
@@ -1054,7 +1126,7 @@ void March(uint3 gid : SV_DispatchThreadID)
                 // Lightning is local scattered radiance, not a change to density or a screen-wide flash.
                 // Undo night adaptation here: that gain belongs to faint ambient illumination, not a bright discharge.
                 if (_TransientLightOn != 0) Lc += be * _TransientLightTex.SampleLevel(sampler_LinearClamp, tc, 0).rgb * _Night.w;
-                float a = 1.0 - exp(-be * dt);
+                float a = 1.0 - exp(-be * dtI);
                 float3 c = lerp(Lc / be, hazec, haze * 0.9);
                 g_lastC = c;
                 col += T * a * c;
@@ -1072,6 +1144,8 @@ void March(uint3 gid : SV_DispatchThreadID)
     col += T * fold * g_lastC; T *= 1.0 - fold;
     _OutDist[id.xy] = wsum > 1e-3 ? dsum / wsum : min(tb, 60.0);
     _OutHalf[id.xy] = tHalf < 1e8 ? tHalf : -1.0;
+    // timing checks: the steps this pixel took, and how many of them evaluated the detailed tornado, per thousand
+    if (_TorP.w > 2.5) { _Out[id.xy] = float4(nSteps, nTorSteps, 0.0, 1000.0) * 0.001; return; }
 
     if (_Opt.z > 0.5 && tScene > 1e8)
     {

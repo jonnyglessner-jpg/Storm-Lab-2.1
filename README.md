@@ -139,6 +139,16 @@ Tornado (`tornado`):
   tube and widen once on the ground, each its own way (how fast, top or foot first, how thin, how much it snakes).
   `StormLabTests -slTornadoLife <preset> <seed> <cycle> [tag]` renders one tornado through its life (a tag with
   "early" shows its formation, "rope" its rope-out, "sharp" one unblended full-resolution frame from closer).
+  Cost (user, 2026-10-27: frames dropped near tornadoes, more the bigger they were): the march steps through it at a
+  share of its narrowest part's radius (`tornadoStep`, 6-50 m; 2.0 took 6 m whatever its size), strides through the
+  clear air inside its reach by its distance from the bent axis and the dust whirl, lights it only where it draws, and
+  bounds a wedge by its own width at each height, not its top's. On the 7900 XT at 1080p a 1-2 km wedge from 1.5 km
+  went from ~50 to ~15-18 ms a march, a close rope from 18 to 10 ms, images unchanged (mean difference under 1/255).
+  `StormLabTests -slTornadoCost` (or StormLab > Tornado Cost Check) times rope, cone and wedges from three distances
+  against 2.0's march, with step-count heat maps (`validation/reports/TornadoCost.md`, `Screenshots/tornado_cost_sheet.png`,
+  `tornado_steps_sheet.png`). Rays ending on the terrain take only the part of their last step short of it: the whole step
+  had drawn layers in a tornado's dust and arcs on the ground (2.0's march too). `StormGameCheck -slGameSpot ... ,1,km
+  -slGameSpotPitch -9` renders a game view looking down from that height; `-slGameSpot20` draws it with 2.0's march.
 - **Website**: the website's tornado, unchanged (the website comparison uses it).
 
 Wall-cloud base (`wallBase`, also on the panel):

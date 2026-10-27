@@ -143,7 +143,7 @@ namespace StormLab
             r.lightPollution = lookFrom.lightPollution; r.nightFill = lookFrom.nightFill; r.nightAdaptation = lookFrom.nightAdaptation;
             r.exposure = lookFrom.exposure; r.toneMap = lookFrom.toneMap; r.luminanceScale = lookFrom.luminanceScale;
             r.drawBackdrop = lookFrom.drawBackdrop; r.useSceneDepth = lookFrom.useSceneDepth; r.groundSink = lookFrom.groundSink;
-            r.quality = lookFrom.quality; r.renderScale = lookFrom.renderScale; r.maxSteps = lookFrom.maxSteps;
+            r.quality = lookFrom.quality; r.renderScale = lookFrom.renderScale; r.maxSteps = lookFrom.maxSteps; r.tornadoStep = lookFrom.tornadoStep;
             r.temporalBlend = lookFrom.temporalBlend; r.checkerboard = lookFrom.checkerboard;
         }
 

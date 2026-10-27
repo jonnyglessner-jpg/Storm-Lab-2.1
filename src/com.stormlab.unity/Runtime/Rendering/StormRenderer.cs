@@ -83,6 +83,15 @@ namespace StormLab
         [Tooltip("ray-march resolution relative to the camera")]
         [Range(0.25f, 1f)] public float renderScale = 0.5f;
         [Range(64, 1024)] public int maxSteps = 700;
+        [Tooltip("the detailed tornado's fine march step as a share of the radius of its narrowest part, 6 to 50 m (0: 2.0's " +
+                 "fixed 6 m, whose cost near a tornado grew with its width)")]
+        [Range(0f, 0.25f)] public float tornadoStep = 0.12f;
+        /// <summary>light every sample the detailed tornado's fields touch and bound a wedge as widely, as 2.0 did (the
+        /// same image, slower: for timing checks)</summary>
+        [NonSerialized] public bool tornadoLightAll;
+        /// <summary>timing checks only: 1 = the detailed tornado without its sun and horizon tests, 2 = without its fields,
+        /// 3 = the march writes each pixel's step counts (all, and those in the tornado, per thousand) instead of its colour</summary>
+        [NonSerialized] public int tornadoCostProbe;
         [Tooltip("weight of the new frame in the temporal resolve (1 = off)")]
         [Range(0.05f, 1f)] public float temporalBlend = 0.35f;
         [Tooltip("march half the pixels each frame, alternating, and fill the rest from their neighbours and the history")]
@@ -584,7 +593,7 @@ namespace StormLab
             cmd.SetComputeVectorParam(marchCs, "_SkyZen", bZen); cmd.SetComputeVectorParam(marchCs, "_SkyMid", bMid);
             cmd.SetComputeVectorParam(marchCs, "_SkyHor", bHor); cmd.SetComputeVectorParam(marchCs, "_SkyHorK", bHorK);
             cmd.SetComputeVectorParam(marchCs, "_MP", new Vector4(StormVolume.CloudMax, StormVolume.RainMax, exposure, st.frame++));
-            cmd.SetComputeVectorParam(marchCs, "_TorP", new Vector4(tornado == TornadoModel.Detailed ? 1 : 0, 0, 0, 0));
+            cmd.SetComputeVectorParam(marchCs, "_TorP", new Vector4(tornado == TornadoModel.Detailed ? 1 : 0, tornadoStep, tornadoLightAll ? 1 : 0, tornadoCostProbe));
             cmd.SetComputeVectorParam(marchCs, "_WallP", WallParams);
             // the ground pattern of the backdrop moves under the storm as it travels
             var travel = new Vector2((float)(TravelX(StormTime) + origin.x / 1000.0), (float)(TravelY(StormTime) + origin.z / 1000.0));
