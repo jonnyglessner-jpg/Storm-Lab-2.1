@@ -100,10 +100,55 @@ Useful properties for a game: `Frame.stage` / `Frame.caption`, `TornadoAmount`, 
 `TornadoWindAt(world)` (a Rankine-vortex presentation wind), `UpdraftWorld(minutes)`.
 
 Lighting (`lighting`):
-- **Physical** (default): 2.0's multiple-scattering sunlight with a Mie phase function, sky light by how much of the sky
-  each point sees (19-cone sky visibility), light bounced from the ground, the sun's colour from its height, and the
-  night model (moon, twilight, adaptation, blue shift, town light). Sun from a Light, from time of day, or fixed.
+- **Unified** (default; user, 2026-10-28: every part of the storm responds to light the same way, darker undersides
+  and rain, storms darken the sky, hail glows green): the physical model as one light field (`stormLight` in
+  StormMarch.compute). The light reaching a point is worked out once, the same way for cloud, wall cloud, funnel, rain,
+  hail, dust and the air under the storm; the media differ only in their phase function, albedo and how many times light
+  scatters in them (cloud: the four octaves; rain and dust, thin media, once). Light diffusing through thick cloud falls
+  off as 1 / (1 + `diffusion` tau) (two-stream diffuse transmission) instead of the physical model's floor of a fifth of
+  the sky everywhere, so under a deep storm the base is lit by the horizon under its edge and the ground below. Rain is
+  `rainExtinction` (2.5) times the drawn rain's extinction, for the eye and for the light alike (heavy rain is about 4-7
+  per km; at 1 the low sun lit rain cores right through and they were drawn white). Light that has diffused through the
+  hail core is tinted by ice's absorption of red (`hailGlow`; Bohren and Fraser 1993, Gallagher et al. 1996): turquoise,
+  and green under a reddened evening sun. The haze between the eye and the storm is lit as the air at both ends is.
+  The panel has sliders for the four. References and reasoning: the comment above `stormLight`. The sky-visibility grid
+  (cells about 2.6 km) cannot see the beaver tail, a band a few hundred metres deep, hide its own sky, so the game's
+  beaver tail takes 60 % of the grid's sky, blended by how much of the near field there is beaver tail (a probe of the
+  volume's coarse copy round each point did it first, and left dark blotches on the base where the tail joins it) (user, 2026-10-28: the
+  beaver tail was twice as bright in sky light as the cloud it joins; reproduce with `StormGameCheck -slGameSeed 131261
+  -slGameSpot "25.4,1.9,22.0,17,283,283,1,0.11" -slGameSpotPitch 16 -slGameProbe`, which adds the light's parts alone).
+
+The game's beaver tail (user, 2026-10-28: "too big and too long", "blend into the main updraft more smoothly", "flowing
+into the storm"; `_WallP.w`, on with the game's smooth wall-cloud base, so the website comparison keeps the web build's):
+the volume's inflow ramp (4 km tall, 10 km long, the band that read as too big) keeps only its first few kilometres,
+where it rises into the updraft's side; beyond it the render pass's beaver tail is three quarters as long, a little
+narrower, widens and rises over its last 3 km into the ramp and the updraft, and tapers to a tip that breaks up. Its
+texture streams in toward the updraft at a real 15 m/s inflow (`StormSpin.InflowWind`, added up on the wall clock in
+`S_spin3.w` like the rotations; 0 under the web build's rates), with fine laminar streaks about 1 km by 250 m so the
+motion shows. `StormLightCheck -slLightTailFlow` renders it side-on, 8 frames 3 s apart (`Screenshots/light_tailflow_*`);
+`StormGameCheck -slGameSpotFrames count,seconds` adds frames of a spot view. The beaver tail, the inflow ramp and the tail cloud's
+aim follow one line (`tailDir`, `tailRoot` in StormCommon.hlsl). The web build's runs 35 degrees right of the storm's
+motion, out into the open inflow, its tip 8 km from the rain; the game's runs along the forward flank's inflow-side edge,
+10 degrees left of the motion, as a beaver tail lies "along the inflow/FFD boundary" (Stull ch. 14, in
+../meteorology/Practical_Meteorology_Stull/NOTES.md; user, 2026-10-28). HP storms (`tailHP`, by their rain wrap) keep the
+web build's full-size beaver tail and a longer ramp (Stull: beaver tails are most common in HP storms).
+`StormLightCheck -slLightTailFlow [-slLightPreset key]` also renders where it meets the updraft (`light_<preset>_tailroot_*`)
+and the tail cloud side-on (`light_<preset>_tailcloud_*`). HP storms' beaver tail and ramp also have the full amount (the
+web build gives them 0.85 of a classic storm's; `tailAmt`). The game's tail cloud (user, 2026-10-28, against Stull ch.
+14) points at the forward-flank rain nearest the wall cloud, a quarter of the way from the hail core to the forward
+flank's core (`tailCloudAim`; along the beaver tail it pointed 29 degrees right of it); its texture streams in toward the
+wall cloud at 1.6 x the inflow, and torn scud forms beside and below its outer half and past its tip and races in along
+it ("drawn quickly into the tail and the wall cloud by strong winds").
+- **Physical**: 2.0's multiple-scattering sunlight with a Mie phase function, sky light by how much of the sky each point
+  sees (19-cone sky visibility), light bounced from the ground, the sun's colour from its height, and the night model
+  (moon, twilight, adaptation, blue shift, town light), each part of the storm with its own formula. Unified keeps its
+  sun, sky and night. Sun from a Light, from time of day, or fixed.
 - **Website**: the web build's lighting and fixed colours, for comparison with it.
+
+The storms' darkening of the scene's ambient light (`StormSceneAmbient`, `darkenSceneAmbient`, on in Play with Unified
+or Physical): HDRP's indirect diffuse and reflection light, and the fog's sky colour (by `fogFollows`), are scaled by how
+much of the sky the camera sees (the storm's sky-visibility grid), the hidden part replaced by the storm's underside at a
+tenth of the sky (`underside`). About 0.9 25 km off, 0.3 under the base's edge, 0.2 in the rain.
 
 Night (user, 2026-10-26): a moonlit night is shown at 1.2 % of day (`nightBrightness`), a moonless one no brighter than
 0.4 % (`nightFloor`); the panel's exposure opens to that. At 8 % and 4.5 % the storm stayed light grey all night, a new
@@ -205,6 +250,23 @@ side (1.4-2.2 km), and a tornado has clear air round it, 0.35 km + 0.15 a rating
 the 3-D storm, its rain sound and the radar agree; `-- --tilt` in `validation/parity/csharp` lists it per setup, and
 the panel's "rain layout" switches it off. Parity and the website comparison use the web build's layout.
 
+The rain shield (user, 2026-10-28: "trim the rain shield", same layout): the web build's forward-flank rain has no cloud
+of its own, and its sweep downwind (up to 7.5 km past the core) fell 9 km out of the anvil's underside with nothing below
+6 km, where an afternoon sun slipped under the anvil and lit it white from 20 km off. Once the volume is built,
+`RainUnderCloud` (StormVolume.compute) keeps that sweep's rain only where cloud within 6 km of the base lies within about
+5 km; the forward-flank and hail cores keep theirs (cutting them too left classic storms with no forward-flank curtain).
+The rain sound follows it; the radar (analytic) still shows the whole sweep. The forward-flank rain's own cloud (user,
+2026-10-28: "add the cloud deck", same layout, with the anvil): a deep mass over the rain's footprint, its ragged base 1-2.2
+km over the updraft's and rising downwind, its top 4-5.5 km over the base and rising into the anvil near the core; its
+outline wanders, it thins toward it like a lens, and ragged tags hang from its base into heavy rain (user, same day: the
+first deck was a box, "straight edged"). The curtain under it leans downwind with height and its edge frays, so side-on
+it is no longer a vertical line from cloud to ground (`ffd_25km`, `ffd_shade_20km` and their `_norain` frames). The rain
+falls from cloud and is shaded by (inside the forward-flank rain 0.082 -> 0.027 of the frame's light in `StormLightCheck`). A face of it the sun lights is
+white, as a sunlit face of the updraft is (`ffd_12km`). A repaint spread over frames applies the last repaint's
+map of the rain kept as it writes each slab (trimming in place at the end flashed the whole sweep back for 3 frames at
+every repaint; `StormLightCheck -slLightFlicker` measures it: 11 % before, 0.02 % after). `StormGameCheck -slGameProbe` lists cloud,
+rain and the light grids along the 25-minute view and renders the unified light's parts there.
+
 **Map and radar** (user, 2026-10-27). On the test map a map in the bottom-right corner (`TestMapMinimap`) follows the
 truck, heading up, with the roads, the radar and the next turn; click it to open it full screen (north up: drag to pan,
 scroll to zoom, click a road to drive there, Esc closes). The GPS (`TestMapRoads`) routes over the whole road network
@@ -255,6 +317,12 @@ Output: by default the storm's light is in HDRP's physical units under the game'
   cloud from 3 km, the storm from 25 km), each drawn with the website's and the enhanced detail: the march's GPU time,
   each image's fine-detail energy above the horizon, and sheets with both frames and 1:1 crops
   (`Screenshots/detail_<view>_sheet.png`). Report: `validation/reports/CloudDetailCheck.md`. Last run: PASS.
+- **Lighting**: **StormLab > Test Map > Lighting Check** (`StormLightCheck.RunFromCommandLine [-slLightPreset key]
+  [-slLightHour h] [-slLightDebug]`, about 2 min): seven fixed views of one storm (the whole storm from 25 km, the base from
+  10 km, under the base, inside the forward-flank rain, against the sun, the forward flank side-on, the hail core), each drawn with the physical and
+  the unified lighting: the brightness of the sky and storm in each, the scene's ambient scale, the march's GPU time, and
+  sheets (`Screenshots/light_<preset>_<view>_sheet.png`). `-slLightDebug` adds the unified light's parts alone and the
+  light grids' values through the updraft, rain and hail cores. Report: `validation/reports/StormLightCheck[_preset].md`.
 - **Sound**: `dotnet run --project validation/audio` (the synths offline: wind and rain grow with their drivers, thunder
   falls off with distance, nothing clips; WAVs to listen to); `python -I validation/audio/thunder/check.py` (the thunder
   clips: tiers, levels, import settings, credits; a preview by distance). `-executeMethod StormAudioCheck.RunFromCommandLine` (about

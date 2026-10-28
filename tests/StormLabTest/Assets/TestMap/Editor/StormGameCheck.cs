@@ -6,6 +6,8 @@
 // validation/reports/game_tracks.csv.
 //   StormLab > Test Map > Game Check
 // Batch: -executeMethod StormGameCheck.RunFromCommandLine [-slGameSeed <n>] [-slGamePreset <key>] (never with -nographics)
+// -slGameProbe: with the 25 min view of each storm alone, the unified light's parts (game_25_storm<k>_dbg1..4.png) and the
+// cloud, rain and light grids along the view (in the report)
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -242,6 +244,40 @@ public static class StormGameCheck
                 game.Storms[k].ResetHistory(cam);
                 foreach (var x in Frames(3)) yield return x;
                 StormLabTestKit.Render(cam, Path.Combine(ShotDir, $"game_25_storm{k + 1}.png"), 1600, 900, 6);
+                // -slGameProbe: what the view crosses (StormLightCheck.Probe): cloud and rain, the sun's optical depth and
+                // the depth overhead, 1 km up along the view
+                if (System.Environment.GetCommandLineArgs().Contains("-slGameProbe"))
+                {
+                    for (int dbg = 1; dbg <= 4; dbg++)
+                    {
+                        game.Storms[k].lightDebug = dbg; game.Storms[k].ResetHistory(cam);
+                        StormLabTestKit.Render(cam, Path.Combine(ShotDir, $"game_25_storm{k + 1}_dbg{dbg}.png"), 800, 450, 6);
+                    }
+                    game.Storms[k].lightDebug = 0;
+                    var r = game.Storms[k]; var vol = r.Volume;
+                    var f = cam.transform.forward; f.y = 0f; f.Normalize();
+                    var F = r.Frame.param; var u0 = r.WorldToStorm(r.UpdraftWorld(r.StormTime));
+                    rep.AppendLine().AppendLine($"Storm {k + 1}: forward-flank core size {F[38]:0.00} amount {F[39]:0.00}; motion/forward ({F[0]:0.00}, {F[1]:0.00})");
+                    rep.AppendLine().AppendLine($"Storm {k + 1} along the 25 min view (1 km up): km, cloud, rain, sun depth, depth overhead");
+                    foreach (var km in new[] { 0f, 5f, 10f, 15f, 20f, 25f, 30f, 35f })
+                    {
+                        var p = r.WorldToStorm(cam.transform.position + f * km * 1000f); p.z = 1f;
+                        var d = StormLightCheck.Probe(vol.Dens, vol.NV, vol.NZ, p.x, p.y, p.z, TextureFormat.RGBA32);
+                        var l = StormLightCheck.Probe(vol.LightTex, vol.LN, vol.LZ, p.x, p.y, p.z);
+                        // the cloud's optical depth in the whole column, and below 5 km over the base (the volume holds sqrt(cloud))
+                        float L = StormVolume.L, dz = StormVolume.ZT / vol.NZ, zb = r.Frame.param[4];
+                        int ix = Mathf.Clamp(Mathf.FloorToInt((p.x + L) / (2f * L) * vol.NV), 0, vol.NV - 1), iy = Mathf.Clamp(Mathf.FloorToInt((p.y + L) / (2f * L) * vol.NV), 0, vol.NV - 1);
+                        var col = UnityEngine.Rendering.AsyncGPUReadback.Request(vol.Dens, 0, ix, 1, iy, 1, 0, vol.NZ, TextureFormat.RGBA32); col.WaitForCompletion();
+                        float tAll = 0f, tLow = 0f, zLow = -1f;
+                        for (int z = 0; z < vol.NZ; z++)
+                        {
+                            float c = col.GetData<byte>(z)[0] / 255f, t = c * c * StormVolume.CloudMax * dz;
+                            tAll += t; if ((z + 0.5f) * dz < zb + 5f) tLow += t;
+                            if (zLow < 0f && c * c > 0.1f) zLow = (z + 0.5f) * dz;
+                        }
+                        rep.AppendLine($"- {km:0} km: cloud {d.x:0.00}, rain {d.y:0.00}, sun depth {l.x:0.0}, overhead {-10f * Mathf.Log(Mathf.Max(l.y, 1e-12f)):0.0}; column cloud depth {tAll:0.0}, below base + 5 km {tLow:0.0}, lowest cloud {zLow:0.0} km (base {zb:0.0}); from the updraft {Vector2.Distance(new Vector2(p.x, p.y), new Vector2(u0.x, u0.y)):0.0} km, forward-flank core {Vector2.Distance(new Vector2(p.x, p.y), new Vector2(F[36], F[37])):0.0} km, hail core {Vector2.Distance(new Vector2(p.x, p.y), new Vector2(F[40], F[41])):0.0} km, surge {Vector2.Distance(new Vector2(p.x, p.y), new Vector2(F[72], F[73])):0.0} km (radius {F[74]:0.0})");
+                    }
+                }
             }
             game.Apply();
         }
@@ -295,6 +331,34 @@ public static class StormGameCheck
                 File.WriteAllBytes(Path.Combine(ShotDir, name), tex.EncodeToPNG());
                 Object.DestroyImmediate(tex); rt.Release(); Object.DestroyImmediate(rt);
                 names.Add(name);
+                // -slGameProbe: the unified light's parts alone in the same view (StormRenderer.lightDebug)
+                if (argv.Contains("-slGameProbe"))
+                    for (int dbg = 1; dbg <= 4; dbg++)
+                    {
+                        foreach (var r in game.Storms) { r.lightDebug = dbg; r.ResetHistory(cam); }
+                        StormLabTestKit.Render(cam, Path.Combine(ShotDir, name.Replace(".png", $"_dbg{dbg}.png")), 1600, 900, 8);
+                    }
+                foreach (var r in game.Storms) r.lightDebug = 0;
+                // -slGameSpotFrames count,seconds: more frames of the same view as Play draws them, that many seconds apart
+                // (the game running at real time), for motion: Screenshots/<name>_f<k>.png
+                int fi = Array.IndexOf(argv, "-slGameSpotFrames");
+                if (fi >= 0 && fi + 1 < argv.Length)
+                {
+                    var fs = argv[fi + 1].Split(',');
+                    int count = int.Parse(fs[0]); float gap = float.Parse(fs[1], CultureInfo.InvariantCulture);
+                    for (int k = 1; k <= count; k++)
+                    {
+                        float tw = Time.realtimeSinceStartup;
+                        while (Time.realtimeSinceStartup - tw < gap) yield return null;
+                        var rtk = new RenderTexture(1600, 900, 24);
+                        cam.targetTexture = rtk; cam.Render(); cam.Render();
+                        RenderTexture.active = rtk; var tk = new Texture2D(1600, 900, TextureFormat.RGB24, false); tk.ReadPixels(new Rect(0, 0, 1600, 900), 0, 0); tk.Apply();
+                        RenderTexture.active = null; cam.targetTexture = keepT;
+                        File.WriteAllBytes(Path.Combine(ShotDir, name.Replace(".png", $"_f{k}.png")), tk.EncodeToPNG());
+                        rep.AppendLine($"- frame {k}: inflow flow " + string.Join(", ", game.Storms.Select(r => $"{r.Frame.param[StormSpin.Slot0 * 4 + 11]:0.000} km (clock {r.Clock:0.0} s, rates {r.spinRates})")));
+                        Object.DestroyImmediate(tk); rtk.Release(); Object.DestroyImmediate(rtk);
+                    }
+                }
             }
             game.playing = false;
             rep.AppendLine().AppendLine($"Live views at game {game.gameMinutes:0.0} min: `Screenshots/spot_live_*.png`.");

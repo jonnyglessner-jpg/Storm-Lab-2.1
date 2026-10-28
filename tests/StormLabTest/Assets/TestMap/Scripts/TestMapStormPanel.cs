@@ -128,7 +128,7 @@ namespace StormLab.TestMap
             // the exposure: 13.5 EV by day, opened by the night model's adaptation gain after sunset (its eye: unchanged above
             // sunset levels, then darker as a power of the real level, a moonlit night at nightBrightness of day)
             var night = storm.Night; night.adapt = true;
-            float gain = storm.lighting == StormLighting.Physical ? SkyLighting.Evaluate(storm.SunDirVol, storm.MoonDirVol, night).gain : 1f;
+            float gain = storm.PhysicalSky ? SkyLighting.Evaluate(storm.SunDirVol, storm.MoonDirVol, night).gain : 1f;
             ExposureEV = autoExposure ? Mathf.Clamp(13.5f - Mathf.Log(Mathf.Max(gain, 1e-6f), 2f), -6f, 16f) - compensation : manualEV;
             if (exposure) { exposure.mode.Override(ExposureMode.Fixed); exposure.fixedExposure.Override(ExposureEV); }
         }
@@ -228,6 +228,7 @@ namespace StormLab.TestMap
             moonPhase = GUILayout.HorizontalSlider(moonPhase, 0f, 1f);
 
             GUILayout.BeginHorizontal();
+            if (GUILayout.Toggle(storm.lighting == StormLighting.Unified, "unified", "Button")) storm.lighting = StormLighting.Unified;
             if (GUILayout.Toggle(storm.lighting == StormLighting.Physical, "physical", "Button")) storm.lighting = StormLighting.Physical;
             if (GUILayout.Toggle(storm.lighting == StormLighting.Website, "website", "Button")) storm.lighting = StormLighting.Website;
             GUILayout.EndHorizontal();
@@ -246,7 +247,7 @@ namespace StormLab.TestMap
             if (GUILayout.Toggle(storm.cloudDetail == CloudDetail.Enhanced, "enhanced", "Button")) storm.cloudDetail = CloudDetail.Enhanced;
             if (GUILayout.Toggle(storm.cloudDetail == CloudDetail.Website, "website", "Button")) storm.cloudDetail = CloudDetail.Website;
             GUILayout.EndHorizontal();
-            if (storm.lighting == StormLighting.Physical)
+            if (storm.PhysicalSky)
             {
                 var L = storm.Lighting;
                 GUILayout.Label($"Key light: {(L.keyIsMoon ? "moon" : "sun")}   ·   scene level {L.level:0.###E+0} of day", small);
@@ -255,6 +256,13 @@ namespace StormLab.TestMap
                 storm.nightFill = Slider("night fill under the base", storm.nightFill, 0f, 1f);
                 storm.purkinje = Slider("night blue shift", storm.purkinje, 0f, 1f);
                 storm.dropletDiameter = Slider("droplet diameter (um)", storm.dropletDiameter, 5f, 50f);
+                if (storm.lighting == StormLighting.Unified)
+                {
+                    storm.diffusion = Slider("diffusion (darker under the storm)", storm.diffusion, 0.05f, 2f);
+                    storm.diffuseSun = Slider("sunlight diffused through cloud", storm.diffuseSun, 0f, 1f);
+                    storm.hailGlow = Slider("hail glow (green)", storm.hailGlow, 0f, 3f);
+                    storm.rainExtinction = Slider("rain extinction (x drawn)", storm.rainExtinction, 1f, 5f);
+                }
             }
             else GUILayout.Label("The web build's lighting: fixed evening colours, no night model.", small);
             GUILayout.BeginHorizontal();

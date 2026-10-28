@@ -13,7 +13,9 @@ using UnityEngine.Rendering;
 namespace StormLab
 {
     public enum SunSource { Light, TimeOfDay, Fixed }
-    public enum StormLighting { Physical, Website }
+    /// <summary>Unified: the physical model's light as one light field, the same for every part of the storm (user,
+    /// 2026-10-28); Physical: StormLab 2.0's, each part with its own formula; Website: the web build's</summary>
+    public enum StormLighting { Physical, Website, Unified }
     public enum TornadoModel { Detailed, Website }
     /// <summary>Smooth: the game's wall-cloud underside (soft, with blended scud); Website: the web build's ragged fringe</summary>
     public enum WallBase { Smooth, Website }
@@ -66,6 +68,9 @@ namespace StormLab
         [Tooltip("in Play, shade the scene the sun lights (terrain, roads, vehicles) with the storms' shadow: a cookie on the sun " +
                  "(StormSceneShadow), shared by every storm")]
         public bool castSceneShadow = true;
+        [Tooltip("in Play, dim the scene's ambient light by how much of the sky the storms hide from the camera " +
+                 "(StormSceneAmbient), shared by every storm; physical and unified lighting only")]
+        public bool darkenSceneAmbient = true;
         [Tooltip("the game's exposure opens at night as the night model's adaptation would (the test map's panel does): " +
                  "lightning is then dimmed by that same gain, so a flash keeps about its daytime brightness on screen")]
         public bool exposureAdaptsAtNight = true;
@@ -121,8 +126,12 @@ namespace StormLab
         [Header("Lighting")]
         [Tooltip("Physical: StormLab 2.0's multiple-scattering sunlight with a Mie phase function, sky light by how much of " +
                  "the sky each point sees, light bounced from the ground, and the night model. Website: the web build's " +
-                 "lighting and colours, for comparison with it")]
-        public StormLighting lighting = StormLighting.Physical;
+                 "lighting and colours, for comparison with it. Unified: the physical model as one light field for the whole " +
+                 "storm (cloud, wall cloud, funnel, rain, hail, dust and the air under it all lit the same way, differing only " +
+                 "in how they scatter), light diffusing through thick cloud, and the green of light through hail")]
+        public StormLighting lighting = StormLighting.Unified;
+        /// <summary>the physical sky, sun colours and night model (Physical and Unified)</summary>
+        public bool PhysicalSky => lighting != StormLighting.Website;
         [Range(5f, 50f)] public float dropletDiameter = 16f;
         [Range(1, 4)] public int scatterOctaves = 4;
         [Range(0.3f, 0.95f)] public float octaveExtinction = 0.7f;
@@ -130,6 +139,21 @@ namespace StormLab
         public float skyScale = 1f;
         public float bounceScale = 1f;
         [Range(0f, 0.5f)] public float skyDiffuse = 0.2f;
+        [Tooltip("unified: how fast light diffusing through cloud fades with optical depth, 3/4 (1 - g) per unit of the " +
+                 "light grid's depth (more: darker undersides and rain under the storm). Real cloud: about 0.11 per unit of " +
+                 "its optical depth (g 0.85); the grid's extinction (CloudMax) is about an eighth of a real storm's, so ~0.6")]
+        [Range(0.05f, 2f)] public float diffusion = 0.6f;
+        [Tooltip("unified: sunlight diffused through the cloud by many scatterings, as a share of the direct")]
+        [Range(0f, 1f)] public float diffuseSun = 0.4f;
+        [Tooltip("unified: how green light comes out of a hail core (1: about 3.5 m of ice in the core's centre)")]
+        [Range(0f, 3f)] public float hailGlow = 1f;
+        [Tooltip("unified: rain's extinction (as the eye sees it and as it shades light) as a multiple of the drawn rain's " +
+                 "(StormVolume.RainMax, 2.6 per km in the heaviest rain). Heavy rain is about 4-7 per km (visibility a few " +
+                 "hundred metres); at 1 the low sun lit rain cores right through")]
+        [Range(1f, 5f)] public float rainExtinction = 2.5f;
+        /// <summary>checks only (unified): 1 the light grid's depths and hail, 2-4 the sun's, sky's, ground's light alone,
+        /// 5 the near field without its own sky occlusion</summary>
+        [NonSerialized] public int lightDebug;
 
         [Header("Night (physical lighting)")]
         public Light moon;
@@ -286,7 +310,8 @@ namespace StormLab
                 float hide = hideRain ? 1 : 0;
                 if (precip != PrecipLayout.Tilted || Plan == null) return new Vector4(0, 0, hide, 0);
                 var (b, t) = StormTilt.Clear(Plan, Frame);
-                return new Vector4((float)b, (float)t, hide, 0);
+                // w: rain only under cloud reaching down to mid levels (StormVolume.compute RainUnderCloud; user, 2026-10-28)
+                return new Vector4((float)b, (float)t, hide, StormVolume.CloudMax);
             }
         }
         /// <summary>For checks: the volume's build leaves out all rain (to tell the cloud's shapes from the rain's).</summary>
@@ -296,7 +321,8 @@ namespace StormLab
         /// <summary>For checks: no tail cloud at all (to find it in a view).</summary>
         [NonSerialized] public bool hideTail;
         /// <summary>_WallP: x the game's wall-cloud underside, y its tail cloud (both with wallBase Smooth)</summary>
-        Vector4 WallParams => new Vector4(wallBase == WallBase.Smooth ? 1 : 0, wallBase == WallBase.Smooth && !webTail ? 1 : 0, hideTail ? 1 : 0, 0);
+        // w: the game's beaver tail, smaller than the web build's (StormCommon.hlsl tailSize; user, 2026-10-28)
+        Vector4 WallParams => new Vector4(wallBase == WallBase.Smooth ? 1 : 0, wallBase == WallBase.Smooth && !webTail ? 1 : 0, hideTail ? 1 : 0, wallBase == WallBase.Smooth && !webTail ? 1 : 0);
 
         /// <summary>the tornado on the ground now, 0..1 (StormFrame.tornado)</summary>
         public float TornadoAmount => (float)Frame.tornado;
@@ -384,7 +410,7 @@ namespace StormLab
             get
             {
                 var sunVol = SunDirVol;
-                if (lighting == StormLighting.Physical) return SkyLighting.Evaluate(sunVol, MoonDirVol, Night);
+                if (PhysicalSky) return SkyLighting.Evaluate(sunVol, MoonDirVol, Night);
                 float el = Mathf.Asin(Mathf.Clamp(sunVol.z, -1f, 1f)) * Mathf.Rad2Deg;
                 return new SkyLight
                 {
@@ -404,7 +430,7 @@ namespace StormLab
         {
             get
             {
-                if (nightAdaptation || !exposureAdaptsAtNight || lighting != StormLighting.Physical) return 1f;
+                if (nightAdaptation || !exposureAdaptsAtNight || !PhysicalSky) return 1f;
                 var n = Night; n.adapt = true;
                 float gain = SkyLighting.Evaluate(SunDirVol, MoonDirVol, n).gain;
                 return Mathf.Min(1f, lightningAtNight / Mathf.Max(gain, 1e-6f));
@@ -455,6 +481,7 @@ namespace StormLab
             // the storms' shadow on the scene's terrain, roads and vehicles: a cookie on the sun (StormSceneShadow)
             if (castSceneShadow && Application.isPlaying && sun && sun.type == LightType.Directional && !sun.GetComponent<StormSceneShadow>())
                 StormSceneShadow.For(sun);
+            if (darkenSceneAmbient && Application.isPlaying && PhysicalSky) StormSceneAmbient.Ensure();
             double dt = Application.isPlaying ? Time.deltaTime : 0.0;
             clock += dt;
             if (Plan != null && playing && Application.isPlaying) StormTime = Math.Min(Math.Max(StormTime + dt * minutesPerSecond, 0.0), Plan.duration);
@@ -488,6 +515,8 @@ namespace StormLab
             var wallP = WallParams;
             if (wallP != Volume.wallParams) { Volume.wallParams = wallP; hasFrame = false; }
             Volume.precipParams = ClearParams;
+            float rainScale = lighting == StormLighting.Unified ? rainExtinction : 1f;
+            if (rainScale != Volume.rainScale) { Volume.rainScale = rainScale; hasFrame = false; }
             if (!hasFrame || rebuildNow || double.IsNaN(lastBuilt))
             {
                 Volume.Update(frameCmd, Frame.param, noise, lt.keyDir);
@@ -593,13 +622,14 @@ namespace StormLab
             cmd.SetComputeVectorParam(marchCs, "_SkyP", new Vector4(lt.dim, lt.townLight, lt.keyIsMoon ? 1 : 0, 0));
             // w: the lightning's scale in the cloud (undoing the storm's own night gain, or the game's: LightningScale)
             cmd.SetComputeVectorParam(marchCs, "_Night", new Vector4(lt.gain, lt.night, nightFill * lt.dark, nightAdaptation ? 1f / Mathf.Max(lt.gain, 1f) : LightningScale));
-            bool phys = lighting == StormLighting.Physical;
-            cmd.SetComputeVectorParam(marchCs, "_PL", new Vector4(phys ? 1 : 0, dropletDiameter, sunScale, scatterOctaves));
+            float model = lighting == StormLighting.Unified ? 2 : lighting == StormLighting.Physical ? 1 : 0;
+            cmd.SetComputeVectorParam(marchCs, "_PL", new Vector4(model, dropletDiameter, sunScale, scatterOctaves));
             cmd.SetComputeVectorParam(marchCs, "_PL2", new Vector4(skyScale, bounceScale, skyDiffuse, octaveExtinction));
+            cmd.SetComputeVectorParam(marchCs, "_PL3", new Vector4(hailGlow, diffusion, diffuseSun, lightDebug));
             SkyLighting.Bands(lt, out var bZen, out var bMid, out var bHor, out var bHorK);
             cmd.SetComputeVectorParam(marchCs, "_SkyZen", bZen); cmd.SetComputeVectorParam(marchCs, "_SkyMid", bMid);
             cmd.SetComputeVectorParam(marchCs, "_SkyHor", bHor); cmd.SetComputeVectorParam(marchCs, "_SkyHorK", bHorK);
-            cmd.SetComputeVectorParam(marchCs, "_MP", new Vector4(StormVolume.CloudMax, StormVolume.RainMax, exposure, st.frame++));
+            cmd.SetComputeVectorParam(marchCs, "_MP", new Vector4(StormVolume.CloudMax, StormVolume.RainMax * (Volume != null ? Volume.rainScale : 1f), exposure, st.frame++));
             cmd.SetComputeVectorParam(marchCs, "_TorP", new Vector4(tornado == TornadoModel.Detailed ? 1 : 0, tornadoStep, tornadoLightAll ? 1 : 0, tornadoCostProbe));
             cmd.SetComputeVectorParam(marchCs, "_WallP", WallParams);
             // the ground pattern of the backdrop moves under the storm as it travels

@@ -31,6 +31,10 @@ README.md has the layout, use, checks and known gaps.
 - Storms die leaving the map (`StormLife`, after `StormDesign.At` and `StormTornadoes.Apply`): no tornado may be off the
   map; check with `validation/parity/csharp -- --life` after changing tracks, placement or cycles.
 - Look changes: one named problem at a time, checked in the test map; say when a request is taste, not a bug.
+- Lighting (`lighting = Unified`, the default since 2026-10-28; user: "everything on the storm needs to respond the same
+  way"): every medium takes its light from `stormLight` in StormMarch.compute and differs only in its phase function,
+  albedo and scattering octaves. Never give a part of the storm its own light formula or multiplier; fix the shared one.
+  Check with `StormLightCheck` (physical beside unified, at 17 h and 18.8 h).
 - Funnels are smooth (no vertical grooves), as in 2.0.
 - `Runtime/Lightning` (core) is 2.0's unchanged code but for its namespace and the `ThunderOverride` hook (2026-10-26,
   for `StormAudio`'s thunder); fixes there should go back to 2.0 too.
