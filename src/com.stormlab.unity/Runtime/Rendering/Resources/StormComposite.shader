@@ -56,13 +56,16 @@ Shader "Hidden/StormLab/Composite"
                 {
                     // the storm composited before this one (target = u.rgb + u.a x scene): where it is the nearer, put this
                     // one behind it, u.rgb + u.a x (rgb + s.a x scene) = target x s.a + u.rgb x (1 - s.a) + u.a x rgb.
-                    // Blended over a few km of their mean distances, so the order never flips on a hard line.
+                    // Blended over a few km of their mean distances, so the order never flips on a hard line: 3 km and a
+                    // quarter of the nearer's distance (a storm's distance along the ray jumps where its haze or rain starts,
+                    // and a flip within 3 km drew hard-edged flat patches 20-40 km off; user, 2026-10-28)
                     float2 uv = StormUV(i.pos);
                     float4 u = _UnderTex.SampleLevel(sampler_LinearClamp_StormComposite, uv, 0);
                     float ku = _UnderP.y > 0.0 ? _UnderP.y * GetCurrentExposureMultiplier() : 1.0;
                     float dThis = _StormMean.SampleLevel(sampler_LinearClamp_StormComposite, uv, 0);
                     float dUnder = _UnderMean.SampleLevel(sampler_LinearClamp_StormComposite, uv, 0);
-                    float behind = smoothstep(-3.0, 3.0, dThis - dUnder);
+                    float k = 3.0 + 0.25 * min(dThis, dUnder);
+                    float behind = smoothstep(-k, k, dThis - dUnder);
                     rgb = lerp(rgb, min(u.rgb * ku, 60000.0) * (1.0 - s.a) + u.a * rgb, behind);
                 }
                 // (capped below the half-float limit: a value past it is infinite in HDRP's buffers and spreads)

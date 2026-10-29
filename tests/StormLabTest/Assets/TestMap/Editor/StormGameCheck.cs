@@ -294,18 +294,19 @@ public static class StormGameCheck
                         float rMax = StormVolume.RainMax * vol.rainScale, zb = rk.Frame.param[4];
                         foreach (var vy in new[] { 0.5f, 0.75f })
                         {
-                            var line = new StringBuilder($"  - rays {vy * 100:0}% up, screen x: rain tau / cloud tau / rain tau above base+2 km:");
+                            var line = new StringBuilder($"  - rays {vy * 100:0}% up, screen x: rain tau / cloud tau / rain tau above base+2 km / opacity / mean distance km:");
                             for (int sx = 0; sx <= 1600; sx += 50)
                             {
                                 var ray = cam.ViewportPointToRay(new Vector3(sx / 1600f, vy, 0f));
                                 var o = rk.WorldToStorm(ray.origin); var d = StormRenderer.WorldToStormDir(ray.direction);
-                                float tr = 0f, tc = 0f, tu = 0f;
+                                float tr = 0f, tc = 0f, tu = 0f, T = 1f, ds = 0f, ws = 0f;
                                 for (float t = 0.1f; t < 120f; t += 0.2f)
                                 {
                                     var q = o + d * t; if (q.z > StormVolume.ZT || q.z < 0f) break;
-                                    float r = D(1, q) * rMax * 0.2f; tr += r; tc += D(0, q) * StormVolume.CloudMax * 0.2f; if (q.z > zb + 2f) tu += r;
+                                    float r = D(1, q) * rMax * 0.2f, c = D(0, q) * StormVolume.CloudMax * 0.2f; tr += r; tc += c; if (q.z > zb + 2f) tu += r;
+                                    float a = 1f - Mathf.Exp(-(r + c)); ds += T * a * t; ws += T * a; T *= 1f - a;
                                 }
-                                line.Append($" {sx}: {tr:0.0}/{tc:0}/{tu:0.0};");
+                                line.Append($" {sx}: {tr:0.0}/{tc:0}/{tu:0.0}/{1f - T:0.00}/{(ws > 1e-3f ? ds / ws : -1f):0};");
                             }
                             rep.AppendLine(line.ToString());
                         }

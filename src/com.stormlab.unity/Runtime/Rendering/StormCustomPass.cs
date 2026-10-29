@@ -58,7 +58,10 @@ namespace StormLab
                 var storm = drawn[i];
                 // the march reads the depth buffer as a texture, so nothing may have it bound as a target meanwhile
                 CoreUtils.SetRenderTarget(ctx.cmd, ctx.cameraColorBuffer, ClearFlag.None);
-                var tex = storm.RecordMarch(ctx.cmd, cam, ctx.cameraDepthBuffer, w, h, i == 0, out var dist);
+                // (the nearest other storm's cloud from its last march: this one's light shafts stop behind it)
+                int n = drawn.Count;
+                var other = n < 2 ? null : drawn[i == n - 1 ? n - 2 : n - 1];
+                var tex = storm.RecordMarch(ctx.cmd, cam, ctx.cameraDepthBuffer, w, h, i == 0, out var dist, other != null ? other.HalfFor(cam) : null);
                 if (tex != null) marched.Add((storm, tex, dist));
             }
             CoreUtils.SetRenderTarget(ctx.cmd, ctx.cameraColorBuffer, ctx.cameraDepthBuffer, ClearFlag.None);

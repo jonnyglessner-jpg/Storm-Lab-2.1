@@ -619,7 +619,8 @@ namespace StormLab
         /// as a target; fullW x fullH: the viewport. Returns the resolved storm texture (rgb light, a transmittance), and in
         /// dist the distance along each ray where the storm hides half of what is behind it, km.
         /// </summary>
-        public RenderTexture RecordMarch(CommandBuffer cmd, Camera cam, RTHandle depth, int fullW, int fullH, bool backdrop, out RenderTexture dist)
+        public RenderTexture RecordMarch(CommandBuffer cmd, Camera cam, RTHandle depth, int fullW, int fullH, bool backdrop, out RenderTexture dist,
+            RenderTexture otherHalf = null)
         {
             dist = null;
             if (!ReadyToRender || !marchCs) return null;
@@ -677,6 +678,9 @@ namespace StormLab
             cmd.SetComputeTextureParam(marchCs, kM, "_Out", st.cur);
             cmd.SetComputeTextureParam(marchCs, kM, "_OutDist", st.dist);
             cmd.SetComputeTextureParam(marchCs, kM, "_OutHalf", st.half);
+            bool other = otherHalf && otherHalf.width == st.half.width && otherHalf.height == st.half.height;
+            cmd.SetComputeTextureParam(marchCs, kM, "_OtherHalf", other ? (Texture)otherHalf : Texture2D.blackTexture);
+            cmd.SetComputeVectorParam(marchCs, "_OtherP", new Vector4(other ? 1 : 0, 0, 0, 0));
             cmd.SetComputeIntParam(marchCs, "_TransientLightOn", 0);
             cmd.SetComputeTextureParam(marchCs, kM, "_TransientLightTex", Black3D);
             bool transient = TransientLighting != null && TransientLighting.RecordLighting(cmd, this, cam, marchCs, kM);
@@ -700,6 +704,10 @@ namespace StormLab
             dist = st.half;
             return dst;
         }
+
+        /// <summary>where this storm's cloud hides half of what is behind it for a camera, from its last march (km along
+        /// each ray, -1 where none), or null: for another storm drawn alongside (its light shafts stop there)</summary>
+        public RenderTexture HalfFor(Camera cam) => cams.TryGetValue(cam, out var st) && st.valid ? st.half : null;
 
         MaterialPropertyBlock compositeProps;
         /// <summary>Draw the storm over the bound colour target (out = storm.rgb x light scale + storm.a x target) and, with

@@ -425,6 +425,23 @@ public static class StormLightCheck
         }
         if (amb) amb.local = true;
         Sheet(dPaths[0], dPaths[1], Path.Combine(ShotDir, "light_scene_down_sheet.png"));
+        // the storm's shadow on that ground alone: the physical lighting's (the old cookie) and the unified's, the ambient
+        // from the camera in both
+        if (amb) amb.local = false;
+        var shPaths = new List<string>();
+        foreach (var m in new[] { StormLighting.Physical, StormLighting.Unified })
+        {
+            storm.lighting = m; storm.StepTo(storm.StormTime, storm.Clock, true);
+            foreach (var x in Wait(3f)) yield return x;
+            storm.ResetHistory(cam);
+            string path = Path.Combine(ShotDir, $"light_scene_shadow_{m}.png");
+            StormLabTestKit.Render(cam, path, 1920, 1080, 8);
+            shPaths.Add(path);
+            rep.AppendLine($"- {Path.GetFileName(path)}: the same view, {m} lighting's shadow; centre luminance {PatchLuminanceAndWarmth(path, 0.5f, 0.5f, 0.08f).Item1:0.0000}");
+        }
+        storm.lighting = StormLighting.Unified; storm.StepTo(storm.StormTime, storm.Clock, true);
+        if (amb) amb.local = true;
+        Sheet(shPaths[0], shPaths[1], Path.Combine(ShotDir, "light_scene_shadow_sheet.png"));
         rep.AppendLine();
 
         // night, moonless: the base from 10 km, no towns, the map's towns, a town under the base

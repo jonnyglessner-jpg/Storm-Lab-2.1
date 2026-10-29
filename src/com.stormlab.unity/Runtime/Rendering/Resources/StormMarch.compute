@@ -25,6 +25,10 @@ RWTexture2D<float> _OutDist;
 // where the ray's transmittance first falls below one half in the storm's cloud, km (the storm's depth for the
 // composite); -1 where the cloud never hides half of what is behind it
 RWTexture2D<float> _OutHalf;
+// another storm drawn alongside: where its cloud hides half of what is behind it, km (its _OutHalf from its last march;
+// -1 where none), and x of _OtherP 1 when given
+Texture2D<float> _OtherHalf;
+float4 _OtherP;
 
 // camera in the volume frame (km): position, forward, right, up; xy of _CamTan = tan of the half angles
 float4 _CamPos, _CamFwd, _CamRight, _CamUp, _CamTan;
@@ -1143,6 +1147,10 @@ void March(uint3 gid : SV_DispatchThreadID)
             // foot (user, 2026-10-27; 2.0's march did it too). Without scene depth the rays end as the web build's do.
             float dtI = min(dt, max(tScene - t, 0.0));
             float shaftFade = (1.0 - ss(0.55, 0.9, lt.g)) * (1.0 - ss(S_base.x - 0.3, S_base.x + 0.5, q.z));
+            // and none past another storm's cloud where it hides what is behind it (_OtherHalf, the other storm's last
+            // march): the composite lays each storm as one layer, so this storm's shafts behind the other storm's tower
+            // were laid over that tower as flat bright patches (user, 2026-10-28)
+            if (_OtherP.x > 0.5) { float oh = _OtherHalf[id.xy]; if (oh > 0.0) shaftFade *= 1.0 - ss(oh - 1.0, oh + 1.0, t); }
             if (shaftFade > 0.0)
             {
                 float ks = 0.05 * (1.0 - lt.g) * shaftFade;
