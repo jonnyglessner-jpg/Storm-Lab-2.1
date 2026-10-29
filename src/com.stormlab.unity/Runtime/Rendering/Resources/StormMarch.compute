@@ -250,30 +250,13 @@ float smax(float a, float b, float k) { float h = max(k - abs(a - b), 0.0) / k; 
 // real rates in the block: S_tor6.x is the angular speed at the funnel's edge (rad/s), and S_spin / S_spin2 the angles
 // those rates have turned so far (StormSpin), so a rate that changes changes only the speed.
 // The collar, 0 .. 1: where the funnel flares, like a trumpet, into the lowering under the wall cloud (tornadoField, and the
-// tube that bounds it): the top quarter or so, as in the photos (squared: a sudden crown).
-float tornadoCollar(float z, float ztop) { float c = ss(0.72 * ztop, ztop + 0.1, z); return c * c; }
-// The funnel's form (StormTornadoes.Form, the same sums; the reasoning above SwirlRange there): its radius at height h
-// (0 the ground, 1 ztop) over its radius at the ground, as the condensation surface of the vortex it hangs in. A Rankine
-// core 2.5x wider above its breakdown (S_tor7.w, the breakdown's height as a share of ztop; past 1 there is none), the
-// axis deficit falling with the core's widening, and the surface where the deficit equals what the air needs to condense
-// at that height (S_tor7.x: the share needed at the ground), which falls to nothing at the cloud base. Inside the core
-// r = rc sqrt(2 (1 - q)), outside rc / sqrt(2 q): a weak vortex's funnel is a needle at the ground widening fast, a
-// violent one's wide to the ground, every one flares into the base, and a stovepipe's straight column curves out where
-// its breakdown sits up at the cloud (user, 2026-10-29: wider at the top, curving outward into the wall cloud).
-float tornadoFormG(float q) { q = clamp(q, 0.02, 0.95); return q >= 0.5 ? sqrt(2.0 * (1.0 - q)) : rsqrt(2.0 * q); }
-float tornadoForm(float h, float zeta)
+// tube that bounds it). For most funnels it is the top quarter or so, as in the photos (squared: a sudden crown). A
+// stovepipe's (S_tor7.w 1; a cone's, 0.5, half as far) begins half way up and curves out more gently, so its straight
+// column widens into the wall cloud (user, 2026-10-29: wider at the top, curving outward into the wall cloud).
+float tornadoCollar(float z, float ztop)
 {
-    float B = ss(S_tor7.w - 0.08, S_tor7.w + 0.08, h);
-    float rc = 1.0 + 1.5 * B;
-    return rc * tornadoFormG(S_tor7.x * (1.0 - zeta * h) * rc) / tornadoFormG(S_tor7.x);
-}
-// The funnel's radius at h: the form, bent (as a power) to pass through the radius at the ground (S_tor2.x) and at the top
-// (S_tor2.y; a plain funnel's is the form's own, a wedge's envelope the user's flare, a forming funnel's where its top is)
-float tornadoRadius(float h, float ztop)
-{
-    float zeta = ztop / max(S_base.x, 1e-3);
-    float k = log(max(S_tor2.y / max(S_tor2.x, 1e-4), 1.0)) / log(max(tornadoForm(1.0, zeta), 1.02));
-    return S_tor2.x * pow(max(tornadoForm(saturate(h), zeta), 1e-3), k);
+    float c = ss(lerp(0.72, 0.5, S_tor7.w) * ztop, ztop + 0.1, z);
+    return pow(c, lerp(2.0, 1.5, S_tor7.w));
 }
 float tornadoAxisAmp(float ztop) { return min((0.03 + 0.1 * S_tor2.w + 0.3 * S_tor5.w) * (0.4 + 0.6 * ztop), 0.22 * ztop + 0.02); }
 float tornadoBound() { return max(S_tor2.y * 1.6, S_tor2.x * max(S_tor6.w, 1.0) * 1.3) + tornadoAxisAmp(S_base.x) + S_tor10.z * 1.35 + 0.35; }
@@ -296,7 +279,7 @@ float tornadoTube(float z0, float z1)
         float zh = min(z1, zb + 0.15);
         float collar = tornadoCollar(zh, ztop);
         float flare = min(0.25 * S_wall.z + 0.3 * S_tor2.y, 1.6 * S_tor2.y + 0.1);
-        float rad = tornadoRadius(zh / ztop, ztop) + collar * flare * (1.0 - 0.4 * S_tor2.w);
+        float rad = lerp(S_tor2.x, S_tor2.y, pow(saturate(zh / ztop), lerp(3.0, 0.7, S_tor.w))) + collar * flare * (1.0 - 0.4 * S_tor2.w);
         // (a wedge breaking up into scud as it ropes out tears its edge up to 0.3 radii further out)
         f = rad * ((S_tor4.w > 0.5 ? 1.35 + 0.3 * ss(0.0, 0.3, S_tor4.z) : 1.25) + rr);
         if (S_tor4.w > 0.5)
@@ -405,7 +388,7 @@ float3 tornadoField(float3 q)
         tubeClear = max(tubeClear, min(W, max(dAx - dev - 0.02, min(d, 0.12))) - tornadoTube(q.z - W, q.z + W));
     }
     g_torClear = (whirlClear > 0.0 ? min(tubeClear, whirlClear) : min(tubeClear, 0.1 * tornadoWhirlR() / 1.475)) - 0.01;
-    float rad = tornadoRadius(h, ztop);
+    float rad = lerp(S_tor2.x, S_tor2.y, pow(h, lerp(3.0, 0.7, S_tor.w)));
     // collar: the funnel flares smoothly, like a trumpet, into the lowering under the wall cloud, so the two are one cloud.
     // In the photos the flare is the top quarter or so and a few funnel widths across, leaving the funnel exposed below.
     float collar = tornadoCollar(q.z, ztop);
@@ -1348,7 +1331,7 @@ void March(uint3 gid : SV_DispatchThreadID)
                         float4 svF = sv; svF.b = lerp(0.5 * (saturate(sv.b + (sv.a - sv.b) * cs) + horF), sv.b, kTop);
                         float stain = S_tor9.w * pow(saturate(1.0 - hz / 0.45), 2.0);
                         float3 albF = lerp(lerp(min(alb, 1.0), 1.0, kTop).xxx, soil * 0.85, stain) * tone;
-                        float rF = tornadoRadius(hz, ztop);
+                        float rF = lerp(S_tor2.x, S_tor2.y, pow(hz, lerp(3.0, 0.7, S_tor.w)));
                         float across = 2.0 * rF * 3.5 * _MP.x * (1.0 - lit) * (0.2 + 0.8 * facing) * (1.0 - kTop);
                         fc = stormLight(q, ltF, svF, sunz, sunc, g_phW, 1.0, across, 0.0, 4) * lerp(lerp(0.85, 1.0, facing), 1.0, kTop) * albF;
                         parent = stormLight(q, lt, sv, sunz, sunc, g_phW, 1.0, 0.0, 0.0, 4);
