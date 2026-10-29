@@ -218,10 +218,22 @@ Tornado (`tornado`):
   evenly out to a top 1.5-2.1 times as wide as its foot (user, 2026-10-26). As it
   ropes out it first narrows to 60 % of its width over 2 storm min, then its envelope breaks up into a scuddy collar from the ground up, whose ragged bottom lifts and rises into the
   base over the rope-out while the central vortex inside narrows to a rope.
-  Stovepipes are one laminar vortex, a quarter thinner than the website's, their top at least 1.3 times their foot, and
-  their straight column curves out into the wall cloud from half way up (`TopFlare`, S_tor7.w: the march's trumpet
-  collar begins lower and more gently than the top-quarter crown every funnel has; a cone's half as far, its top 15 %
-  wider than the website's; user, 2026-10-29). Cones and stovepipes come down as a thin
+  The funnel's form comes from the vortex it hangs in (user, 2026-10-29: fluid dynamics for the funnel's look, without
+  a solver; the reasoning and sources are above `SwirlRange` in `StormTornadoes`). Each tornado has a swirl ratio
+  (`SwirlOf`: within its shape's range, Church et al. 1979's ordering — ropes, drillbits and elephant trunks single-cell
+  below 0.3, stovepipes 0.3-0.45 with the vortex breakdown up at the cloud, cones 0.5-0.8 with it part way down, wedges
+  1-1.6 two-celled, the multiple-vortex shape 2-3 — a wider funnel of its shape the higher), which sets the breakdown
+  height (`BreakdownOf`, S_tor7.w) and a wedge's secondary vortices (`SubVorticesOf`). The march draws the funnel as the
+  condensation surface of that vortex's pressure field (`tornadoForm`, `StormTornadoes.Form` the same sums): a Rankine
+  core 2.5x wider above its breakdown, the axis deficit falling with it, and the surface where the deficit equals what
+  the air needs to condense at that height, which falls to nothing at the cloud base (S_tor7.x: the share needed at the
+  ground, `QGround`). So a weak funnel is a needle at the ground widening fast, a violent one wide to the ground, every
+  one flares into the base, and a stovepipe's straight column curves out where its breakdown sits (user: wider at the
+  top, curving outward into the wall cloud). The foot's radius is the shape's (the limits above) and a plain funnel's
+  top is the form's own; a wedge's envelope keeps its 1.5-2.1 flare and a forming funnel its thin top, the form bent
+  (as a power) through both (`tornadoRadius`). `-- --tornadoes` prints each tornado's swirl and breakdown height.
+  Stovepipes are one laminar vortex, a quarter thinner than the website's, their top at least 1.3 times their foot;
+  a cone's top is 15 % wider than the website's (user, 2026-10-29). Cones and stovepipes come down as a thin
   tube and widen once on the ground, each its own way (how fast, top or foot first, how thin, how much it snakes).
   `StormLabTests -slTornadoLife <preset> <seed> <cycle> [tag]` renders one tornado through its life (a tag with
   "early" shows its formation, "rope" its rope-out, "sharp" one unblended full-resolution frame from closer).

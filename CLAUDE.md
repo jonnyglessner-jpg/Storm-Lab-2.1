@@ -42,6 +42,9 @@ README.md has the layout, use, checks and known gaps.
   `MaxEf`; wedges 750 yd-2 mi and EF3+, EF5 only wedges from 1000 yd or drillbits, ropes/trunks EF2 at most, cones and
   stovepipes EF4). Free storms are held to them in `Constrain`, games in `Rate` (which changes the shape when it must).
   Run `validation/parity/csharp -- --shapes` after touching tornado sizes, ratings or the game's tiers.
+- The funnel's form is the vortex's (`StormTornadoes.SwirlOf/BreakdownOf/Form`, `tornadoForm`/`tornadoRadius` in
+  StormMarch.compute, the same sums on both sides): swirl ratio by shape and width, breakdown height from it, the
+  condensation surface of a Rankine vortex. Change the form there, not by per-shape radius curves; keep C# and HLSL identical.
 - `Runtime/Lightning` (core) is 2.0's unchanged code but for its namespace and the `ThunderOverride` hook (2026-10-26,
   for `StormAudio`'s thunder); fixes there should go back to 2.0 too.
 - Sound (`Runtime/Audio`): thunder plays CC0 recordings (`Resources/StormLab/Thunder`, cut by

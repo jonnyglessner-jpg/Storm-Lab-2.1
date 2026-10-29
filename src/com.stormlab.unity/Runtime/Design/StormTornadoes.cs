@@ -56,6 +56,8 @@ namespace StormLab
         public double cond;
         /// <summary>sidewinder: how far the lower end is dragged sideways along the ground, km</summary>
         public double sideKm;
+        /// <summary>the vortex's swirl ratio in this phase (StormTornadoes.SwirlOf)</summary>
+        public double swirl;
     }
 
     /// <summary>One cycle's tornado as 2.0 would have drawn it.</summary>
@@ -73,6 +75,8 @@ namespace StormLab
         public double webGroundKm, webTopKm, groundKm, topKm;
         public double profile, sinuosity, condReach, dust, rainWrap, ropeFrac;
         public int subVortices; public double multiFrac; public bool collar;
+        /// <summary>the vortex's swirl ratio in its main shape (StormTornadoes.SwirlOf): what decides its form</summary>
+        public double swirl;
         public FunnelPhase[] phases;
         /// <summary>lean of the ground end from the top, km, toward leanAngle (radians from the storm's motion, + left)</summary>
         public double leanKm, leanAngle, sideAngle;
@@ -259,9 +263,62 @@ namespace StormLab
             FunnelShape.Rope => 2, FunnelShape.Sidewinder => 2, FunnelShape.ElephantTrunk => 2, FunnelShape.DustWhirl => 2,
             FunnelShape.Cone => 4, FunnelShape.Stovepipe => 4, _ => 5
         };
-        /// <summary>A cone's or stovepipe's top flares out into the wall cloud (user, 2026-10-29): how far down the funnel
-        /// the trumpet begins (S_tor7.w; 0: the top quarter, as every funnel; 1: from half way up). Blended between phases.</summary>
-        public static double TopFlare(FunnelShape s) => s == FunnelShape.Stovepipe ? 1 : s == FunnelShape.Cone ? 0.5 : 0;
+        // The vortex behind the funnel (user, 2026-10-29: fluid dynamics for the funnel's form, without a solver). What a
+        // tornado vortex looks like is set by its swirl ratio S, circulation over inflow (Ward 1972; Church, Snow, Baker &
+        // Agee 1979; Rotunno 1979; Lewellen 1993; Davies-Jones 2015): below about 0.3 a single-cell vortex, one smooth
+        // intense core from the ground to the cloud (a rope, drillbit or elephant trunk); from there a vortex breakdown
+        // sits in the core, a narrow supercritical jet below it and a wide turbulent subcritical core above, the
+        // breakdown descending as S grows (a stovepipe with its breakdown up at the cloud, a cone with it part way down);
+        // at S about 1 the breakdown reaches the ground and the vortex is two-celled, a wide core with a downdraft on its
+        // axis (a wedge); past about 1.5-2 the core splits into 2-6 secondary vortices. The core's radius grows with S
+        // (Church et al.: roughly linearly up to S 1), so within a shape a wider funnel is a higher-swirl one. The visible
+        // funnel is the condensation surface of that vortex's pressure field (StormMarch tornadoForm): a Rankine core 2.5x
+        // wider above the breakdown (Church & Snow 1979's jump), the axis deficit falling with the core's widening, and
+        // the surface where the deficit matches what the air needs to condense at that height, which falls to nothing at
+        // the cloud base: so a funnel flares into the base, a weak one narrows to a needle at the ground and a violent one
+        // is wide to the ground. The scale is the shape's (its ground width, the limits above); the vortex gives the form.
+        /// <summary>swirl ratios: where a breakdown first appears in the core, where it reaches the ground (two cells),
+        /// where the core splits into secondary vortices</summary>
+        public const double SwirlBreakdown = 0.3, SwirlTwoCell = 1.0, SwirlMulti = 1.6;
+        /// <summary>the share of the hydrostatic pressure difference to the wall-cloud base the funnel needs to condense
+        /// (near-saturated inflow under a wall cloud condenses well short of its dry LCL deficit; set so an EF2's funnel
+        /// reaches the ground under a 700 m base) and the core's widening above its breakdown</summary>
+        public const double FunnelKappa = 0.35, CoreWidening = 2.5;
+        /// <summary>a shape's swirl ratios, least to most (its widest funnel the most)</summary>
+        static (double lo, double hi) SwirlRange(FunnelShape s) => s switch
+        {
+            FunnelShape.Rope => (0.1, 0.25), FunnelShape.Sidewinder => (0.1, 0.25), FunnelShape.DustWhirl => (0.1, 0.3),
+            FunnelShape.ElephantTrunk => (0.15, 0.3), FunnelShape.Drillbit => (0.2, 0.35), FunnelShape.Stovepipe => (0.3, 0.45),
+            FunnelShape.Cone => (0.5, 0.8), FunnelShape.Wedge => (1.0, 1.6), _ => (2.0, 3.0)
+        };
+        /// <summary>The swirl ratio of a funnel of shape s with ground radius groundKm: within the shape's range by where
+        /// its width falls in the shape's (a quarter of its widest to its widest, a wedge WedgeMinM to WedgeMaxM), in log.</summary>
+        public static double SwirlOf(FunnelShape s, double groundKm)
+        {
+            var (lo, hi) = SwirlRange(s);
+            double Dhi = MaxWidthM(s, 5), Dlo = s == FunnelShape.Wedge ? WedgeMinM : Dhi / 4;
+            double u = C.Clamp(Math.Log(Math.Max(2000 * groundKm, 1) / Dlo) / Math.Log(Dhi / Dlo), 0, 1);
+            return lo + (hi - lo) * u;
+        }
+        /// <summary>the vortex breakdown's height as a share of the funnel's (ztop): at the top at SwirlBreakdown, at the
+        /// ground from SwirlTwoCell; past 1 (up to 1.15) there is none in the funnel</summary>
+        public static double BreakdownOf(double swirl) => C.Clamp((SwirlTwoCell - swirl) / (SwirlTwoCell - SwirlBreakdown), 0, 1.15);
+        /// <summary>the secondary vortices a swirl ratio supports (2 as the core first splits, 6 at the most)</summary>
+        public static int SubVorticesOf(double swirl) => (int)C.Clamp(Math.Round(1 + 2.5 * (swirl - 0.6)), 2, 6);
+        /// <summary>the pressure deficit the funnel needs at the ground as a share of the vortex's axis deficit (S_tor7.x):
+        /// FunnelKappa of the hydrostatic difference up to ztop over the Rankine deficit rho vmax^2; at most 0.75, so the
+        /// form is defined to the ground (where the web build's condensation reach draws the funnel below its physical
+        /// bottom, its form continues as at that bottom)</summary>
+        public static double QGround(double vmax, double ztopKm) => C.Clamp(FunnelKappa * 9.81 * ztopKm * 1000 / Math.Max(vmax * vmax, 1), 0.02, 0.75);
+        static double FormG(double q) { q = C.Clamp(q, 0.02, 0.95); return q >= 0.5 ? Math.Sqrt(2 * (1 - q)) : 1 / Math.Sqrt(2 * q); }
+        /// <summary>The funnel's form (StormMarch tornadoForm, the same sums): its radius at height h (0 the ground, 1
+        /// ztop) over its radius at the ground; zB the breakdown height (BreakdownOf), qg QGround, zeta ztop over the base.</summary>
+        public static double Form(double h, double zB, double qg, double zeta)
+        {
+            double x = C.Clamp((h - (zB - 0.08)) / 0.16, 0, 1), B = x * x * (3 - 2 * x);
+            double rc = 1 + (CoreWidening - 1) * B;
+            return rc * FormG(qg * (1 - zeta * h) * rc) / FormG(qg);
+        }
         /// <summary>a stovepipe's top is at least this much wider than its foot; a cone's is this much wider than the web build's</summary>
         public const double StovepipeTopMin = 1.3, ConeTopWiden = 1.15;
 
@@ -305,6 +362,7 @@ namespace StormLab
                     double D = 2000 * p.groundKm, Dc = Math.Min(D, MaxWidthM(p.shape, ef));
                     if (Dc < D) { double k = Dc / D; p.groundKm *= k; p.topKm = Math.Max(p.topKm * k, p.groundKm); }
                 }
+                p.swirl = SwirlOf(p.shape, p.groundKm);
                 t.phases[i] = p;
             }
         }
@@ -322,10 +380,12 @@ namespace StormLab
             t.shape = s;
             BaseGeometry(s, t.widthM, big ? 0.5 : r.U(), out t.groundKm, out t.topKm, out t.profile, out t.sinuosity);
             if (s == FunnelShape.Stovepipe) t.topKm = Math.Max(t.topKm, t.groundKm * StovepipeTopMin);
-            t.phases = new[] { new FunnelPhase { shape = s, startFrac = 0, groundKm = t.groundKm, topKm = t.topKm, profile = t.profile, sinuosity = t.sinuosity, cond = 1 } };
-            // vortices and collar as Make: a wedge may start as multiple vortices; a stovepipe never has them
+            t.swirl = SwirlOf(s, t.groundKm);
+            t.phases = new[] { new FunnelPhase { shape = s, startFrac = 0, groundKm = t.groundKm, topKm = t.topKm, profile = t.profile, sinuosity = t.sinuosity, cond = 1, swirl = t.swirl } };
+            // vortices and collar as Make: a wedge may start as multiple vortices (as many as its swirl supports); a
+            // stovepipe never has them
             t.subVortices = 0; t.multiFrac = 0;
-            if (s == FunnelShape.Wedge && r.U() < 0.55) { t.subVortices = 3 + (int)(r.U() * 3); t.multiFrac = r.Range(0.15, 0.3); }
+            if (s == FunnelShape.Wedge && r.U() < 0.55) { r.U(); t.subVortices = SubVorticesOf(t.swirl); t.multiFrac = r.Range(0.15, 0.3); }
             t.collar = s == FunnelShape.Wedge && t.LifeMin > 10 && r.U() < 0.6;
             // a wedge is loaded with rain and debris: its funnel reaches the ground
             if (big) t.condReach = Math.Max(t.condReach, 0.7);
@@ -402,7 +462,7 @@ namespace StormLab
             t.collar = shape == FunnelShape.Wedge && t.LifeMin > 10 && r.U() < 0.6;
             t.rainWrap = 0;
             Individualise(t, P, region, ref r, false);   // (a tool's tornado is what it was asked for, outside the shape limits)
-            t.phases = new[] { new FunnelPhase { shape = shape, groundKm = t.groundKm, topKm = t.topKm, profile = t.profile, sinuosity = t.sinuosity, cond = 1, sideKm = shape == FunnelShape.Sidewinder ? 0.6 : 0 } };
+            t.phases = new[] { new FunnelPhase { shape = shape, groundKm = t.groundKm, topKm = t.topKm, profile = t.profile, sinuosity = t.sinuosity, cond = 1, sideKm = shape == FunnelShape.Sidewinder ? 0.6 : 0, swirl = t.swirl } };
             t.satellite = false; t.leanKm = 0;
             DrawFormation(t, new StormRng(7, 1100));
             return t;
@@ -440,6 +500,8 @@ namespace StormLab
             else if (Dc != D) { double kc = Dc / D; t.groundKm *= kc; t.topKm = Math.Max(t.topKm * kc, t.groundKm); }
             t.widthM = 2 * t.groundKm / ShapeWidth(t.shape) * 1000;
             t.rcKm = C.Clamp(0.5 * t.widthM / 1000 * 29.0 / t.vmax, 0.012, 0.6);
+            t.swirl = SwirlOf(t.shape, t.groundKm);
+            if (t.subVortices > 0 && t.shape == FunnelShape.Wedge) t.subVortices = SubVorticesOf(t.swirl);
             ClampPhases(t, ef);
         }
 
@@ -475,6 +537,7 @@ namespace StormLab
             p.groundKm = C.Clamp(g * gS, 0.012, 0.95);
             p.topKm = C.Clamp(top * tS, p.groundKm, 1.4);
             p.profile = C.Clamp(prof + pJ, 0.03, 1);
+            p.swirl = SwirlOf(shape, p.groundKm);
             return p;
         }
 
@@ -504,6 +567,9 @@ namespace StormLab
             if (t.shape == FunnelShape.Cone) t.topKm = Math.Min(t.topKm * ConeTopWiden, 1.4);
             // within its shape's width and ratings (user, 2026-10-29), before its phases are sized from its width
             if (constrain) Constrain(t, P);
+            // the vortex: its swirl ratio from its shape and width; a wedge's secondary vortices as many as it supports
+            t.swirl = SwirlOf(t.shape, t.groundKm);
+            if (t.subVortices > 0 && t.shape == FunnelShape.Wedge) t.subVortices = SubVorticesOf(t.swirl);
 
             // its life: many tornadoes change shape. Strong ones often start as a cone and grow into a stovepipe or wedge; a
             // wedge can narrow again before it ropes out; drillbits fill out into cones; elephant trunks thin into ropes, and
@@ -527,7 +593,7 @@ namespace StormLab
             double side = C.Clamp(r.Range(0.35, 0.75) * zb, 0.2, 1.0);
             var ph = new System.Collections.Generic.List<FunnelPhase>(3);
             if (pre.HasValue) ph.Add(PhaseOf(t, pre.Value, 0, gS, tS, pJ, r.U()));
-            ph.Add(new FunnelPhase { shape = t.shape, startFrac = pre.HasValue ? s1 : 0, groundKm = t.groundKm, topKm = t.topKm, profile = t.profile, sinuosity = t.sinuosity, cond = 1 });
+            ph.Add(new FunnelPhase { shape = t.shape, startFrac = pre.HasValue ? s1 : 0, groundKm = t.groundKm, topKm = t.topKm, profile = t.profile, sinuosity = t.sinuosity, cond = 1, swirl = t.swirl });
             if (post.HasValue)
             {
                 var p = PhaseOf(t, post.Value, s2, gS, tS, pJ, r.U());
@@ -622,13 +688,13 @@ namespace StormLab
             double lifeFrac = C.Clamp((tMin - tg.formMin) / Math.Max(tg.LifeMin, 0.1), 0, 1);
 
             // its life story: the phases blended in turn, each over MorphFrac of the life (2.0's TornadoOf)
-            double pg = tg.groundKm, pt = tg.topKm, pc = 1, psd = 0, profile = tg.profile, sinu = tg.sinuosity, flare = TopFlare(tg.shape);
+            double pg = tg.groundKm, pt = tg.topKm, pc = 1, psd = 0, profile = tg.profile, sinu = tg.sinuosity, swirl = tg.swirl;
             var phaseShape = tg.shape;
             var ph = tg.phases;
             if (ph != null && ph.Length > 0)
             {
                 pg = ph[0].groundKm; pt = ph[0].topKm; profile = ph[0].profile; sinu = ph[0].sinuosity; pc = ph[0].cond; psd = ph[0].sideKm;
-                phaseShape = ph[0].shape; flare = TopFlare(ph[0].shape);
+                phaseShape = ph[0].shape; swirl = ph[0].swirl;
                 for (int i = 1; i < ph.Length; i++)
                 {
                     double w = Ramp(lifeFrac, ph[i].startFrac, ph[i].startFrac + TornadoCharacter.MorphFrac);
@@ -636,12 +702,15 @@ namespace StormLab
                     pg = C.Lerp(pg, ph[i].groundKm, w); pt = C.Lerp(pt, ph[i].topKm, w);
                     profile = C.Lerp(profile, ph[i].profile, w); sinu = C.Lerp(sinu, ph[i].sinuosity, w);
                     pc = C.Lerp(pc, ph[i].cond, w); psd = C.Lerp(psd, ph[i].sideKm, w);
-                    flare = C.Lerp(flare, TopFlare(ph[i].shape), w);
+                    swirl = C.Lerp(swirl, ph[i].swirl, w);
                     if (w >= 0.5) phaseShape = ph[i].shape;
                 }
             }
             double rope = a[14 * 4 + 3];
             double gWeb = a[14 * 4], tWeb = a[14 * 4 + 1];
+            // the vortex's form (StormMarch tornadoForm): its breakdown height and the deficit the funnel needs at the ground
+            double zb = a[1 * 4], ztop = Math.Max(zb - 0.6 * a[7 * 4], 0.3), zeta = ztop / Math.Max(zb, 1e-3);
+            double zB = BreakdownOf(swirl), qg = QGround(tg.vmax, ztop);
             // the web build's own growth, rope-out and takeover, at this tornado's proportions and in its current shape
             double gScale = pg / Math.Max(tg.webGroundKm, 1e-3), tScale = pt / Math.Max(tg.webTopKm, 1e-3);
             bool webMulti = a[21 * 4 + 3] > 0.5;
@@ -694,6 +763,9 @@ namespace StormLab
                     double narrow = C.Lerp(1, WedgeShrink, Ramp(lifeFrac, r0 - ShrinkSpan(tg), r0));
                     ground *= narrow; top *= narrow;
                 }
+                // a plain funnel's top is where the vortex's form puts it (its foot is the shape's); a wedge's envelope keeps the
+                // user's flare (WedgeFlareMin-Max), and the march bends the form through both
+                if (!big) top = Math.Max(ground * Form(1, zB, qg, zeta), ground);
                 if (!big && FormsThin(tg.shape) && tg.formFrac > 0)
                 {
                     // a cone or stovepipe comes down as a thin, nearly even tube (a third to two thirds of its foot's full
@@ -734,7 +806,8 @@ namespace StormLab
             double spin = C.Clamp(tg.WindAt(rv) / (rv * 1000), 0.05, 2.0) * (0.6 + 0.4 * form);
             double vmax = tg.vmax * (0.55 + 0.45 * form) * (1 - 0.5 * rope);
             Set(Slot0, spin, vmax, tg.rcKm * (1 - 0.5 * rope), envelope > 0.3 ? 1.35 : 2.4);
-            Set(Slot0 + 1, tg.rainWrap, (int)phaseShape, tg.ef, flare);
+            // (rain wrap stays on the character: the march never read it)
+            Set(Slot0 + 1, qg, (int)phaseShape, tg.ef, zB);
             Set(Slot0 + 2, tg.albedo, tg.roughness, tg.ghost, tg.striation);
             Set(Slot0 + 3, tg.soilR, tg.soilG, tg.soilB, tg.dirt * Ramp(lifeFrac, 0.02, 0.15));
             // the plane the funnel bends in: across the lean, so a rope's S curve and its lean are not the same bend

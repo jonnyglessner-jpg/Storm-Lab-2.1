@@ -33,7 +33,7 @@ float4 _SP[32];
                            // (detailed tornado: z their count, w sinuosity 0..1)
 // ---- the detailed tornado (StormLab 2.0's, StormTornadoes.Apply); zero for the web build's tornado
 #define S_tor6   _SP[23]   // x spin at the funnel's edge rad/s, y peak wind m/s, z radius of maximum wind km, w dust-cloud radius / ground radius
-#define S_tor7   _SP[24]   // x rain wrap 0..1, y shape now (FunnelShape), z EF rating, w top flare (0 the top quarter .. 1 a stovepipe's, from half way up)
+#define S_tor7   _SP[24]   // x deficit the funnel needs at the ground / the vortex's (tornadoForm), y shape now (FunnelShape), z EF rating, w vortex breakdown height / ztop (past 1: none)
 #define S_tor8   _SP[25]   // the funnel's look: x brightness (0.55 grey .. 1.2 white), y skin roughness (0.2 laminar .. 1.5 torn), z translucency, w helical striations
 #define S_tor9   _SP[26]   // xyz colour of the soil it lofts (linear albedo), w how far that dirt stains the funnel's lower part
 #define S_tor10  _SP[27]   // sidewinder: xy direction its lower end is dragged in (unit), z drag km; w angle of the plane the funnel bends in

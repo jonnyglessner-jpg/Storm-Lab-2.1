@@ -133,7 +133,7 @@ static class DumpCs
                     var t = ch[k];
                     if (t == null) { Console.WriteLine($"{key,-6} seed {seed} cycle {k}: no tornado"); continue; }
                     string phases = string.Join(" > ", t.phases.Select(p => p.shape.ToString()));
-                    Console.WriteLine($"{key,-6} seed {seed} cycle {k}: web {t.webShape,-11} -> {t.shape,-13} EF{t.ef} {t.vmax:0} m/s, path {t.widthM:0} m, ground {t.groundKm * 1000:0} m top {t.topKm * 1000:0} m, " +
+                    Console.WriteLine($"{key,-6} seed {seed} cycle {k}: web {t.webShape,-11} -> {t.shape,-13} EF{t.ef} {t.vmax:0} m/s, path {t.widthM:0} m, ground {t.groundKm * 1000:0} m top {t.topKm * 1000:0} m, swirl {t.swirl:0.00} (breakdown at {StormTornadoes.BreakdownOf(t.swirl):0.00} of the funnel), " +
                         $"{t.skin} albedo {t.albedo:0.00}, {t.soilName} soil, sub-vortices {t.subVortices}{(t.collar ? ", collar" : "")}{(t.satellite ? ", satellite" : "")}; life {t.LifeMin:0.0} min: {phases}");
                 }
             }
