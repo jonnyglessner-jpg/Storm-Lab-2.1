@@ -287,7 +287,6 @@ namespace StormLab.TestMap
                 {
                     storm.diffusion = Slider("diffusion (darker under the storm)", storm.diffusion, 0.05f, 2f);
                     storm.diffuseSun = Slider("sunlight diffused through cloud", storm.diffuseSun, 0f, 1f);
-                    storm.hailGlow = Slider("hail glow (green)", storm.hailGlow, 0f, 3f);
                     storm.rainExtinction = Slider("rain extinction (x drawn)", storm.rainExtinction, 1f, 5f);
                 }
             }

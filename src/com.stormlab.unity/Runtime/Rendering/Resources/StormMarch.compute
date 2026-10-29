@@ -53,7 +53,8 @@ float4 _Night;
 float4 _PL;
 // x: sky light scale, y: ground bounce scale, z: diffuse sky light, w: extinction ratio between octaves
 float4 _PL2;
-// unified lighting: x hail glow, y diffusion (3/4 (1 - g) per unit of the grid's optical depth), z diffused sunlight,
+// unified lighting: x unused (was the hail core's green glow, removed 2026-10-29), y diffusion (3/4 (1 - g) per unit of
+// the grid's optical depth), z diffused sunlight,
 // w checks only: a part of the light alone (stormLight); 5: the near field without its own sky occlusion
 float4 _PL3;
 // x: cloud extinction max 1/km, y: rain extinction max, z: exposure, w: frame index
@@ -718,25 +719,11 @@ float3 nightGrade(float3 c)
 //    base is lit by the horizon under its edge and the ground below it. Storms are dark because they are thick, not
 //    because water absorbs (Bohren 1987).
 //  - ground: the bounce from the ground below, its share falling the higher above the base the point is.
-//  - hail: ice and water absorb red light (liquid water about 0.34, 0.057, 0.009 per metre at 650, 550, 450 nm, Pope and
-//    Fry 1997; ice is similar).
-//    Light that has diffused through a hail core has travelled metres through ice and comes out blue-green; lit by an
-//    afternoon or evening sun, reddened by the air, that is the pale green or turquoise of a hail storm (Bohren and Fraser
-//    1993, "Green thunderstorms", BAMS 74; Gallagher, Beasley and Bohren 1996, "Green thunderstorms observed", BAMS 77).
+//  - hail: grey, as the rain round it (user, 2026-10-29: the green hail glow of 2026-10-28, light tinted by the metres of
+//    ice it had crossed in the core, reverted).
 float diffuseT(float tau) { return 1.0 / (1.0 + _PL3.y * max(tau, 0.0)); }
 // the grid's optical depth straight up, from its sky transmittance exp(-0.1 up)
 float upDepth(float4 lt) { return -10.0 * log(max(lt.g, 1e-12)); }
-// metres of ice the light reaching q has come through: the hail core's footprint (S_hail) below the height hail grows to
-// (light reaching the middle of the core, from any side, has crossed its curtain of hail), less at a surface the sun
-// lights directly (light there has not gone through the core)
-float hailPath(float3 q, float tau)
-{
-    if (S_hail.w <= 0.0 || _PL3.x <= 0.0) return 0.0;
-    float hq = length(q.xy - S_hail.xy) / max(S_hail.z, 0.5);
-    float top = S_base.x + 0.6 * (S_base.y - S_base.x);
-    return 3.5 * _PL3.x * S_hail.w * exp(-hq * hq) * (1.0 - ss(top - 2.0, top, q.z)) * ss(0.0, 6.0, tau);
-}
-float3 hailTint(float m) { return exp(-float3(0.34, 0.057, 0.0092) * m); }
 // The light a medium at q scatters toward the eye, per unit albedo: the same for every medium. lt, sv: the light grid and
 // the sky visibility at q; ph: the medium's phase toward the eye for the sun (1 isotropic); selfSh: its own finer
 // self-shadowing (cloud billows; 1 otherwise); tauX: optical depth to the sun beyond the grid's (a funnel's far side, dust
@@ -763,14 +750,14 @@ float3 stormLight(float3 q, float4 lt, float4 sv, float3 sunz, float3 sunc0, flo
                 + 0.5 * skyMean() * (_PL2.z * diffuseT(upDepth(lt)) + _Night.z)) * _PL2.x * iceSky * (0.8 + 0.2 * selfSh)
                 * lerp(phA.x, phA.y, saturate(0.5 + skyOpen(sv) - g_openCam));
     float3 gnd = groundLight(q, sunc0) * lerp(1.0, 0.3, ss(S_base.x - 0.4, S_base.x + 1.5, q.z));
-    // checks only (StormRenderer.lightDebug): 1 the sun's optical depth / 60, the depth overhead / 60, metres of hail;
+    // checks only (StormRenderer.lightDebug): 1 the sun's optical depth / 60, the depth overhead / 60, 0;
     // 2-4 the sun's, the sky's, the ground's light alone
     if (_PL3.w > 0.5 && _PL3.w < 4.5)
     {
-        if (_PL3.w < 1.5) return float3(tau / 60.0, upDepth(lt) / 60.0, hailPath(q, tau));
+        if (_PL3.w < 1.5) return float3(tau / 60.0, upDepth(lt) / 60.0, 0.0);
         return _PL3.w < 2.5 ? sunz * sun : (_PL3.w < 3.5 ? sky : gnd);
     }
-    return (sunz * sun + sky + gnd) * hailTint(hailPath(q, tau));
+    return sunz * sun + sky + gnd;
 }
 // How lit the air at a point is, as a share of open air's: the haze between the eye and the storm is in its shadow too
 float airLight(float4 lt, float4 sv) { return 0.5 * exp(-0.38 * lt.r) + 0.5 * saturate(0.18 * sv.r + 0.477 * sv.g + 0.342 * sv.b); }
@@ -1194,7 +1181,7 @@ void March(uint3 gid : SV_DispatchThreadID)
                 float hw = S_hail.w * exp(-hq * hq);
                 float fwd = 1.0 + 2.2 * pow(max(cosg, 0.0), 4.0);     // rain scatters forward: curtains glow against the light
                 // (unified: lit as the cloud around it is, so under the storm it is as dark as the base; raindrops and
-                // hail absorb next to nothing, so it is grey, and green only by the light that reaches it through hail)
+                // hail absorb next to nothing, so it is grey)
                 float3 pc = uni ? stormLight(q, lt, sv, sunz, sunc, phR, 1.0, 0.0, 0.0, 1, phAR) * 0.9
                     : lerp(float3(0.55, 0.6, 0.66), float3(0.8, 0.88, 0.86), saturate(hw)) * (sunz * sunL * 0.9 * fwd + skyc * (0.35 + 0.5 * lt.g));
                 be += br; Lc += pc * br;
@@ -1324,14 +1311,20 @@ void March(uint3 gid : SV_DispatchThreadID)
                         // twice its radius here at its own extinction, less toward its edges as seen; a thin rope still
                         // glows against the light, a cone is a dark silhouette. It was 8 grid units however wide, so a
                         // funnel with the sun behind it glowed white.)
-                        float4 ltF = lt; ltF.r = _TorP.w > 0.5 ? lt.r : funnelSunDepth(q);
+                        // (User, 2026-10-29: the bottom of the wall cloud must be the colour of the top of the tornado, one
+                        // smooth gradient from the updraft through the wall cloud down the funnel. The wall cloud is lit from
+                        // the light grid alone; the funnel's own tests switched on in full just under the flare, where the
+                        // wall cloud hands it over, so it met the wall cloud in a step of shade. They now fade in down the
+                        // funnel: at 0.8 of the way up it takes the wall cloud's light exactly, at the ground its own.)
+                        float kTop = S_wall.w * ss(0.0, 0.8 * ztop, q.z);
+                        float4 ltF = lt; ltF.r = _TorP.w > 0.5 ? lt.r : lerp(funnelSunDepth(q), lt.r, kTop);
                         float horF = _TorP.w > 0.5 ? sv.b : tornadoHorizon(q, g_torN) * horizonFar(q, g_torN);
-                        float4 svF = sv; svF.b = 0.5 * (saturate(sv.b + (sv.a - sv.b) * cs) + horF);
+                        float4 svF = sv; svF.b = lerp(0.5 * (saturate(sv.b + (sv.a - sv.b) * cs) + horF), sv.b, kTop);
                         float stain = S_tor9.w * pow(saturate(1.0 - hz / 0.45), 2.0);
-                        float3 albF = lerp(min(alb, 1.0).xxx, soil * 0.85, stain) * tone;
+                        float3 albF = lerp(lerp(min(alb, 1.0), 1.0, kTop).xxx, soil * 0.85, stain) * tone;
                         float rF = lerp(S_tor2.x, S_tor2.y, pow(hz, lerp(3.0, 0.7, S_tor.w)));
-                        float across = 2.0 * rF * 3.5 * _MP.x * (1.0 - lit) * (0.2 + 0.8 * facing);
-                        fc = stormLight(q, ltF, svF, sunz, sunc, g_phW, 1.0, across, 0.0, 4) * lerp(0.85, 1.0, facing) * albF;
+                        float across = 2.0 * rF * 3.5 * _MP.x * (1.0 - lit) * (0.2 + 0.8 * facing) * (1.0 - kTop);
+                        fc = stormLight(q, ltF, svF, sunz, sunc, g_phW, 1.0, across, 0.0, 4) * lerp(lerp(0.85, 1.0, facing), 1.0, kTop) * albF;
                         parent = stormLight(q, lt, sv, sunz, sunc, g_phW, 1.0, 0.0, 0.0, 4);
                     }
                     if (S_tor4.w > 0.5)

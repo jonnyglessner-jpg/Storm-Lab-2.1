@@ -369,13 +369,24 @@ float nearField(float3 p, float fine)
                 // drawn quickly into the tail and the wall cloud by strong winds"): torn fragments beside and below its
                 // outer half and out past its tip, from noise streaming in toward the wall cloud at 1.6 x the inflow's
                 // 15 m/s (S_spin3.w), so they race in along it and are taken up into it. Render pass only (fine).
+                // (User, 2026-10-29: "too ragged and static". They were cut from two octaves at a sharp threshold, lacy
+                // patches full of holes, and one frozen pattern slid along the tail, which seen down the tail did not
+                // move at all. Now each fragment is a soft puff (one octave, a little of a second, a wide threshold, thin
+                // at its edges) and the pattern is two layers streaming in at different speeds, 1.6 and 1.0 x the
+                // inflow, and lifting at about 2 m/s as the tail's air is drawn up into the wall cloud: where they
+                // overlap fragments form, and as they slide apart they thin out, so the scud forms, races in, rises
+                // into the base and dissolves.)
                 if (fine > 0.0 && S_spin3.w != 0.0)
                 {
-                    float sc = 0.6 * n3k(float3(suT * 0.7, qq * 1.4, p.z * 2.5) / 2.5, 2.5, float3(0.33, 0.71, 0.19))
-                             + 0.4 * n3k(float3(suT * 1.8, qq * 3.2, p.z * 5.0) / 5.0, 5.0, float3(0.81, 0.27, 0.55));
+                    float suB = s + 1.0 * S_spin3.w;
+                    float rise = 0.13 * S_spin3.w;   // km risen per km the inflow has carried (2 m/s against 15)
+                    float sa = 0.8 * n3k(float3(suT * 0.6, qq * 1.1, (p.z - rise) * 2.2) / 2.5, 2.5, float3(0.33, 0.71, 0.19))
+                             + 0.2 * n3k(float3(suT * 1.2, qq * 2.0, (p.z - rise) * 3.5) / 5.0, 5.0, float3(0.81, 0.27, 0.55));
+                    float sbn = n3k(float3(suB * 0.5, qq * 0.9, (p.z - 0.7 * rise) * 1.8) / 2.5, 2.5, float3(0.57, 0.13, 0.91));
+                    float sc = 0.6 * sa + 0.4 * sbn;
                     float zone = ss(Rw + 0.5, Rw + 2.0, s) * (1.0 - ss(Rw + 4.8, Rw + 6.3, s)) * ss(1.0, 0.45, abs(qq));
-                    float hang = ss(zb - D - 0.35, zb - D - 0.2, p.z) * ss(zb + 0.02, zb - 0.1, p.z);
-                    float scud = S_wall2.z * zone * hang * ss(0.58, 0.7, sc) * 0.85 * fine;
+                    float hang = ss(zb - D - 0.4, zb - D - 0.15, p.z) * ss(zb + 0.02, zb - 0.12, p.z);
+                    float scud = S_wall2.z * zone * hang * ss(0.5, 0.75, sc) * 0.55 * fine;
                     v = v + scud - v * scud;
                 }
             }

@@ -145,8 +145,6 @@ namespace StormLab
         [Range(0.05f, 2f)] public float diffusion = 0.6f;
         [Tooltip("unified: sunlight diffused through the cloud by many scatterings, as a share of the direct")]
         [Range(0f, 1f)] public float diffuseSun = 0.4f;
-        [Tooltip("unified: how green light comes out of a hail core (1: about 3.5 m of ice in the core's centre)")]
-        [Range(0f, 3f)] public float hailGlow = 1f;
         [Tooltip("unified: rain's extinction (as the eye sees it and as it shades light) as a multiple of the drawn rain's " +
                  "(StormVolume.RainMax, 2.6 per km in the heaviest rain). Heavy rain is about 4-7 per km (visibility a few " +
                  "hundred metres); at 1 the low sun lit rain cores right through")]
@@ -648,7 +646,7 @@ namespace StormLab
             float model = lighting == StormLighting.Unified ? 2 : lighting == StormLighting.Physical ? 1 : 0;
             cmd.SetComputeVectorParam(marchCs, "_PL", new Vector4(model, dropletDiameter, sunScale, scatterOctaves));
             cmd.SetComputeVectorParam(marchCs, "_PL2", new Vector4(skyScale, bounceScale, skyDiffuse, octaveExtinction));
-            cmd.SetComputeVectorParam(marchCs, "_PL3", new Vector4(hailGlow, diffusion, diffuseSun, lightDebug));
+            cmd.SetComputeVectorParam(marchCs, "_PL3", new Vector4(0f, diffusion, diffuseSun, lightDebug));
             SkyLighting.Bands(lt, out var bZen, out var bMid, out var bHor, out var bHorK);
             cmd.SetComputeVectorParam(marchCs, "_SkyZen", bZen); cmd.SetComputeVectorParam(marchCs, "_SkyMid", bMid);
             cmd.SetComputeVectorParam(marchCs, "_SkyHor", bHor); cmd.SetComputeVectorParam(marchCs, "_SkyHorK", bHorK);

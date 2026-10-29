@@ -101,7 +101,7 @@ Useful properties for a game: `Frame.stage` / `Frame.caption`, `TornadoAmount`, 
 
 Lighting (`lighting`):
 - **Unified** (default; user, 2026-10-28: every part of the storm responds to light the same way, darker undersides
-  and rain, storms darken the sky, hail glows green): the physical model as one light field (`stormLight` in
+  and rain, storms darken the sky): the physical model as one light field (`stormLight` in
   StormMarch.compute). The light reaching a point is worked out once, the same way for cloud, wall cloud, funnel, rain,
   hail, dust and the air under the storm; the media differ only in their phase function, albedo and how many times light
   scatters in them (cloud: the four octaves; rain and dust, thin media, once). Raindrops send nearly all their light
@@ -122,10 +122,9 @@ Lighting (`lighting`):
   off as 1 / (1 + `diffusion` tau) (two-stream diffuse transmission) instead of the physical model's floor of a fifth of
   the sky everywhere, so under a deep storm the base is lit by the horizon under its edge and the ground below. Rain is
   `rainExtinction` (2.5) times the drawn rain's extinction, for the eye and for the light alike (heavy rain is about 4-7
-  per km; at 1 the low sun lit rain cores right through and they were drawn white). Light that has diffused through the
-  hail core is tinted by ice's absorption of red (`hailGlow`; Bohren and Fraser 1993, Gallagher et al. 1996): turquoise,
-  and green under a reddened evening sun. The haze between the eye and the storm is lit as the air at both ends is.
-  The panel has sliders for the four. References and reasoning: the comment above `stormLight`. The sky-visibility grid
+  per km; at 1 the low sun lit rain cores right through and they were drawn white). The hail core is grey like the rain
+  round it (its green glow of 2026-10-28 was reverted at the user's request, 2026-10-29). The haze between the eye and the storm is lit as the air at both ends is.
+  The panel has sliders for the three. References and reasoning: the comment above `stormLight`. The sky-visibility grid
   (cells about 2.6 km) cannot see the beaver tail, a band a few hundred metres deep, hide its own sky, so the game's
   beaver tail takes 60 % of the grid's sky, blended by how much of the near field there is beaver tail (a probe of the
   volume's coarse copy round each point did it first, and left dark blotches on the base where the tail joins it) (user, 2026-10-28: the

@@ -29,6 +29,7 @@ public static class StormLightCheck
 {
     const string Key = "StormLightCheck.Active", BatchKey = "StormLightCheck.Batch", CodeKey = "StormLightCheck.Code";
     const string PresetKey = "StormLightCheck.Preset", HourKey = "StormLightCheck.Hour", DebugKey = "StormLightCheck.Debug", FlickerKey = "StormLightCheck.Flicker", TailKey = "StormLightCheck.Tail", SceneKey = "StormLightCheck.Scene", FfdKey = "StormLightCheck.Ffd", TorKey = "StormLightCheck.Tor";
+    const string SpotKey = "StormLightCheck.Spot", TagKey = "StormLightCheck.Tag";
     static string ShotDir => Path.Combine(StormLabTestKit.ProjectDir, "Screenshots");
     static string ReportDir => Path.Combine(StormLabTestKit.RepoRoot, "validation", "reports");
 
@@ -50,6 +51,8 @@ public static class StormLightCheck
         SessionState.SetBool(SceneKey, args.Contains("-slLightScene"));
         SessionState.SetBool(FfdKey, args.Contains("-slLightFfd"));
         SessionState.SetBool(TorKey, args.Contains("-slLightTornado"));
+        SessionState.SetString(SpotKey, Arg("-slLightSpot") ?? "");
+        SessionState.SetString(TagKey, Arg("-slLightTag") ?? "now");
         EditorSceneManager.OpenScene(TestMapBuilder.ScenePath, OpenSceneMode.Single);
         SessionState.SetBool(Key, true); SessionState.SetBool(BatchKey, batch);
         EditorApplication.playModeStateChanged -= OnState;
@@ -155,9 +158,10 @@ public static class StormLightCheck
         if (SessionState.GetBool(FlickerKey, false)) { reportName += "_flicker"; foreach (var x in Flicker(storm)) yield return x; yield break; }
         if (SessionState.GetBool(SceneKey, false)) { reportName += "_scene"; foreach (var x in SceneLight(storm, cam, panel)) yield return x; yield break; }
         if (SessionState.GetBool(TorKey, false)) { reportName += "_tornado"; foreach (var x in TornadoShade(world, storm, cam, panel)) yield return x; yield break; }
+        if (SessionState.GetString(SpotKey, "").Length > 0) { reportName += "_spot"; foreach (var x in Spots(world, storm, cam, panel)) yield return x; yield break; }
         if (SessionState.GetBool(FfdKey, false)) { reportName += "_ffd"; foreach (var x in FfdAges(storm, cam)) yield return x; yield break; }
         rep.AppendLine($"Storm: {storm.preset}, seed {storm.seed}, {P.kind}, at {at:0.0} min ({storm.Frame.stage}); sun at {storm.solarHour:0.0} h solar. Hail core amount {F[10 * 4 + 3]:0.00}, radius {F[10 * 4 + 2]:0.0} km. March at half resolution.").AppendLine();
-        rep.AppendLine($"Unified settings: diffusion {storm.diffusion:0.###}, diffused sun {storm.diffuseSun:0.##}, hail glow {storm.hailGlow:0.##}.").AppendLine();
+        rep.AppendLine($"Unified settings: diffusion {storm.diffusion:0.###}, diffused sun {storm.diffuseSun:0.##}.").AppendLine();
         if (debug)
         {
             // the light grid (r the sun's optical depth, g the sky's transmittance overhead, b the overhead openness, a the
@@ -680,6 +684,127 @@ public static class StormLightCheck
         rep.AppendLine();
         foreach (var l in parts) rep.AppendLine("- " + l);
         rep.AppendLine().AppendLine($"Storm: {storm.preset}, seed {storm.seed}, at {at:0.0} min ({storm.Frame.stage}). Frames: `Screenshots/light_tornado_{{noon,evening,noon_ne}}[_sun,_dbg3,_dbg4].png`.");
+    }
+
+    /// <summary>
+    /// -slLightSpot "view;view;..." (2026-10-29: the user's views, from the free map's HUD): each view is
+    /// preset,seed,stormMin,solarHour,eastMi,northMi,ft,yawDeg,pitchDeg[,fov] (ft above sea level, as the HUD gives it), or
+    /// preset,seed,stormMin,solarHour,tor|hail,km,fromDeg,yawDeg,pitchDeg[,fov] for a camera km from the tornado (or the hail
+    /// core) on the bearing fromDeg (or tail,km,side,0,pitchDeg: side-on to the game's tail cloud), 3 m above the ground. 25 May at 38.1 N (the panel's), varied cycles, half-resolution march as in Play.
+    /// -slLightTag names the frames (before / after a change): Screenshots/light_spot_&lt;k&gt;_&lt;tag&gt;.png, and _flow&lt;i&gt; for
+    /// three more frames 4 s apart while the storm is paused (the inflow's flow keeps running).
+    /// </summary>
+    static IEnumerable<object> Spots(TestMapWorld world, StormRenderer storm, Camera cam, TestMapStormPanel panel)
+    {
+        string tag = SessionState.GetString(TagKey, "now");
+        var views = SessionState.GetString(SpotKey, "").Split(';');
+        var inv = CultureInfo.InvariantCulture;
+        for (int k = 0; k < views.Length; k++)
+        {
+            var f = views[k].Split(',');
+            float F(int i) => float.Parse(f[i], inv);
+            storm.preset = f[0]; storm.varied = true; storm.seed = int.Parse(f[1], inv); storm.Replan(); world.PlaceStorm();
+            if (panel) { panel.dayOfYear = 145; panel.latitude = 38.1f; panel.hour = F(3); panel.Apply(); }
+            // (stormMin "c<k>": a minute after cycle k's tornado is mature)
+            float at = f[2].StartsWith("c") ? (float)storm.Plan.cycles[int.Parse(f[2].Substring(1), inv)].times[3] + 1f : F(2);
+            storm.stormMinutes = at; storm.StepTo(at, storm.Clock, true);
+            foreach (var x in Wait(0.5f)) yield return x;
+            var P = storm.Frame.param;
+            Vector3 from;
+            if (f[4] == "tor" || f[4] == "hail")
+            {
+                int at0 = f[4] == "tor" ? 52 : 40;
+                var tor = storm.StormToWorld(new Vector3(P[at0], P[at0 + 1], 0f)); tor.y = 0f;
+                float b = F(6) * Mathf.Deg2Rad;
+                from = tor + new Vector3(Mathf.Sin(b), 0f, Mathf.Cos(b)) * F(5) * 1000f;
+                from.y = (Physics.Raycast(from + Vector3.up * 3000f, Vector3.down, out var hit, 6000f) ? hit.point.y : 0f) + 3f;
+            }
+            else if (f[4] == "tail") from = Vector3.zero;   // (below)
+            else
+            {
+                const float Mile = 1609.344f; float e = world.sizeM / 2;
+                from = new Vector3(F(4) * Mile - e, F(6) / 3.28084f - world.datum, F(5) * Mile - e);
+            }
+            float yaw = F(7);
+            if (f[4] == "tail")
+            {
+                // side-on to the game's tail cloud (StormCommon.hlsl tailCloudAim: a quarter of the way from the hail core to
+                // the forward-flank core), km off its middle 3 km past the wall cloud's rim, on side +1 (left of the tail) or -1
+                var wc = new Vector2(P[24], P[25]); float Rw = P[26];
+                var aim = Vector2.Lerp(new Vector2(P[40], P[41]), new Vector2(P[36], P[37]), 0.25f);
+                var td = (aim - wc).normalized; var mid = wc + td * (Rw + 3f); var side = new Vector2(-td.y, td.x) * F(6);
+                var m3 = storm.StormToWorld(new Vector3(mid.x, mid.y, 0f)); var c3 = storm.StormToWorld(new Vector3(mid.x + side.x * F(5), mid.y + side.y * F(5), 0f));
+                from = new Vector3(c3.x, 0f, c3.z);
+                from.y = (Physics.Raycast(from + Vector3.up * 3000f, Vector3.down, out var hit, 6000f) ? hit.point.y : 0f) + 3f;
+                var d = m3 - from; yaw = Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg;
+            }
+            cam.transform.SetPositionAndRotation(from, Quaternion.Euler(-F(8), yaw, 0f));
+            cam.fieldOfView = f.Length > 9 ? F(9) : 60f;
+            StormLabTestKit.Render(cam, Path.Combine(ShotDir, "light_warmup.png"), 2000, 750, 12);
+            storm.ResetHistory(cam);
+            StormLabTestKit.Render(cam, Path.Combine(ShotDir, $"light_spot_{k}_{tag}.png"), 2000, 750, 8);
+            for (int i = 1; i <= 3; i++)
+            {
+                foreach (var x in Wait(4f)) yield return x;
+                StormLabTestKit.Render(cam, Path.Combine(ShotDir, $"light_spot_{k}_{tag}_flow{i}.png"), 2000, 750, 8);
+            }
+            // the rain from above at 0.5 km, 40 km round the updraft (red: rain, green: cloud, blue: the near field), with the
+            // camera (white) and its rays at the frame's quarter, middle and three-quarter columns (yellow)
+            {
+                var vol = storm.Volume; int nv = vol.NV, iz = Mathf.Clamp(Mathf.FloorToInt(0.5f / StormVolume.ZT * vol.NZ), 0, vol.NZ - 1);
+                var req = UnityEngine.Rendering.AsyncGPUReadback.Request(vol.Dens, 0, 0, nv, 0, nv, iz, 1, TextureFormat.RGBA32);
+                req.WaitForCompletion();
+                if (!req.hasError)
+                {
+                    var d = req.GetData<byte>(); var u0 = storm.WorldToStorm(storm.UpdraftWorld(storm.StormTime));
+                    float L = StormVolume.L, cell = 2f * L / nv; int half = Mathf.RoundToInt(20f / cell), S = 2 * half;
+                    int cx = Mathf.FloorToInt((u0.x + L) / cell), cy = Mathf.FloorToInt((u0.y + L) / cell);
+                    var img = new Texture2D(S, S, TextureFormat.RGB24, false); var px = new Color32[S * S];
+                    for (int y = 0; y < S; y++) for (int x = 0; x < S; x++)
+                    {
+                        int gx = cx - half + x, gy = cy - half + y; if (gx < 0 || gy < 0 || gx >= nv || gy >= nv) continue;
+                        int i = (gy * nv + gx) * 4; px[y * S + x] = new Color32(d[i + 1], d[i], d[i + 2], 255);
+                    }
+                    void Mark(Vector3 sp, Color32 c) { int x = Mathf.FloorToInt((sp.x + L) / cell) - cx + half, y = Mathf.FloorToInt((sp.y + L) / cell) - cy + half; if (x >= 0 && y >= 0 && x < S && y < S) px[y * S + x] = c; }
+                    var camS = storm.WorldToStorm(cam.transform.position);
+                    foreach (float vx in new[] { 0.25f, 0.5f, 0.75f, 1390f / 2000f })
+                    {
+                        var r = cam.ViewportPointToRay(new Vector3(vx, 0.5f, 0f)); var dir = new Vector2(r.direction.x, r.direction.z).normalized;
+                        for (float t = 0; t < 40f; t += cell * 0.5f) Mark(camS + new Vector3(dir.x, dir.y, 0f) * t, vx > 0.6f && vx < 0.7f ? new Color32(255, 0, 255, 255) : new Color32(255, 255, 0, 255));
+                    }
+                    Mark(camS, new Color32(255, 255, 255, 255)); Mark(u0, new Color32(255, 255, 255, 255));
+                    Mark(new Vector3(P[72], P[73], 0f), new Color32(0, 255, 255, 255)); Mark(new Vector3(P[24], P[25], 0f), new Color32(0, 255, 0, 255));
+                    img.SetPixels32(px); img.Apply();
+                    File.WriteAllBytes(Path.Combine(ShotDir, $"light_spot_{k}_{tag}_map.png"), img.EncodeToPNG());
+                    Object.DestroyImmediate(img);
+                }
+            }
+            // with three times the march's steps (a ray that runs out of steps is folded to opaque) and its step counts
+            if (tag.Contains("steps"))
+            {
+                int ms0 = storm.maxSteps; storm.maxSteps = 2100; storm.ResetHistory(cam);
+                StormLabTestKit.Render(cam, Path.Combine(ShotDir, $"light_spot_{k}_{tag}_moresteps.png"), 2000, 750, 8);
+                storm.maxSteps = ms0; storm.tornadoCostProbe = 3; storm.ResetHistory(cam);
+                StormLabTestKit.Render(cam, Path.Combine(ShotDir, $"light_spot_{k}_{tag}_stepcount.png"), 2000, 750, 8);
+                storm.tornadoCostProbe = 0;
+            }
+            // and without rain (the cloud alone), to tell the rain's shapes from the cloud's
+            storm.hideRain = true; storm.StepTo(storm.StormTime, storm.Clock, true); storm.ResetHistory(cam);
+            StormLabTestKit.Render(cam, Path.Combine(ShotDir, $"light_spot_{k}_{tag}_norain.png"), 2000, 750, 8);
+            storm.hideRain = false; storm.StepTo(storm.StormTime, storm.Clock, true);
+            rep.AppendLine($"- view {k}: {views[k]} at {at:0.0} min ({storm.Frame.stage}), camera at {from}, frames `Screenshots/light_spot_{k}_{tag}*.png`");
+            // where the storm's parts are in the frame (pixels across, at the ground and at the base), to tell them apart
+            string Px(string n, float x, float y)
+            {
+                var w = storm.StormToWorld(new Vector3(x, y, 0f));
+                var g = cam.WorldToViewportPoint(new Vector3(w.x, 0f, w.z)); var b = cam.WorldToViewportPoint(new Vector3(w.x, P[4] * 1000f, w.z));
+                return g.z > 0f ? $"{n} x {g.x * 2000f:0} (ground y {(1f - g.y) * 750f:0}, base y {(1f - b.y) * 750f:0}), {g.z / 1000f:0.0} km" : $"{n} behind";
+            }
+            rep.AppendLine("  - " + string.Join("; ", Px("updraft", P[64], P[65]), Px("hail core", P[40], P[41]) + $" r {P[42]:0.0} km amount {P[43]:0.00}",
+                Px("forward-flank core", P[36], P[37]), Px("wall cloud", P[24], P[25]), Px("tornado", P[52], P[53]),
+                Px("RFD surge", P[72], P[73]) + $" r {P[74]:0.0} km, rain {P[46]:0.00}, wrap {P[47]:0.00}, slot {P[44]:0.00}"));
+            yield return null;
+        }
     }
 
     /// <summary>Mean linear luminance of a 15 x 15 pixel patch round a viewport point (0..1 each way, origin bottom left).</summary>
