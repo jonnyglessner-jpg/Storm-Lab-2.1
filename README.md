@@ -205,13 +205,23 @@ Tornado (`tornado`):
   changes over its life, skin (ragged, laminar, ghost), brightness, soil by region, suction vortices for big ones, a
   collar and a satellite. Drawn with 2.0's photo-matched funnel, debris, own sun test and horizon light; its flare is
   handed to the website's wall cloud where they meet.
-  Wedges are half a mile to two miles wide at the ground (`StormTornadoes.WedgeMinM/MaxM`; a bigger web-build cycle is
-  a wider wedge, and their wind and rating follow the width), with a smooth outline, and a wedge's (or multiple-vortex)
-  envelope takes the light of the wall cloud it hangs from, so it is that cloud's colour in any light (`-- --wedges`
-  checks the widths). Its sides slant evenly out to a top 1.5-2.1 times as wide as its foot (user, 2026-10-26). As it
+  Sizes and ratings by shape (user, 2026-10-29; `StormTornadoes.MinWidthM/MaxWidthM/MinEf/MaxEf`, visible width at
+  the ground): wedges 750 yd to 2 mi and EF3 or more (EF5 from 1000 yd); cones at most 500 yd and EF4; stovepipes 250 yd
+  and EF4; ropes (and sidewinders) 100 yd and EF2; elephant trunks 200 yd and EF2; drillbits 300 yd, the one other shape
+  that reaches EF5 (up to 750 yd then); dust whirls as drillbits in width, EF2 at most. A free storm's tornado is held to
+  them after its proportions are drawn (its wind and rating follow the held width, then the rating is held to the shape's
+  range); a game's `Rate` changes the shape first when its own cannot carry the rating (a wedge capped at EF2 becomes a
+  stovepipe, a rope raised to EF3-4 a cone, anything raised to EF5 a wedge on a low base or a drillbit on a high one),
+  then sizes it. `validation/parity/csharp -- --shapes` checks every tornado of 800 free storms and 300 games per setup.
+  Wedges (a bigger web-build cycle is a wider wedge) have a smooth outline, and a wedge's (or multiple-vortex)
+  envelope takes the light of the wall cloud it hangs from, so it is that cloud's colour in any light. Its sides slant
+  evenly out to a top 1.5-2.1 times as wide as its foot (user, 2026-10-26). As it
   ropes out it first narrows to 60 % of its width over 2 storm min, then its envelope breaks up into a scuddy collar from the ground up, whose ragged bottom lifts and rises into the
   base over the rope-out while the central vortex inside narrows to a rope.
-  Stovepipes are one laminar vortex, a quarter thinner than the website's. Cones and stovepipes come down as a thin
+  Stovepipes are one laminar vortex, a quarter thinner than the website's, their top at least 1.3 times their foot, and
+  their straight column curves out into the wall cloud from half way up (`TopFlare`, S_tor7.w: the march's trumpet
+  collar begins lower and more gently than the top-quarter crown every funnel has; a cone's half as far, its top 15 %
+  wider than the website's; user, 2026-10-29). Cones and stovepipes come down as a thin
   tube and widen once on the ground, each its own way (how fast, top or foot first, how thin, how much it snakes).
   `StormLabTests -slTornadoLife <preset> <seed> <cycle> [tag]` renders one tornado through its life (a tag with
   "early" shows its formation, "rope" its rope-out, "sharp" one unblended full-resolution frame from closer).

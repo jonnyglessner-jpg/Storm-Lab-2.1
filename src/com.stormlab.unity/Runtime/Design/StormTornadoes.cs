@@ -189,8 +189,8 @@ namespace StormLab
             // (StormDiag.vMed) grown with width; the rating follows the EF scale's 3-s gusts
             var main = FromWeb(web);
             t.widthM = 2 * groundKm / ShapeWidth(main) * 1000;
-            t.vmax = C.Clamp(Math.Max(P.vTor, 30) * Math.Pow(Math.Max(t.widthM, 40) / 250, 0.3), 29, 135);
-            t.ef = t.vmax < 38.5 ? 0 : t.vmax < 49.6 ? 1 : t.vmax < 60.8 ? 2 : t.vmax < 74.2 ? 3 : t.vmax < 89.9 ? 4 : 5;
+            t.vmax = WindOf(P.vTor, t.widthM);
+            t.ef = EfOf(t.vmax);
             t.rcKm = C.Clamp(0.5 * t.widthM / 1000 * 29.0 / t.vmax, 0.012, 0.6);
             // condensation (2.0's PickShape): high, dry bases leave a gap filled by a dust whirl
             double cond = C.Clamp(1.3 - (P.lclM - 700) / 1300, 0.2, 1) + 0.25 * C.Clamp((t.vmax - 45) / 50, 0, 1);
@@ -218,17 +218,124 @@ namespace StormLab
             t.ropeFrac = C.Clamp((goneMin - ropeMin) / Math.Max(t.LifeMin, 0.1), 0.1, 0.6);
             t.dust = dust;
             t.rainWrap = C.Clamp((P.hpness - 0.2) / 0.6, 0, 1) * r.Range(0.6, 1.0);
-            // what makes this tornado itself: 2.0's own stream for it
+            // what makes this tornado itself: 2.0's own stream for it; held within its shape's limits
             var ri = new StormRng(seed, 300 + k);
-            Individualise(t, P, region, ref ri);
+            Individualise(t, P, region, ref ri, true);
             DrawFormation(t, new StormRng(seed, 1100 + k));
             return t;
         }
 
         static readonly double[] EfGust = { 33, 44, 55, 67, 82, 95 };   // the middle of each EF rating's 3-s gusts, m/s
+        static readonly double[] EfLo = { 29, 38.5, 49.6, 60.8, 74.2, 89.9, 135.5 };   // where each rating's 3-s gusts begin, m/s (and past the top)
+        /// <summary>the rating of a peak 3-s gust, m/s</summary>
+        static int EfOf(double vmax) => vmax < 38.5 ? 0 : vmax < 49.6 ? 1 : vmax < 60.8 ? 2 : vmax < 74.2 ? 3 : vmax < 89.9 ? 4 : 5;
+        /// <summary>the wind of a tornado with a damage path widthM wide: the storm's median tornado (StormPlan.vTor) grown with width</summary>
+        static double WindOf(double vTor, double widthM) => C.Clamp(Math.Max(vTor, 30) * Math.Pow(Math.Max(widthM, 40) / 250, 0.3), 29, 135);
 
-        /// <summary>A wedge's visible width at the ground, m: half a mile to two miles (user, 2026-10-25).</summary>
-        public const double WedgeMinM = 0.5 * 1609.344, WedgeMaxM = 2 * 1609.344;
+        // Sizes and ratings by shape (user, 2026-10-29): what each shape can be, as its visible width at the ground and the
+        // EF ratings it can carry. A wedge is 750 yd to 2 mi wide and EF3 or more (EF5 only from 1000 yd); cones are at
+        // most 500 yd and EF4, stovepipes 250 yd and EF4, ropes 100 yd and EF2, elephant trunks 200 yd and EF2, drillbits
+        // 300 yd (the one other shape that reaches EF5, at up to 750 yd then). A sidewinder is a rope laid over, a dust
+        // whirl a weak tornado without a funnel to the ground: both as ropes in rating, the dust whirl as wide as a drillbit.
+        public const double Yd = 0.9144;
+        /// <summary>A wedge's visible width at the ground, m: 750 yd to two miles (user, 2026-10-29; was half a mile from
+        /// 2026-10-25), and the least an EF5 wedge is.</summary>
+        public const double WedgeMinM = 750 * Yd, WedgeMaxM = 2 * 1609.344, WedgeEf5MinM = 1000 * Yd;
+        public const double ConeMaxM = 500 * Yd, StovepipeMaxM = 250 * Yd, RopeMaxM = 100 * Yd, TrunkMaxM = 200 * Yd;
+        public const double DrillbitMaxM = 300 * Yd, DrillbitEf5MaxM = 750 * Yd;
+        /// <summary>the least a shape's visible ground width may be, m (only a wedge has a floor above the funnel's own)</summary>
+        public static double MinWidthM(FunnelShape s) => s == FunnelShape.Wedge ? WedgeMinM : 24;
+        /// <summary>the most a shape's visible ground width may be, m, at rating ef (a drillbit grows only as an EF5)</summary>
+        public static double MaxWidthM(FunnelShape s, int ef = 0) => s switch
+        {
+            FunnelShape.Wedge => WedgeMaxM, FunnelShape.Cone => ConeMaxM, FunnelShape.Stovepipe => StovepipeMaxM,
+            FunnelShape.Rope => RopeMaxM, FunnelShape.Sidewinder => RopeMaxM, FunnelShape.ElephantTrunk => TrunkMaxM,
+            FunnelShape.Drillbit => ef >= 5 ? DrillbitEf5MaxM : DrillbitMaxM, FunnelShape.DustWhirl => DrillbitMaxM, _ => 1900
+        };
+        /// <summary>the ratings a shape can carry (the multiple-vortex shape, "web:" presets only, any)</summary>
+        public static int MinEf(FunnelShape s) => s == FunnelShape.Wedge ? 3 : 0;
+        public static int MaxEf(FunnelShape s) => s switch
+        {
+            FunnelShape.Rope => 2, FunnelShape.Sidewinder => 2, FunnelShape.ElephantTrunk => 2, FunnelShape.DustWhirl => 2,
+            FunnelShape.Cone => 4, FunnelShape.Stovepipe => 4, _ => 5
+        };
+        /// <summary>A cone's or stovepipe's top flares out into the wall cloud (user, 2026-10-29): how far down the funnel
+        /// the trumpet begins (S_tor7.w; 0: the top quarter, as every funnel; 1: from half way up). Blended between phases.</summary>
+        public static double TopFlare(FunnelShape s) => s == FunnelShape.Stovepipe ? 1 : s == FunnelShape.Cone ? 0.5 : 0;
+        /// <summary>a stovepipe's top is at least this much wider than its foot; a cone's is this much wider than the web build's</summary>
+        public const double StovepipeTopMin = 1.3, ConeTopWiden = 1.15;
+
+        /// <summary>
+        /// A tornado within its shape's limits: its visible width at the ground held to MinWidthM..MaxWidthM (its top with it, a
+        /// wedge keeping its flare), its damage path, wind and rating from that width as in Make, then the rating held to what
+        /// the shape can carry (HoldRating). Its phases are sized afterwards, from the held width.
+        /// </summary>
+        static void Constrain(TornadoCharacter t, StormPlan P)
+        {
+            double D = 2000 * t.groundKm, Dc = C.Clamp(D, MinWidthM(t.shape), MaxWidthM(t.shape));
+            if (t.shape == FunnelShape.Wedge) SetWedgeWidth(t, Dc);
+            else if (Dc != D) { double k = Dc / D; t.groundKm *= k; t.topKm = Math.Max(t.topKm * k, t.groundKm); }
+            t.widthM = 2 * t.groundKm / ShapeWidth(t.shape) * 1000;
+            t.vmax = WindOf(P.vTor, t.widthM); t.ef = EfOf(t.vmax);
+            HoldRating(t);
+        }
+
+        /// <summary>The rating held to its shape's range (MinEf..MaxEf; an EF5 wedge is at least WedgeEf5MinM wide, a narrower
+        /// one is an EF4), and the wind to that rating's gusts; the radius of maximum wind follows.</summary>
+        static void HoldRating(TornadoCharacter t)
+        {
+            int lo = MinEf(t.shape), hi = MaxEf(t.shape);
+            if (t.shape == FunnelShape.Wedge && 2000 * t.groundKm < WedgeEf5MinM - 1e-6) hi = Math.Min(hi, 4);
+            if (t.ef > hi) { t.ef = hi; t.vmax = Math.Min(t.vmax, EfLo[hi + 1] - 0.5); }
+            else if (t.ef < lo) { t.ef = lo; t.vmax = Math.Max(t.vmax, EfLo[lo] + 0.5); }
+            t.rcKm = C.Clamp(0.5 * t.widthM / 1000 * 29.0 / t.vmax, 0.012, 0.6);
+        }
+
+        /// <summary>Every phase within its own shape's width at rating ef (a wedge's cone start no wider than a cone may be);
+        /// the phases in the tornado's own shape take its size.</summary>
+        static void ClampPhases(TornadoCharacter t, int ef)
+        {
+            if (t.phases == null) return;
+            for (int i = 0; i < t.phases.Length; i++)
+            {
+                var p = t.phases[i];
+                if (p.shape == t.shape) { p.groundKm = t.groundKm; p.topKm = t.topKm; }
+                else
+                {
+                    double D = 2000 * p.groundKm, Dc = Math.Min(D, MaxWidthM(p.shape, ef));
+                    if (Dc < D) { double k = Dc / D; p.groundKm *= k; p.topKm = Math.Max(p.topKm * k, p.groundKm); }
+                }
+                t.phases[i] = p;
+            }
+        }
+
+        /// <summary>
+        /// A tornado changed to shape s, for a rating its own shape cannot carry (Rate): 2.0's geometry for s at its damage
+        /// path, as one phase, with that shape's vortices, collar, skin and brightness; its lean follows the new profile (wedges
+        /// stand nearly upright); its soil, formation, satellite and the web build's milestones stay its own.
+        /// </summary>
+        static void Reshape(TornadoCharacter t, StormPlan P, FunnelShape s)
+        {
+            var r = new StormRng(P.seed ?? 1701, 1200 + t.cycle);
+            bool wasBig = t.shape == FunnelShape.Wedge || t.shape == FunnelShape.MultiVortex, big = s == FunnelShape.Wedge || s == FunnelShape.MultiVortex;
+            double oldProfile = t.profile;
+            t.shape = s;
+            BaseGeometry(s, t.widthM, big ? 0.5 : r.U(), out t.groundKm, out t.topKm, out t.profile, out t.sinuosity);
+            if (s == FunnelShape.Stovepipe) t.topKm = Math.Max(t.topKm, t.groundKm * StovepipeTopMin);
+            t.phases = new[] { new FunnelPhase { shape = s, startFrac = 0, groundKm = t.groundKm, topKm = t.topKm, profile = t.profile, sinuosity = t.sinuosity, cond = 1 } };
+            // vortices and collar as Make: a wedge may start as multiple vortices; a stovepipe never has them
+            t.subVortices = 0; t.multiFrac = 0;
+            if (s == FunnelShape.Wedge && r.U() < 0.55) { t.subVortices = 3 + (int)(r.U() * 3); t.multiFrac = r.Range(0.15, 0.3); }
+            t.collar = s == FunnelShape.Wedge && t.LifeMin > 10 && r.U() < 0.6;
+            // a wedge is loaded with rain and debris: its funnel reaches the ground
+            if (big) t.condReach = Math.Max(t.condReach, 0.7);
+            t.leanKm *= (1 - 0.7 * t.profile) / Math.Max(1 - 0.7 * oldProfile, 1e-3);
+            // skin as Individualise: a stovepipe is laminar, a wedge never a ghost and smooth in outline
+            if (s == FunnelShape.Stovepipe && t.skin != FunnelSkin.Laminar) { t.skin = FunnelSkin.Laminar; t.roughness = r.Range(0.18, 0.35); t.striation = r.Range(0.6, 1.0); t.ghost = 0; }
+            if (big && t.skin == FunnelSkin.Ghost) { t.skin = FunnelSkin.Ragged; t.roughness = r.Range(0.8, 1.5); t.striation = r.Range(0.0, 0.35); t.ghost = 0; }
+            if (s == FunnelShape.Wedge && t.skin == FunnelSkin.Ragged && t.roughness > 0.75) t.roughness = 0.45 + (t.roughness - 0.8) / 0.7 * 0.3;
+            if (big != wasBig) t.albedo = C.Clamp(t.albedo * (big ? 0.72 : 1 / 0.72), 0.5, 1.2);
+        }
         /// <summary>A wedge's top over its foot (user, 2026-10-26: a wider top, its sides more slanted; was 1.1-1.6), and
         /// how much wider than its foot its top may be at most, km.</summary>
         public const double WedgeFlareMin = 1.5, WedgeFlareMax = 2.1, WedgeTopReachKm = 1.3;
@@ -247,8 +354,8 @@ namespace StormLab
             double u = C.Clamp((t.topKm / Math.Max(t.groundKm, 1e-3) - 1.1) / 0.5, 0, 1);
             t.topKm = t.groundKm * C.Lerp(WedgeFlareMin, WedgeFlareMax, u);
             SetWedgeWidth(t, D);
-            t.vmax = C.Clamp(Math.Max(P.vTor, 30) * Math.Pow(Math.Max(t.widthM, 40) / 250, 0.3), 29, 135);
-            t.ef = t.vmax < 38.5 ? 0 : t.vmax < 49.6 ? 1 : t.vmax < 60.8 ? 2 : t.vmax < 74.2 ? 3 : t.vmax < 89.9 ? 4 : 5;
+            t.vmax = WindOf(P.vTor, t.widthM);
+            t.ef = EfOf(t.vmax);
             t.rcKm = C.Clamp(0.5 * t.widthM / 1000 * 29.0 / t.vmax, 0.012, 0.6);
         }
 
@@ -294,7 +401,7 @@ namespace StormLab
             if (shape == FunnelShape.Stovepipe) { t.subVortices = 0; t.multiFrac = 0; }
             t.collar = shape == FunnelShape.Wedge && t.LifeMin > 10 && r.U() < 0.6;
             t.rainWrap = 0;
-            Individualise(t, P, region, ref r);
+            Individualise(t, P, region, ref r, false);   // (a tool's tornado is what it was asked for, outside the shape limits)
             t.phases = new[] { new FunnelPhase { shape = shape, groundKm = t.groundKm, topKm = t.topKm, profile = t.profile, sinuosity = t.sinuosity, cond = 1, sideKm = shape == FunnelShape.Sidewinder ? 0.6 : 0 } };
             t.satellite = false; t.leanKm = 0;
             DrawFormation(t, new StormRng(7, 1100));
@@ -304,17 +411,21 @@ namespace StormLab
         /// <summary>
         /// Give a tornado a rating (StormScenario's tiers and caps): its peak wind is that rating's, and its damage path and
         /// funnel grow or shrink to the width that wind goes with (the inverse of Make's wind from width), so a game's
-        /// strongest tornado looks the part. vTor: the storm's median tornado wind (StormPlan.vTor).
+        /// strongest tornado looks the part. A shape that cannot carry the rating changes first (user, 2026-10-29): a wedge
+        /// held below EF3 becomes a stovepipe (EF2) or a cone; a rope, elephant trunk, sidewinder or dust whirl raised to
+        /// EF3-4 becomes a cone; anything but a wedge or drillbit raised to EF5 becomes a wedge on a low base or a drillbit
+        /// on a high one (StormGame's rule). Then the width is held within the shape's limits at that rating (an EF5 wedge at
+        /// least WedgeEf5MinM wide, an EF5 drillbit up to DrillbitEf5MaxM). P: the storm's plan (its median tornado wind vTor).
         /// </summary>
-        public static void Rate(TornadoCharacter t, int ef, double vTor)
+        public static void Rate(TornadoCharacter t, int ef, StormPlan P)
         {
             if (t == null) return;
             ef = Math.Max(0, Math.Min(ef, 5));
-            double widthM = C.Clamp(250 * Math.Pow(EfGust[ef] / Math.Max(vTor, 30), 1 / 0.3), 40, 2600);
+            if (ef < MinEf(t.shape)) Reshape(t, P, ef >= 2 ? FunnelShape.Stovepipe : FunnelShape.Cone);
+            else if (ef > MaxEf(t.shape)) Reshape(t, P, ef >= 5 ? (P.zb > 1.9 ? FunnelShape.Drillbit : FunnelShape.Wedge) : FunnelShape.Cone);
+            double widthM = C.Clamp(250 * Math.Pow(EfGust[ef] / Math.Max(P.vTor, 30), 1 / 0.3), 40, 2600);
             double k = widthM / Math.Max(t.widthM, 1);
-            t.ef = ef; t.vmax = EfGust[ef]; t.widthM = widthM;
-            t.rcKm = C.Clamp(0.5 * widthM / 1000 * 29.0 / t.vmax, 0.012, 0.6);
-            double wedgeD = t.shape == FunnelShape.Wedge ? C.Clamp(2000 * t.groundKm * k, WedgeMinM, WedgeMaxM) : 0;
+            t.ef = ef; t.vmax = EfGust[ef];
             t.groundKm = C.Clamp(t.groundKm * k, 0.012, 0.95); t.topKm = C.Clamp(t.topKm * k, t.groundKm, 1.4);
             if (t.phases != null)
                 for (int i = 0; i < t.phases.Length; i++)
@@ -323,12 +434,13 @@ namespace StormLab
                     p.groundKm = C.Clamp(p.groundKm * k, 0.012, 0.95); p.topKm = C.Clamp(p.topKm * k, p.groundKm, 1.4);
                     t.phases[i] = p;
                 }
-            // a wedge stays half a mile to two miles wide whatever its rating (its wind is the rating's)
-            if (wedgeD > 0)
-            {
-                SetWedgeWidth(t, wedgeD);
-                t.rcKm = C.Clamp(0.5 * t.widthM / 1000 * 29.0 / t.vmax, 0.012, 0.6);
-            }
+            // within the shape's width at this rating (a wedge keeps its flare, and is at least WedgeEf5MinM wide as an EF5)
+            double D = 2000 * t.groundKm, Dc = C.Clamp(D, t.shape == FunnelShape.Wedge && ef >= 5 ? WedgeEf5MinM : MinWidthM(t.shape), MaxWidthM(t.shape, ef));
+            if (t.shape == FunnelShape.Wedge) SetWedgeWidth(t, Dc);
+            else if (Dc != D) { double kc = Dc / D; t.groundKm *= kc; t.topKm = Math.Max(t.topKm * kc, t.groundKm); }
+            t.widthM = 2 * t.groundKm / ShapeWidth(t.shape) * 1000;
+            t.rcKm = C.Clamp(0.5 * t.widthM / 1000 * 29.0 / t.vmax, 0.012, 0.6);
+            ClampPhases(t, ef);
         }
 
         /// <summary>
@@ -371,8 +483,10 @@ namespace StormLab
         /// <summary>
         /// 2.0's StormGenome.Individualise: the draws that make a tornado look like itself rather than its shape's average, its
         /// proportions and lean, the shapes it passes through, its skin and brightness, the soil it lofts, and a satellite.
+        /// constrain: hold it within its shape's limits (Constrain, ClampPhases) once its proportions are drawn; the draws are
+        /// the same either way.
         /// </summary>
-        static void Individualise(TornadoCharacter t, StormPlan P, ClimoRegion region, ref StormRng r)
+        static void Individualise(TornadoCharacter t, StormPlan P, ClimoRegion region, ref StormRng r, bool constrain)
         {
             double zb = C.Clamp(P.lclM / 1000, 0.4, 2.8);
             double dry = C.Clamp((P.lclM - 1300) / 900, 0, 1), hp = P.hpness, wetHp = C.Clamp(hp, 0, 1);
@@ -383,8 +497,13 @@ namespace StormLab
             t.profile = C.Clamp(t.profile + pJ, 0.03, 1);
             // a wedge: half a mile to two miles wide (before its phases, which are sized from its width)
             if (t.shape == FunnelShape.Wedge) SizeWedge(t, P, gS);
-            // a stovepipe: a quarter thinner than the web build's (user, 2026-10-26)
-            if (t.shape == FunnelShape.Stovepipe) { t.groundKm = Math.Max(t.groundKm * StovepipeSlim, 0.012); t.topKm = Math.Max(t.topKm * StovepipeSlim, t.groundKm); }
+            // a stovepipe: a quarter thinner than the web build's (user, 2026-10-26), its top wider than its foot (user,
+            // 2026-10-29: wider at the top, curving out into the wall cloud; the curve is TopFlare, drawn in the march)
+            if (t.shape == FunnelShape.Stovepipe) { t.groundKm = Math.Max(t.groundKm * StovepipeSlim, 0.012); t.topKm = Math.Max(t.topKm * StovepipeSlim, t.groundKm * StovepipeTopMin); }
+            // a cone: a bit wider at the top than the web build's (user, 2026-10-29)
+            if (t.shape == FunnelShape.Cone) t.topKm = Math.Min(t.topKm * ConeTopWiden, 1.4);
+            // within its shape's width and ratings (user, 2026-10-29), before its phases are sized from its width
+            if (constrain) Constrain(t, P);
 
             // its life: many tornadoes change shape. Strong ones often start as a cone and grow into a stovepipe or wedge; a
             // wedge can narrow again before it ropes out; drillbits fill out into cones; elephant trunks thin into ropes, and
@@ -418,6 +537,7 @@ namespace StormLab
             }
             for (int i = 0; i < ph.Count; i++) { var p = ph[i]; if (p.shape == FunnelShape.Sidewinder) { p.sideKm = side; ph[i] = p; } }
             t.phases = ph.ToArray();
+            if (constrain) ClampPhases(t, t.ef);
             t.sideAngle = Math.PI + r.Range(-1.1, 1.1);
 
             // lean: most trail their ground end behind the storm, a few lead it; wedges stand nearly upright
@@ -502,13 +622,13 @@ namespace StormLab
             double lifeFrac = C.Clamp((tMin - tg.formMin) / Math.Max(tg.LifeMin, 0.1), 0, 1);
 
             // its life story: the phases blended in turn, each over MorphFrac of the life (2.0's TornadoOf)
-            double pg = tg.groundKm, pt = tg.topKm, pc = 1, psd = 0, profile = tg.profile, sinu = tg.sinuosity;
+            double pg = tg.groundKm, pt = tg.topKm, pc = 1, psd = 0, profile = tg.profile, sinu = tg.sinuosity, flare = TopFlare(tg.shape);
             var phaseShape = tg.shape;
             var ph = tg.phases;
             if (ph != null && ph.Length > 0)
             {
                 pg = ph[0].groundKm; pt = ph[0].topKm; profile = ph[0].profile; sinu = ph[0].sinuosity; pc = ph[0].cond; psd = ph[0].sideKm;
-                phaseShape = ph[0].shape;
+                phaseShape = ph[0].shape; flare = TopFlare(ph[0].shape);
                 for (int i = 1; i < ph.Length; i++)
                 {
                     double w = Ramp(lifeFrac, ph[i].startFrac, ph[i].startFrac + TornadoCharacter.MorphFrac);
@@ -516,6 +636,7 @@ namespace StormLab
                     pg = C.Lerp(pg, ph[i].groundKm, w); pt = C.Lerp(pt, ph[i].topKm, w);
                     profile = C.Lerp(profile, ph[i].profile, w); sinu = C.Lerp(sinu, ph[i].sinuosity, w);
                     pc = C.Lerp(pc, ph[i].cond, w); psd = C.Lerp(psd, ph[i].sideKm, w);
+                    flare = C.Lerp(flare, TopFlare(ph[i].shape), w);
                     if (w >= 0.5) phaseShape = ph[i].shape;
                 }
             }
@@ -613,7 +734,7 @@ namespace StormLab
             double spin = C.Clamp(tg.WindAt(rv) / (rv * 1000), 0.05, 2.0) * (0.6 + 0.4 * form);
             double vmax = tg.vmax * (0.55 + 0.45 * form) * (1 - 0.5 * rope);
             Set(Slot0, spin, vmax, tg.rcKm * (1 - 0.5 * rope), envelope > 0.3 ? 1.35 : 2.4);
-            Set(Slot0 + 1, tg.rainWrap, (int)phaseShape, tg.ef, lifeFrac);
+            Set(Slot0 + 1, tg.rainWrap, (int)phaseShape, tg.ef, flare);
             Set(Slot0 + 2, tg.albedo, tg.roughness, tg.ghost, tg.striation);
             Set(Slot0 + 3, tg.soilR, tg.soilG, tg.soilB, tg.dirt * Ramp(lifeFrac, 0.02, 0.15));
             // the plane the funnel bends in: across the lean, so a rope's S curve and its lean are not the same bend

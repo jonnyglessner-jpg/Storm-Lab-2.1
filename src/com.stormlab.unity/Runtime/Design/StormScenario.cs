@@ -140,11 +140,11 @@ namespace StormLab
                 }
                 // ratings: every tornado of the game capped at the game's top rating; the headline storm's strongest made it
                 var inGame = st.InGame(gameMinutes, pace).ToList();
-                foreach (var t in inGame) if (t.ef > topEf) StormTornadoes.Rate(t, topEf, st.plan.vTor);
+                foreach (var t in inGame) if (t.ef > topEf) StormTornadoes.Rate(t, topEf, st.plan);
                 if (i == headline && inGame.Count > 0)
                 {
                     var best = inGame.OrderByDescending(t => t.ef).ThenByDescending(t => t.widthM).First();
-                    StormTornadoes.Rate(best, topEf, st.plan.vTor);
+                    StormTornadoes.Rate(best, topEf, st.plan);
                 }
                 storms.Add(st);
             }
