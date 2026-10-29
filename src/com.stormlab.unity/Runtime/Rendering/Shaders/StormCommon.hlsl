@@ -55,6 +55,16 @@ float ss(float a, float b, float x) { float t = saturate((x - a) / (b - a)); ret
 // The light grid stores the sun's optical depth in r, not its transmittance, so the physical lighting can light each
 // multiple-scattering octave from it (StormLab 2.0). sunT is the web build's two-lobe transmittance of that depth.
 float sunT(float tau) { return 0.72 * exp(-0.38 * tau) + 0.28 * exp(-0.07 * tau); }
+// The unified lighting's share of the key light reaching a point under optical depth tau, as a share of open air's:
+// StormMarch.compute's stormLight sun for an isotropic medium (its octaves and the light diffused through the cloud,
+// 1 / (1 + a tau)). Used where the storm lights or shades something else (the ground it shadows, the bounce off it) so
+// that responds as the cloud does. m: x octaves, y each octave's extinction factor, z diffusion (a), w diffused sun.
+float sunReach(float tau, float4 m)
+{
+    float s = 0.0, s0 = 0.0, b = 1.0, k = 0.38;
+    [unroll] for (int i = 0; i < 4; i++) { if (i >= (int)m.x) break; s += b * exp(-k * tau); s0 += b; b *= 0.5; k *= m.y; }
+    return (s + m.w * (1.0 - exp(-0.1 * tau)) / (1.0 + m.z * max(tau, 0.0))) / max(s0, 1e-4);
+}
 
 // ---------------------------------------------------------------------------------------------------- NOISE
 float n3(float3 p) { return _Noise.SampleLevel(sampler_LinearRepeat, p, 0); }

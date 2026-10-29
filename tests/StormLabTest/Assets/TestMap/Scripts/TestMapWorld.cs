@@ -71,6 +71,8 @@ namespace StormLab.TestMap
         void Start()
         {
             if (car && spots.Length > 0) TeleportTo(Mathf.Clamp(startSpot, 0, spots.Length - 1));
+            // the towns lighting the storms' bases at night
+            TestMapTowns.Register(this, "TestMapNav");
             if (storm) { storm.minutesPerSecond = Timelapses[timelapseIndex] / 60f; SpawnStorm(); }
             // the storm and lighting panel, also in scenes built before it existed
             if (storm && !GetComponent<TestMapStormPanel>()) { var panel = gameObject.AddComponent<TestMapStormPanel>(); panel.world = this; panel.storm = storm; }

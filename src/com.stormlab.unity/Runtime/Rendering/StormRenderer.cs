@@ -212,6 +212,18 @@ namespace StormLab
         public const string VolumeSampler = "StormLab.Volume", MarchSampler = "StormLab.March", CompositeSampler = "StormLab.Composite";
         public static StormRenderer Active { get; private set; }
         public static readonly List<StormRenderer> Enabled = new List<StormRenderer>();
+        /// <summary>A town whose lights glow on cloud bases at night: where it is (world), how far it spreads (m) and how
+        /// bright it is (1: a town of about 15,000; StormRenderer.lightPollution scales them all).</summary>
+        public struct TownGlow { public Vector3 position; public float radiusM, glow; }
+        /// <summary>The towns lighting the storms' bases at night, set by the game (the first StormVolume.MaxTowns count).
+        /// None: every base takes lightPollution's town light evenly, as before.</summary>
+        public static readonly List<TownGlow> Towns = new List<TownGlow>();
+        /// <summary>with towns given: the town light over open country, as a share of the even town light (StormVolume.compute
+        /// GroundLight; the horizon's and the haze's town glow, SkyLight.townSky)</summary>
+        public const float TownFloor = 0.15f;
+        /// <summary>the unified lighting's sun reach (StormCommon.hlsl sunReach) for what the storm shades besides itself
+        /// (its ground light, StormSceneShadow); zero for the other lightings</summary>
+        public Vector4 SunReach => lighting == StormLighting.Unified ? new Vector4(scatterOctaves, octaveExtinction, diffusion, diffuseSun) : Vector4.zero;
         public bool ReadyToRender => Volume != null && hasFrame;
         /// <summary>wall-clock seconds, for spin inside features (the web build's clock)</summary>
         public float Clock { get => (float)clock; private set => clock = value; }
@@ -415,7 +427,7 @@ namespace StormLab
                 return new SkyLight
                 {
                     keyDir = sunVol, keyIsMoon = false, keyC = new Vector4(0.95f, 0.95f * 0.82f, 0.95f * 0.6f, el),
-                    skyC = new Vector4(0.42f, 0.52f, 0.68f, 1f), dim = 1f, townLight = 0f, level = 1f, gain = 1f, night = 0f, dark = 0f
+                    skyC = new Vector4(0.42f, 0.52f, 0.68f, 1f), dim = 1f, townLight = 0f, townSky = 1f, level = 1f, gain = 1f, night = 0f, dark = 0f
                 };
             }
         }
@@ -517,6 +529,14 @@ namespace StormLab
             Volume.precipParams = ClearParams;
             float rainScale = lighting == StormLighting.Unified ? rainExtinction : 1f;
             if (rainScale != Volume.rainScale) { Volume.rainScale = rainScale; hasFrame = false; }
+            Volume.sunReach = SunReach;
+            Volume.townCount = 0;
+            foreach (var tw in Towns)
+            {
+                if (Volume.townCount >= StormVolume.MaxTowns) break;
+                var tp = WorldToStorm(tw.position);
+                Volume.towns[Volume.townCount++] = new Vector4(tp.x, tp.y, tw.radiusM / 1000f, tw.glow);
+            }
             if (!hasFrame || rebuildNow || double.IsNaN(lastBuilt))
             {
                 Volume.Update(frameCmd, Frame.param, noise, lt.keyDir);
@@ -617,9 +637,10 @@ namespace StormLab
             cmd.SetComputeVectorParam(marchCs, "_CamTan", new Vector4(tanX, tanY, 0, 0));
             cmd.SetComputeVectorParam(marchCs, "_Res", new Vector4(w, h, 1f / w, 1f / h));
             var lt = Lighting;
+            if (Towns.Count > 0) lt.townSky = TownFloor;
             cmd.SetComputeVectorParam(marchCs, "_Sun", lt.keyDir);
             cmd.SetComputeVectorParam(marchCs, "_SunC", lt.keyC); cmd.SetComputeVectorParam(marchCs, "_SkyC", lt.skyC);
-            cmd.SetComputeVectorParam(marchCs, "_SkyP", new Vector4(lt.dim, lt.townLight, lt.keyIsMoon ? 1 : 0, 0));
+            cmd.SetComputeVectorParam(marchCs, "_SkyP", new Vector4(lt.dim, lt.townLight, lt.keyIsMoon ? 1 : 0, lt.townSky));
             // w: the lightning's scale in the cloud (undoing the storm's own night gain, or the game's: LightningScale)
             cmd.SetComputeVectorParam(marchCs, "_Night", new Vector4(lt.gain, lt.night, nightFill * lt.dark, nightAdaptation ? 1f / Mathf.Max(lt.gain, 1f) : LightningScale));
             float model = lighting == StormLighting.Unified ? 2 : lighting == StormLighting.Physical ? 1 : 0;

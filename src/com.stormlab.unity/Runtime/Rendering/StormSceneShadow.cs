@@ -3,7 +3,8 @@
 // through every storm on (StormRenderer.Enabled), each multiplying its shadow in (StormShadow.compute), centred on the
 // camera and refreshed every refreshSeconds. A directional cookie is projected along the light from the light's position,
 // so the component keeps its light there. StormRenderer adds it to its sun when castSceneShadow is on, in Play.
-// The storm's own lighting is unchanged: its march does not read HDRP's sun.
+// The storm's own lighting is unchanged: its march does not read HDRP's sun. Under the unified lighting the shadow takes
+// the storm's rain extinction and its sun reach (light diffused through the cloud), as the cloud's own light does.
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.HighDefinition;
@@ -20,6 +21,9 @@ namespace StormLab
         [Tooltip("seconds between updates (the storm volume itself is repainted every few seconds)")]
         public float refreshSeconds = 0.25f;
 
+        /// <summary>the cookie (r: the share of sunlight through the storms), centred on the camera in the light's plane, for checks</summary>
+        public RenderTexture Cookie => rt;
+
         Light sun; HDAdditionalLightData hd;
         RenderTexture rt; ComputeShader cs; int kernel = -1;
         float last = -1e9f; bool showing;
@@ -27,6 +31,7 @@ namespace StormLab
         static readonly int DensId = Shader.PropertyToID("_Dens"), CookieId = Shader.PropertyToID("_Cookie");
         static readonly int OId = Shader.PropertyToID("_CkO"), RId = Shader.PropertyToID("_CkR"), UId = Shader.PropertyToID("_CkU");
         static readonly int LId = Shader.PropertyToID("_CkL"), VId = Shader.PropertyToID("_CkV"), PId = Shader.PropertyToID("_CkP");
+        static readonly int MId = Shader.PropertyToID("_CkM");
 
         /// <summary>The shadow on a sun, added if it has none.</summary>
         public static StormSceneShadow For(Light sun)
@@ -80,7 +85,10 @@ namespace StormLab
                 cs.SetVector(UId, StormRenderer.WorldToStormDir(up));
                 var l = StormRenderer.WorldToStormDir(toLight);
                 cs.SetVector(LId, new Vector4(l.x, l.y, l.z, n));
-                cs.SetVector(VId, new Vector4(StormVolume.L, StormVolume.ZT, StormVolume.CloudMax, StormVolume.RainMax));
+                // rain and the light through the cloud as the storm's own lighting has them (unified: its rain extinction and
+                // sun reach), so the ground under a rain shaft is no brighter than the rain above it
+                cs.SetVector(VId, new Vector4(StormVolume.L, StormVolume.ZT, StormVolume.CloudMax, StormVolume.RainMax * s.Volume.rainScale));
+                cs.SetVector(MId, s.SunReach);
                 cs.SetVector(PId, new Vector4(first ? 1 : 0, 0, 0, 0));
                 cs.Dispatch(kernel, (n + 7) / 8, (n + 7) / 8, 1);
                 first = false;

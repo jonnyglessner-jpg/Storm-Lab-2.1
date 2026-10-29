@@ -431,6 +431,12 @@ void Build(uint3 gid : SV_DispatchThreadID)
         rain = max(rain, 0.9 * (1.0 + 0.3 * S_up.w) * S_ffd.w * slotWrap * arc * curt * hgt * ss(reachW - 0.2, reachW + 0.3, p.z));
     }
     rain *= precipClear(p);   // game adaptation (StormTilt), not the web build's
+    // ---- game adaptation (user, 2026-10-28: vertical seams in two-storm views; the Tilted layout): above the base, rain
+    // only inside cloud. The web build's forward-flank curtains rise into the anvil (precipTop), so between the forward-flank
+    // deck and the anvil they hung in clear air: a sunlit white wall as tall as the storm with a vertical edge, hiding the
+    // storm behind it (game_15: a rain optical depth of 40 above base + 2 km). Precipitation aloft is in the cloud it falls
+    // from; the shafts come out of the deck's and the anvil's undersides.
+    if (_PrecipP.w > 0.0) rain *= lerp(1.0, ss(0.03, 0.25, cloud), ss(zb + 0.8, zb + 2.5, p.z));
     if (_RainKeepP.x > 0.5) rain *= _RainKeep[id.xy];   // game adaptation (RainUnderCloud below)
     _OutD[id] = float4(sqrt(saturate(cloud)), sqrt(saturate(rain)), sqrt(saturate(nearV)), ms / mw);
 }
@@ -603,8 +609,16 @@ void SkyVis(uint3 gid : SV_DispatchThreadID)
 // ------------------------------------------------------------------------------------------------ ground light
 // StormLab 2.0: how lit the ground is, averaged over the 4 km a cloud base above it sees (13 taps): r the sun's (or
 // moon's) transmittance to the ground, g its sky from above. The march turns it into light bounced up onto undersides.
-RWTexture2D<float2> _OutG;
+// Unified lighting (_LM.x > 0): the sun's share as the unified lighting has it (sunReach), as the scene's shadow does.
+// b: town light on the base above, relative to StormRenderer.lightPollution's (1 where no towns are given): the towns
+// in _Towns (storm frame, km: xy, radius, glow), each a lit disc whose light on a base zb up falls off as
+// 1 / (1 + d^2 / (r + zb)^2)^2 (a Lambertian source seen from above), over a faint rural floor: a town of 15,000 (glow 1)
+// lights the base over it 4x as brightly as the even town light, open country about a seventh as brightly.
+RWTexture2D<float4> _OutG;
 Texture3D<float4> _LightIn;
+float4 _LM;
+float4 _Towns[16];
+float4 _TownP;   // x: how many towns, y: the open country's share (StormRenderer.TownFloor)
 
 [numthreads(8, 8, 1)]
 void GroundLight(uint3 id : SV_DispatchThreadID)
@@ -619,7 +633,19 @@ void GroundLight(uint3 id : SV_DispatchThreadID)
         float r = k == 0 ? 0.0 : (k <= 6 ? 2.0 : 4.0);
         float a = k * 1.0472 + (k > 6 ? 0.5236 : 0.0);
         float4 l = _LightIn.SampleLevel(sampler_LinearClamp, luvw(float3(p + r * float2(cos(a), sin(a)), 0.05)), 0);
-        acc += float2(sunT(l.r), l.g);
+        acc += float2(_LM.x > 0.5 ? sunReach(l.r, _LM) : sunT(l.r), l.g);
     }
-    _OutG[id.xy] = acc / 13.0;
+    float town = 1.0;
+    if (_TownP.x > 0.5)
+    {
+        town = _TownP.y;
+        for (int i = 0; i < (int)_TownP.x; i++)
+        {
+            float a = _Towns[i].z + max(_LP.w, 0.5);
+            float2 dd = p - _Towns[i].xy;
+            float f = 1.0 / (1.0 + dot(dd, dd) / (a * a));
+            town += 4.0 * _Towns[i].w * f * f;
+        }
+    }
+    _OutG[id.xy] = float4(acc / 13.0, town, 0.0);
 }

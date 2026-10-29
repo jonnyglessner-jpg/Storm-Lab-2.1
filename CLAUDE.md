@@ -34,6 +34,8 @@ README.md has the layout, use, checks and known gaps.
 - Lighting (`lighting = Unified`, the default since 2026-10-28; user: "everything on the storm needs to respond the same
   way"): every medium takes its light from `stormLight` in StormMarch.compute and differs only in its phase function,
   albedo and scattering octaves. Never give a part of the storm its own light formula or multiplier; fix the shared one.
+  What the storm shades besides itself (the scene's sun cookie, its ground light) takes the sun the same way
+  (`sunReach` in StormCommon.hlsl, and the rain extinction); check with `StormLightCheck -slLightScene`.
   Check with `StormLightCheck` (physical beside unified, at 17 h and 18.8 h).
 - Funnels are smooth (no vertical grooves), as in 2.0.
 - `Runtime/Lightning` (core) is 2.0's unchanged code but for its namespace and the `ThunderOverride` hook (2026-10-26,

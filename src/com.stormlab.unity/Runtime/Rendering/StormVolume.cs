@@ -26,6 +26,13 @@ namespace StormLab
         public Vector4 precipParams;
         /// <summary>rain's extinction in the light grids as a multiple of RainMax (the unified lighting's rainExtinction; 1 otherwise)</summary>
         public float rainScale = 1f;
+        /// <summary>the unified lighting's sun reach (StormCommon.hlsl sunReach: octaves, octave extinction, diffusion,
+        /// diffused sun) for the ground light; zero for the other lightings (sunT)</summary>
+        public Vector4 sunReach;
+        /// <summary>the towns lighting the base at night, storm frame (km: x, y, radius, glow), and how many (StormRenderer.Towns)</summary>
+        public readonly Vector4[] towns = new Vector4[MaxTowns];
+        public int townCount;
+        public const int MaxTowns = 16;
 
         public RenderTexture Dens => dens;
         public RenderTexture LightTex => light;
@@ -33,7 +40,7 @@ namespace StormLab
         public RenderTexture LightWebTex => lightWeb;
         public RenderTexture SkyVisTex => skyVis;
         public RenderTexture GroundTex => ground;
-        public long VramBytes => 4L * NV * NV * NZ + 9L * LN * LN * LZ + 8L * SN * SN * SZ + 4L * LN * LN + 2L * NV * NV;
+        public long VramBytes => 4L * NV * NV * NZ + 9L * LN * LN * LZ + 8L * SN * SN * SZ + 8L * LN * LN + 2L * NV * NV;
 
         readonly RenderTexture dens, light, lightWeb, skyVis, ground;
         // RainUnderCloud's share of the rain kept per column, from the last repaint (a slab repaint applies it as it writes)
@@ -59,7 +66,7 @@ namespace StormLab
             light = Vol(LN, LZ, "storm light", RenderTextureFormat.ARGBHalf);       // r: key light optical depth
             lightWeb = Vol(LN, LZ, "storm light (web build)", RenderTextureFormat.R8);
             skyVis = Vol(SN, SZ, "storm sky visibility", RenderTextureFormat.ARGBHalf);
-            ground = new RenderTexture(LN, LN, 0, RenderTextureFormat.RGHalf, RenderTextureReadWrite.Linear)
+            ground = new RenderTexture(LN, LN, 0, RenderTextureFormat.ARGBHalf, RenderTextureReadWrite.Linear)
             {
                 enableRandomWrite = true, useMipMap = false, wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear,
                 name = "storm ground light", hideFlags = HideFlags.DontSave
@@ -140,6 +147,9 @@ namespace StormLab
 
             cmd.SetComputeTextureParam(cs, kGround, "_LightIn", light);
             cmd.SetComputeTextureParam(cs, kGround, "_OutG", ground);
+            cmd.SetComputeVectorParam(cs, "_LM", sunReach);
+            cmd.SetComputeVectorArrayParam(cs, "_Towns", towns);
+            cmd.SetComputeVectorParam(cs, "_TownP", new Vector4(townCount, StormRenderer.TownFloor, 0, 0));
             cmd.SetComputeVectorParam(cs, "_LDims", new Vector4(LN, LZ, L, ZT));
             cmd.DispatchCompute(cs, kGround, G(LN, 8), G(LN, 8), 1);
         }

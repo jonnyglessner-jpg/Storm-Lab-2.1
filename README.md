@@ -149,11 +149,27 @@ The storms' darkening of the scene's ambient light (`StormSceneAmbient`, `darken
 or Physical): HDRP's indirect diffuse and reflection light, and the fog's sky colour (by `fogFollows`), are scaled by how
 much of the sky the camera sees (the storm's sky-visibility grid), the hidden part replaced by the storm's underside at a
 tenth of the sky (`underside`). About 0.9 25 km off, 0.3 under the base's edge, 0.2 in the rain.
+By place (`local`, the default; user, 2026-10-28): the indirect diffuse light is instead set where the ground is. A map
+80 km round the camera of how much of the sky the ground sees (StormShadow.compute `Ambient`, storms multiplied) is the
+ambient occlusion of a decal projected straight down (HDRP's AO darkens a surface's sky light, not the sun), so the
+ground under a storm is dark wherever the camera is and open country stays lit while the camera is under the base
+(plains check at 4 pm: 0.16-0.3 under the storm's cores, 0.97 30 km out). It needs the HDRP asset's decals with "Metal
+and Ambient Occlusion properties" (the test project's has them since 2026-10-28); without, it falls back to the camera.
+Reflections and fog still follow the camera. Under the base at 4 pm the ambient is about 15 % of the ground's light (the
+sun through the storm is most of it), so the change shows most in shade and at low sun.
+`StormLightCheck -slLightScene` checks it, the scene's shadow and town light (`validation/reports/StormLightCheck_scene.md`).
 
 Night (user, 2026-10-26): a moonlit night is shown at 1.2 % of day (`nightBrightness`), a moonless one no brighter than
 0.4 % (`nightFloor`); the panel's exposure opens to that. At 8 % and 4.5 % the storm stayed light grey all night, a new
 moon brightest of all, while the moonlit ground was black. `StormDayCheck` measures both nights with and without the
-storm's town light and night fill. Lightning at night (`LightningScale`): where the game's exposure does the night
+storm's town light and night fill.
+Towns (user, 2026-10-28: "town lights glowing on the base"): a game can list its towns (`StormRenderer.Towns`: where,
+how far the lights spread, how bright; glow 1 for about 15,000 people). The base over a town then takes 4x the even town
+light (`lightPollution`), falling off as a lit disc seen from the base, and open country, the horizon's glow and the haze
+take about a seventh of it (`TownFloor`); with no towns listed every base takes the even light as before. The test maps
+list theirs (`TestMapTowns`, by radar site: Dodge City and Garden City by the plains map, Natchez and Vidalia, Effingham,
+Mattoon and Charleston). Over a town of 15,000 on a moonless night the base is about 30 % brighter and warmer than with
+the even light (the night fill's sky light is most of a base's light then; the night blue shift mutes the orange). Lightning at night (`LightningScale`): where the game's exposure does the night
 adaptation (`exposureAdaptsAtNight`, the test map's panel), lightning is dimmed by the same gain to `lightningAtNight`
 (0.3) of its daytime look on screen, cloud light, ground light (`LightningSystem.lightScale`) and bolt alike; before, a
 night flash came out about a thousand times brighter than by day and turned the whole storm white. The storm's
@@ -163,7 +179,9 @@ frames back in half float to count broken (infinite or NaN) pixels; `-slFlashAtN
 The storm's shadow on the scene (`StormSceneShadow`, `castSceneShadow`, on in Play): HDRP's sun gets a cookie of how
 much sunlight gets through every storm (StormShadow.compute: from the ground up toward the sun through the volume, with
 the light grid's extinction and the storm's transmittance curve), 120 km round the camera at about 120 m, refreshed
-every 0.25 s. The terrain, roads and vehicles fall into the shadow of the anvil, updraft and rain; the storm's own
+every 0.25 s. Under the unified lighting it takes the storm's rain extinction (`rainExtinction`) and its sun reach (the
+octaves and the light diffused through the cloud, StormCommon.hlsl `sunReach`), as the storm's ground light does: the
+ground under the forward-flank core got 32 % of the sun at 18.8 h with the old curve and unscaled rain, 6.5 % now. The terrain, roads and vehicles fall into the shadow of the anvil, updraft and rain; the storm's own
 lighting is unchanged. `StormDayCheck` renders it from the air and straight down (`Screenshots/shadow_*.png`). The moon
 casts no storm shadow.
 
@@ -354,6 +372,12 @@ tests/StormLabTest -executeMethod <method> -logFile <log>`. Never with `-nograph
   life short so it ended within the game; here a late tornado can still be on the ground at 60 min), and ratings come
   from the funnel width, so a game built for EF2 may top out at EF0-1 (often in the LP and Ohio setups). Two storms
   cost about twice the march of one.
+- Two-storm views (user, 2026-10-28: "vertical seams"): the seams were the forward-flank rain of the storm nearer the
+  camera, which rose to the anvil through clear air above the deck as a sunlit white wall with a vertical edge
+  (StormGameCheck -slGameAlone 15,35 shows each storm alone, the composite with each storm in false colour, and the
+  rain and cloud along the rays). Above the base, rain is now kept only inside cloud (game layout), and each storm's
+  distance for the composite's ordering blends in where it draws next to nothing instead of switching at a threshold.
+  The nearer storm's deck still overlaps the farther storm with a cloud's own crisp outline.
 - Seen from under a storm's anvil well downstream (inside its forward-flank rain, e.g. 36 km down its motion), the
   rain region shows straight-edged openings onto the sky beyond. One storm alone does it, so it is the storm's own
   shape from there, not the game's two storms; it has not been compared with the website from that spot.

@@ -15,7 +15,7 @@ Texture3D<float4> _Dens;
 Texture3D<float4> _Light;
 Texture3D<float> _LightW;       // the web build's sun transmittance (its lighting mode)
 Texture3D<float4> _SkyVis;      // sky visibility: zenith cap, mid ring, horizon, horizon toward the key light
-Texture2D<float2> _Ground;      // how lit the ground is: r key light, g sky
+Texture2D<float4> _Ground;      // how lit the ground is: r key light, g sky; b town light on the base (StormVolume.compute)
 Texture3D<float4> _TransientLightTex; // optional instantaneous local radiance (lightning), in the volume frame
 int _TransientLightOn;
 // the camera depth buffer: HDRP allocates its targets as texture arrays (one slice per XR eye; slice 0 otherwise)
@@ -33,7 +33,8 @@ float4 _Res;
 // The key light: the sun, or the moon at night (SkyLighting). _Sun: its direction; _SunC: its colour before the horizon
 // cuts it off (rgb) and its elevation in degrees (w); _SkyC: sky colour (rgb) and level (w, 1 at the reference sun)
 float4 _Sun, _SunC, _SkyC;
-// x: the sky dome's dimming below twilight's floor (1 by day), y: town light (radiance), z: 1 = the key light is the moon
+// x: the sky dome's dimming below twilight's floor (1 by day), y: town light (radiance), z: 1 = the key light is the moon,
+// w: town light's share on the horizon and the haze (SkyLight.townSky; the bases over towns take theirs from _Ground.b)
 float4 _SkyP;
 // x: exposure gain of night adaptation (1 by day), y: the night blue shift 0..1, z: night fill (a floor on sky visibility),
 // w: lightning's scale (1 / x where the storm adapts itself; the game's night exposure undone where the game adapts)
@@ -651,7 +652,7 @@ float3 skyRad(float3 d, float3 warm, float glowK, float skyK, float aur = 1.0)
     float3 hz = lerp(float3(0.78, 0.8, 0.84) * lerp(0.6, 1.0, saturate(skyK)) * _SkyP.x, warm * glowK, pow(max(cg, 0.0), spread) * 0.8);
     float up = 1.0 - pow(1.0 - el, 3.0);
     return hz * (1.0 - up) + float3(0.33, 0.47, 0.72) * skyK * up + 0.5 * aur * pow(max(cg, 0.0), 24.0) * glowK * warm / float3(0.95, 0.82, 0.66) * float3(1.0, 0.85, 0.6)
-         + _SkyP.y * 0.5 * pow(1.0 - el, 6.0) * float3(1.0, 0.75, 0.5);
+         + _SkyP.y * _SkyP.w * 0.5 * pow(1.0 - el, 6.0) * float3(1.0, 0.75, 0.5);
 }
 // The sky in the four parts SkyVis measures the visibility of, integrated once a frame on the CPU (SkyLighting.Bands)
 float4 _SkyZen, _SkyMid, _SkyHor, _SkyHorK;
@@ -667,22 +668,23 @@ float3 skyFill() { return 0.5 * skyMean() * (_PL2.z + _Night.z) * _PL2.x; }
 // Sky light scattered toward the eye: the cap, the ring and the horizon by their solid angles and visibilities
 float3 skyLight(float4 sv) { return 0.5 * (0.18 * _SkyZen.rgb * sv.r + 0.477 * _SkyMid.rgb * sv.g + 0.342 * horLight(sv)) * _PL2.x + skyFill(); }
 // Light bounced up from the ground below: Plains grass and wheat (albedo ~0.12) lit by the key light and the sky,
-// averaged over the 4 km under the point, plus town light at night. Cloud higher above the base sees the ground over a
+// averaged over the 4 km under the point, plus town light at night (brighter over the towns given, StormRenderer.Towns,
+// and their glow spreading under the base: the ground light's b). Cloud higher above the base sees the ground over a
 // wider area, so four more taps spread out with the height above it (all at the point itself at the base). 2.0 switched to
 // a fixed 0.6 / 0.8 above base + 2 km: cloud above that plane ignored the storm's shadow on the ground, a straight line
 // across the storm by day at that height (user, 2026-10-27)
 float3 groundLight(float3 q, float3 sunc0)
 {
-    float2 g = _Ground.SampleLevel(sampler_LinearClamp, uvw(q).xy, 0);
+    float3 g = _Ground.SampleLevel(sampler_LinearClamp, uvw(q).xy, 0).xyz;
     float gr = min(1.5 * max(q.z - S_base.x, 0.0), 20.0);
     if (gr > 0.01)
     {
-        g += _Ground.SampleLevel(sampler_LinearClamp, uvw(q + float3(gr, 0.0, 0.0)).xy, 0) + _Ground.SampleLevel(sampler_LinearClamp, uvw(q - float3(gr, 0.0, 0.0)).xy, 0)
-           + _Ground.SampleLevel(sampler_LinearClamp, uvw(q + float3(0.0, gr, 0.0)).xy, 0) + _Ground.SampleLevel(sampler_LinearClamp, uvw(q - float3(0.0, gr, 0.0)).xy, 0);
+        g += _Ground.SampleLevel(sampler_LinearClamp, uvw(q + float3(gr, 0.0, 0.0)).xy, 0).xyz + _Ground.SampleLevel(sampler_LinearClamp, uvw(q - float3(gr, 0.0, 0.0)).xy, 0).xyz
+           + _Ground.SampleLevel(sampler_LinearClamp, uvw(q + float3(0.0, gr, 0.0)).xy, 0).xyz + _Ground.SampleLevel(sampler_LinearClamp, uvw(q - float3(0.0, gr, 0.0)).xy, 0).xyz;
         g *= 0.2;
     }
     float3 E = sunc0 * (4.0 * max(_Sun.z, 0.0) * g.x) + skyMean() * g.y;
-    return 0.5 * (float3(0.12, 0.14, 0.1) * E + _SkyP.y * float3(1.0, 0.75, 0.5)) * _PL2.y;
+    return 0.5 * (float3(0.12, 0.14, 0.1) * E + _SkyP.y * g.z * float3(1.0, 0.75, 0.5)) * _PL2.y;
 }
 // Night: the eye's adaptation (a gain) and its blue shift (rods see no colour and are most sensitive to blue-green)
 float3 nightGrade(float3 c)
@@ -793,7 +795,7 @@ void March(uint3 gid : SV_DispatchThreadID)
     // low evening sun: warm and a little dimmer; the sky and haze a touch warmer near the horizon. The colours follow the
     // key light (SkyLighting); the web build's are fixed, and its lighting mode passes them unchanged
     float3 sunc = sunAt(0.0); float3 skyc = _SkyC.rgb; float skyK = _SkyC.w;
-    float3 hazec = float3(0.68, 0.68, 0.7) * lerp(0.55, 1.0, saturate(skyK)) * _SkyP.x + _SkyP.y * 0.3 * float3(1.0, 0.75, 0.5);
+    float3 hazec = float3(0.68, 0.68, 0.7) * lerp(0.55, 1.0, saturate(skyK)) * _SkyP.x + _SkyP.y * _SkyP.w * 0.3 * float3(1.0, 0.75, 0.5);
     hazec = lerp(hazec, sunc * 0.75, 0.5 * saturate(1.0 - skyK) * pow(max(cosg, 0.0), 3.0));
     float3 warm = float3(0.95, 0.82, 0.66) * (_SunC.rgb / max(_SunC.r, 1e-20)) / float3(1.0, 0.82, 0.6);
     float glowK = ss(-6.0, 1.5, _SunC.w) * _SkyP.x;
@@ -1314,7 +1316,10 @@ void March(uint3 gid : SV_DispatchThreadID)
     bool ranOut = nSteps >= maxSteps && lastBe > 2.0 && T < 0.5;
     float fold = ranOut ? 1.0 : ss(0.12, 0.03, T);
     col += T * fold * g_lastC; T *= 1.0 - fold;
-    _OutDist[id.xy] = wsum > 1e-3 ? dsum / wsum : min(tb, 60.0);
+    // (blended from the far end of the ray where the storm draws next to nothing: the two storms' composite orders them by
+    // this, and a switch at a threshold flipped their order on a hard line, a vertical seam down a faint veil of the
+    // nearer storm's rain and haze; StormGameCheck -slGameAlone, user 2026-10-28)
+    _OutDist[id.xy] = lerp(min(tb, 60.0), dsum / max(wsum, 1e-6), ss(1e-3, 0.05, wsum));
     _OutHalf[id.xy] = tHalf < 1e8 ? tHalf : -1.0;
     // timing checks: the steps this pixel took, and how many of them evaluated the detailed tornado, per thousand
     if (_TorP.w > 2.5) { _Out[id.xy] = float4(nSteps, nTorSteps, 0.0, 1000.0) * 0.001; return; }
