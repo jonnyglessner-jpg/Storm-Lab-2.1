@@ -284,7 +284,9 @@ namespace StormLab.TestMap
             float h = Screen.height;
             var p = car.transform.position;
             GUI.Box(new Rect(16, h - 132, 420, 116), GUIContent.none);
-            GUI.Label(new Rect(28, h - 130, 400, 44), $"{car.SpeedKph * 0.621371f:0} mph  {Compass(car.transform.eulerAngles.y)}", big);
+            // (the compass is the way the camera looks, in any camera mode; user, 2026-10-29: it followed the truck)
+            var look = cameraRig ? cameraRig.transform : car.transform;
+            GUI.Label(new Rect(28, h - 130, 400, 44), $"{car.SpeedKph * 0.621371f:0} mph  {Compass(look.eulerAngles.y)}", big);
             GUI.Label(new Rect(28, h - 86, 400, 70), $"{GridPosition(p)}\nelev {(p.y + datum) * 3.28084f:0} ft    camera: {(cameraRig ? cameraRig.ModeName : "")}", small);
             if (cameraRig && cameraRig.mode == TestMapCamera.Mode.Free)
             {

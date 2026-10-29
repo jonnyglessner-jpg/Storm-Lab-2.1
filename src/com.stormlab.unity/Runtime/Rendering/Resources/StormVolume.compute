@@ -420,9 +420,20 @@ void Build(uint3 gid : SV_DispatchThreadID)
 
     // ---- rear-flank downdraft rain: curtains wrapping round the north and west of the surge (the hook), and round
     // all of it in an HP storm
-    if (S_rfdb.z > 0.0 && below > 0.0)
+    // ---- game adaptation (user, 2026-10-29: "the RFD rain has suffered from the dreaded cloud-base level cutoff", letting
+    // in too much light on HP storms; the Tilted layout): the web build's curtain stops 1.2 km above the base, and above
+    // the base rain is kept only inside cloud (below), but nothing of cloud lies over the curtain, so from aloft or from the
+    // sun's side it was a band with a flat top at the base, sunlit from above. Rear-flank rain comes down out of the rain
+    // wrapped round the mesocyclone at mid levels: here the curtain rises 3 km above the base (5 km in an HP storm, its top
+    // ragged) through murk like the forward flank's (about the rain's own extinction), which leans in to the tower with
+    // height, so the rain has a source and the storm's shade over it.
+    float rfdTop = zb + lerp(3.0, 5.0, saturate(S_rfd.w / 0.75));
+    if (S_rfdb.z > 0.0 && (below > 0.0 || (_PrecipP.w > 0.0 && p.z < rfdTop + 1.0)))
     {
-        float2 db = p.xy - S_rfdb.xy; float rb = length(db); float Rs = S_rfdb.z;
+        float2 db = p.xy - S_rfdb.xy;
+        // (the game's curtain and its murk lean in toward the updraft with height)
+        if (_PrecipP.w > 0.0) db -= (mesoCentre(zr) - S_rfdb.xy) * 0.4 * ss(0.0, rfdTop - zb, zr);
+        float rb = length(db); float Rs = S_rfdb.z;
         float th = atan2(dot(db, lf), dot(db, fw));
         float nsl = n3(float3(p.x * 0.35, p.y * 0.35, p.z * 0.25) + float3(0.7, 0.7, 0.1)) - 0.5;
         float hook = max(ss(-0.25, 0.55, cos(th - 1.9)), S_rfd.w);
@@ -430,7 +441,20 @@ void Build(uint3 gid : SV_DispatchThreadID)
         // the curtain thins out as it curls round toward the tornado (at the wall cloud, the northern end of the surge)
         float toTor = length(p.xy - S_wall.xy);
         float torTaper = ss(0.3 * Rs, 2.4 * Rs, toTor);
-        rain = max(rain, S_rfd.z * ring * hook * torTaper * curt * below * 0.6);
+        float hgtR = below;
+        if (_PrecipP.w > 0.0)
+        {
+            float top = rfdTop + nsl * 1.6;
+            hgtR = ss(top + 0.4, top - 1.2, p.z);
+            float wide = ss(Rs * 0.3, Rs * 0.7, rb + nsl * 0.8) * ss(Rs * 1.4, Rs * 0.95, rb + nsl * 0.6);
+            float rag = n3(p * 1.3 + float3(0.6, 0.1, 0.8)) - 0.5;
+            float zLo = zb + 0.15 + rag * 0.4;
+            float murk = saturate(S_rfd.z) * wide * hook * ss(0.15 * Rs, 1.6 * Rs, toTor)
+                * ss(zLo - 0.3, zLo + 0.5, p.z) * ss(top + 0.8, top - 1.0, p.z) * (0.18 + 0.12 * saturate(0.5 + rag));
+            mw += murk * murk; ms += murk * murk * water(0.35);
+            cloud = max(cloud, murk);
+        }
+        rain = max(rain, S_rfd.z * ring * hook * torTaper * curt * hgtR * 0.6);
     }
 
     // Apply after every feature, so no cloud shelf plugs the rear opening. Rain is not cut: it falls through the slot.
@@ -453,6 +477,28 @@ void Build(uint3 gid : SV_DispatchThreadID)
         float arc = ss(0.45, 0.8, psi) * towardTor * exp(-drr * drr);
         float reachW = zb * (1.0 - saturate(S_ffd.w * 1.6));
         float hgt = lerp(forwardBelow, below, sp);
+        // ---- game adaptation (user, 2026-10-29, the RFD cutoff above): the wrap's rear end took the rear-flank rain's
+        // top 1.2 km above the base, and above the base rain is kept only inside cloud, so seen from aloft or from the sun's
+        // side the curtain round the back of the updraft ended in a flat, sunlit top at base level. As the rear-flank
+        // curtain above: its top 3-5 km up and ragged, inside murk round its rear part (out of the clear slot), so the rain
+        // has a source and is in the storm's shade.
+        if (_PrecipP.w > 0.0)
+        {
+            float nT = n3(float3(p.x * 0.35, p.y * 0.35, p.z * 0.25) + float3(0.2, 0.9, 0.5)) - 0.5;
+            float top = rfdTop + nT * 1.6;
+            float rear = ss(0.15, 0.5, sp);
+            hgt = lerp(forwardBelow, lerp(below, ss(top + 0.4, top - 1.2, p.z), rear), sp);
+            float rag = n3(p * 1.3 + float3(0.3, 0.5, 0.7)) - 0.5;
+            float zLo = zb + 0.15 + rag * 0.4;
+            float drw = drr / 1.4;
+            // (only from beside the updraft round to the rear, where the top was cut: the forward part already rises into
+            // the anvil)
+            float murk = saturate(S_ffd.w) * slotWrap * rear * towardTor * exp(-drw * drw)
+                * ss(zLo - 0.3, zLo + 0.5, p.z) * ss(top + 0.8, top - 1.0, p.z) * (0.18 + 0.12 * saturate(0.5 + rag))
+                * (1.0 - clearSlot(p));
+            mw += murk * murk; ms += murk * murk * water(0.35);
+            cloud = max(cloud, murk);
+        }
         rain = max(rain, 0.9 * (1.0 + 0.3 * S_up.w) * S_ffd.w * slotWrap * arc * curt * hgt * ss(reachW - 0.2, reachW + 0.3, p.z));
     }
     rain *= precipClear(p);   // game adaptation (StormTilt), not the web build's
