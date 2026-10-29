@@ -42,7 +42,8 @@ float4 _SP[32];
 // rate x clock; real-world v / r by default, the web build's rates for the website comparison)
 #define S_spin   _SP[29]   // x mesocyclone, y funnel skin, z central core, w suction-vortex wisps
 #define S_spin2  _SP[30]   // x suction-vortex orbit, y dust whirl, z wall cloud, w RFD lip
-#define S_spin3  _SP[31]   // x anti-mesocyclone (negative: clockwise), y satellite tornado, z anticyclonic tornado (negative)
+#define S_spin3  _SP[31]   // x anti-mesocyclone (negative: clockwise), y satellite tornado, z anticyclonic tornado (negative),
+                           // w how far the inflow has carried the beaver tail's air toward the updraft, km (0: the web build's)
 
 Texture3D<float> _Noise;
 SamplerState sampler_LinearRepeat;
@@ -54,6 +55,16 @@ float ss(float a, float b, float x) { float t = saturate((x - a) / (b - a)); ret
 // The light grid stores the sun's optical depth in r, not its transmittance, so the physical lighting can light each
 // multiple-scattering octave from it (StormLab 2.0). sunT is the web build's two-lobe transmittance of that depth.
 float sunT(float tau) { return 0.72 * exp(-0.38 * tau) + 0.28 * exp(-0.07 * tau); }
+// The unified lighting's share of the key light reaching a point under optical depth tau, as a share of open air's:
+// StormMarch.compute's stormLight sun for an isotropic medium (its octaves and the light diffused through the cloud,
+// 1 / (1 + a tau)). Used where the storm lights or shades something else (the ground it shadows, the bounce off it) so
+// that responds as the cloud does. m: x octaves, y each octave's extinction factor, z diffusion (a), w diffused sun.
+float sunReach(float tau, float4 m)
+{
+    float s = 0.0, s0 = 0.0, b = 1.0, k = 0.38;
+    [unroll] for (int i = 0; i < 4; i++) { if (i >= (int)m.x) break; s += b * exp(-k * tau); s0 += b; b *= 0.5; k *= m.y; }
+    return (s + m.w * (1.0 - exp(-0.1 * tau)) / (1.0 + m.z * max(tau, 0.0))) / max(s0, 1e-4);
+}
 
 // ---------------------------------------------------------------------------------------------------- NOISE
 float n3(float3 p) { return _Noise.SampleLevel(sampler_LinearRepeat, p, 0); }
@@ -152,7 +163,43 @@ float clearSlot(float3 p)
 // own turning frame rather than round its centre (whose streaks all pointed at the centre, with a seam where the angle
 // wraps), a softer underside, and scud: soft fragments hanging under the base that fade into it. 0: the web build's.
 // y 1: the game's tail cloud (a narrow band with a rounded underside, joined smoothly to the wall cloud); 0: the web build's.
+// w 1: the game's beaver tail and inflow ramp (tailDir, tailRoot, tailSize); 0: the web build's.
 float4 _WallP;
+
+// ---- the inflow tail's line: the beaver tail, the volume's inflow ramp and the tail cloud's aim all follow it.
+// The web build's runs 35 degrees right of the storm's motion from 2.5 km ahead of the updraft, out into the open inflow,
+// diverging from the forward flank's rain until its tip is 8 km from it. A beaver tail is "a smooth, flat, low band along
+// the inflow/FFD boundary" (Stull, Practical Meteorology ch. 14; meteorology/Practical_Meteorology_Stull/NOTES.md), so the
+// game's (_WallP.w; user, 2026-10-28) runs along the forward flank's inflow-side edge: 10 degrees left of the motion, as
+// that edge runs (the forward-flank rain's core and its sweep, StormVolume.compute), from half a kilometre right of the
+// motion line through the updraft, so it lies just outside the rain and meets it near the updraft.
+// (vaultAngle, the striations' inflow vault, keeps the web build's direction.)
+float2 tailDir() { return _WallP.w > 0.5 ? normalize(S_f.xy + 0.176 * S_f.zw) : S_tail.xy; }
+float2 tailRoot() { return S_up.xy + S_f.xy * 2.5 + S_f.zw * (_WallP.w > 0.5 ? -0.5 : 0.5); }
+// HP storms (their rain wraps round the updraft, S_rfd.w 0.75) keep the web build's bigger beaver tail and a longer ramp
+// (user, 2026-10-28: "a bigger inflow tail on the HP storms"; Stull ch. 14: beaver tails are most common in HP storms):
+// 0 classic and LP .. 1 HP
+float tailHP() { return saturate(S_rfd.w / 0.75); }
+// The beaver tail's size. The web build's is 14 km long (S_tail.z), up to 5.6 km wide and 2.5 km deep where it meets the
+// storm; the game's (_WallP.w, with the game's tail cloud; user, 2026-10-28: "too big and too long") is three quarters as
+// long and a little narrower and shallower. (What read as too big was mostly the volume's inflow ramp along the same line,
+// 4 km tall and 10 km long, which the game now keeps only where it rises into the updraft: StormVolume.compute. Half this
+// band's size as well left only a sliver at the base.) x length km, y width scale, z depth scale
+float3 tailSize() { return _WallP.w > 0.5 ? lerp(float3(0.75 * S_tail.z, 0.8, 0.85), float3(S_tail.z, 1.0, 1.0), tailHP()) : float3(S_tail.z, 1.0, 1.0); }
+// How dense the beaver tail and the inflow ramp are. The web build gives an HP storm's 0.85 of a classic storm's; the game's
+// HP storms have the full amount, at least a classic storm's (user, 2026-10-28; Stull ch. 14: most common in HP storms)
+float tailAmt() { return _WallP.w > 0.5 ? S_tail.w * lerp(1.0, 1.0 / 0.85, tailHP()) : S_tail.w; }
+// Where the tail cloud points. The web build's at the inner part of its beaver tail; the game's (_WallP.w; user,
+// 2026-10-28) at the forward-flank rain nearest the wall cloud, a quarter of the way from the hail core to the forward
+// flank's core: a tail cloud "points towards the forward flank precipitation area" (Stull ch. 14). Along the beaver tail
+// it pointed 29 degrees right of that rain.
+float2 tailCloudAim()
+{
+    if (_WallP.w > 0.5) return lerp(S_hail.xy, S_ffd.xy, 0.25);
+    float2 root = tailRoot(); float2 tdi = tailDir(); float tli = tailSize().x;
+    float bend = 0.035 * (tli - 2.0) * (tli - 2.0) * 0.12 - 0.6 * sin(0.7);
+    return root + tdi * 2.0 + float2(-tdi.y, tdi.x) * bend;
+}
 
 // where the game's tail cloud (_WallP.y) can be: a corridor from the wall cloud along the tail, aimed as nearField aims it.
 // The render pass draws near-ground cloud at full detail only near the wall cloud or where the coarse volume has some;
@@ -162,12 +209,10 @@ bool inTailCloud(float3 q)
     if (_WallP.y < 0.5 || S_wall.w <= 0.0 || S_wall2.z <= 0.0) return false;
     if (q.z < S_base.x - S_wall2.x - 0.4 || q.z > S_base.x + 0.3) return false;
     float2 wc = S_wall.xy; float Rw = S_wall.z;
-    float2 root = S_up.xy + S_f.xy * 2.5 + S_f.zw * 0.5;
-    float bend = 0.035 * (S_tail.z - 2.0) * (S_tail.z - 2.0) * 0.12 - 0.6 * sin(0.7);
-    float2 aim = root + S_tail.xy * 2.0 + float2(-S_tail.y, S_tail.x) * bend;
-    float2 td = normalize(aim - wc + float2(0.0001, 0.0));
+    float2 td = normalize(tailCloudAim() - wc + float2(0.0001, 0.0));
     float2 dw = q.xy - wc; float s = dot(dw, td);
-    return s > 0.0 && s < Rw + 5.0 && abs(dot(dw, float2(-td.y, td.x))) < 1.2;
+    // (with the game's scud round and past its tip: beaverTail's flow)
+    return s > 0.0 && s < Rw + (_WallP.w > 0.5 ? 6.5 : 5.0) && abs(dot(dw, float2(-td.y, td.x))) < (_WallP.w > 0.5 ? 1.4 : 1.2);
 }
 
 // nearField's inflow tail, on its own so the march can light it as the cloud it is (a game adaptation; the code is the
@@ -179,24 +224,65 @@ float beaverTail(float3 p, float fine)
     if (S_tail.w > 0.0)
     {
         // inflow tail (beaver tail): a smooth, laminar band streaming in along the forward flank's edge
-        float2 t0 = S_up.xy + S_f.xy * 2.5 + S_f.zw * 0.5;
-        float2 td = S_tail.xy; float s = dot(p.xy - t0, td);
+        float2 t0 = tailRoot();
+        float2 td = tailDir(); float s = dot(p.xy - t0, td);
+        float3 sz = tailSize(); float tl = sz.x;
+        // its texture streams in along it toward the updraft, as the inflow carries it (S_spin3.w; the shape stays)
+        float su = s + S_spin3.w;
         // the tail curves: it bends toward the forward flank as it nears the storm
-        float qq = dot(p.xy - t0, float2(-td.y, td.x)) - 0.035 * (S_tail.z - s) * (S_tail.z - s) * 0.12 + 0.6 * sin(s * 0.35);
-        if (s > -2.0 && s < S_tail.z + 2.0 && abs(qq) < 5.0 && p.z > zb - 1.0 && p.z < zb + 3.0)
+        float qq = dot(p.xy - t0, float2(-td.y, td.x)) - 0.035 * (tl - s) * (tl - s) * 0.12 + 0.6 * sin(s * 0.35);
+        bool game = _WallP.w > 0.5;
+        if (s > (game ? -3.5 : -2.0) && s < tl + 2.0 && abs(qq) < 5.0 && p.z > zb - 1.0 && p.z < zb + 3.0)
         {
-            float fr = saturate(s / S_tail.z);
-            float n = 0.55 * n3(float3(s * 0.05, qq * 0.45, p.z * 0.6)) + 0.45 * lerp(0.5, n3(float3(s * 0.25, qq * 1.6, p.z * 2.5) + float3(0.6, 0.2, 0.4)), fine);
+            float fr = saturate(s / tl);
+            float n = 0.55 * n3(float3(su * 0.05, qq * 0.45, p.z * 0.6)) + 0.45 * lerp(0.5, n3(float3(su * 0.25, qq * 1.6, p.z * 2.5) + float3(0.6, 0.2, 0.4)), fine);
             // a deep band near the storm (a kilometre or more), rising as it is drawn up into the updraft's vault,
             // thinning and lowering to a ragged ribbon far out
             float near = (1.0 - fr) * (1.0 - fr);
-            float wt = lerp(2.8, 0.45, pow(fr, 0.7)); float zc = zb + 0.2 + 1.1 * near; float th = lerp(0.22, 1.25, near);
-            float inT = ss(-2.0, 0.75, s) * (1.0 - ss(S_tail.z * 0.8, S_tail.z, s + (n - 0.5) * 4.0))
-                * ss(wt, wt * 0.45, abs(qq) + (n - 0.5) * 0.9) * ss(th, th * 0.4, abs(p.z - zc) + (n - 0.5) * 0.12);
-            v = max(v, S_tail.w * inT * 0.85);
+            float wt = lerp(2.8, 0.45, pow(fr, 0.7)) * sz.y; float zc = zb + 0.2 + 1.1 * near; float th = lerp(0.22, 1.25, near) * sz.z;
+            // The game's (user, 2026-10-28: "blend into the main updraft more smoothly"; its smaller band butted into the
+            // updraft's side and ended in a blunt cap): over its last 3 km it widens, deepens and rises, and runs on into
+            // the updraft, so it meets the updraft's side gradually rather than at an angle; over its outer half it tapers
+            // and its tip breaks up in its streaks
+            float rootK = game ? 1.0 - ss(0.0, 3.0, s) : 0.0;
+            float taper = game ? 1.0 - ss(0.45 * tl, tl, s + (n - 0.5) * 2.0) : 1.0;
+            wt *= (1.0 + 1.2 * rootK) * lerp(0.3, 1.0, taper); th *= (1.0 + 1.0 * rootK) * lerp(0.35, 1.0, taper); zc += 0.3 * rootK;
+            // laminar streaks drawn out along the band, about 1 km by 250 m and half that, streaming in with it (a game
+            // adaptation with the flow, user 2026-10-28: its own noise varies over 4-20 km, so streaming it alone moved
+            // nothing that could be seen). Only in the render pass (fine), filtered by the pixel's footprint (n3k)
+            float fs = 0.0;
+            if (fine > 0.0 && S_spin3.w != 0.0)
+                fs = (0.65 * (n3k(float3(su * 0.225, qq, p.z * 1.5), 4.0, float3(0.21, 0.63, 0.37)) - 0.5)
+                    + 0.35 * (n3k(float3(su * 0.25, qq, p.z * 1.3), 9.0, float3(0.55, 0.11, 0.83)) - 0.5)) * fine
+                    // (smooth where it rises into the updraft: seen down the band, the streaks over its widened root read
+                    // as feathers brushed up the updraft's side)
+                    * (1.0 - 0.8 * rootK);
+            float ends = game ? ss(-3.5, 0.5, s) * ss(0.0, 0.3, taper + fs * 0.4)
+                              : ss(-2.0, 0.75, s) * (1.0 - ss(tl * 0.8, tl, s + (n - 0.5) * 4.0 * sz.y));
+            float inT = ends
+                * ss(wt, wt * 0.45, abs(qq) + (n - 0.5) * 0.9 + fs * 0.5) * ss(th, th * 0.4, abs(p.z - zc) + (n - 0.5) * 0.12 + fs * 0.12)
+                * (1.0 + 0.5 * fs);
+            v = max(v, tailAmt() * inT * 0.85);
         }
     }
     return v;
+}
+// Where the beaver tail's band can be, without its noise (a game adaptation): its texture streams along it (S_spin3.w), so
+// the render pass draws it wherever the band can be, not only where the volume's coarse copy says it is (that copy is
+// repainted every few seconds, and not at all while the game is paused, so the streaming outline outran it)
+bool beaverTailBand(float3 p)
+{
+    if (S_tail.w <= 0.0 || S_spin3.w == 0.0) return false;
+    float zb = S_base.x;
+    float2 t0 = tailRoot();
+    float2 td = tailDir(); float s = dot(p.xy - t0, td);
+    float3 sz = tailSize(); float tl = sz.x;
+    if (s < -3.5 || s > tl + 2.0) return false;
+    float qq = dot(p.xy - t0, float2(-td.y, td.x)) - 0.035 * (tl - s) * (tl - s) * 0.12 + 0.6 * sin(s * 0.35);
+    float fr = saturate(s / tl); float near = (1.0 - fr) * (1.0 - fr);
+    float wt = lerp(2.8, 0.45, pow(fr, 0.7)) * sz.y; float zc = zb + 0.2 + 1.1 * near; float th = lerp(0.22, 1.25, near) * sz.z;
+    // (with the game's widening root, beaverTail)
+    return abs(qq) < wt * 2.2 + 0.5 && abs(p.z - zc - 0.15) < th * 2.0 + 0.25;
 }
 
 float nearField(float3 p, float fine)
@@ -252,12 +338,9 @@ float nearField(float3 p, float fine)
                 w *= 1.0 - 0.4 * S_rfdb.w * hb;
             }
             v = max(v, S_wall.w * w);
-            // Aim the low wall-cloud tail toward the inner part of the main inflow/beaver tail.
-            float2 beaverRoot = S_up.xy + S_f.xy * 2.5 + S_f.zw * 0.5;
-            float2 beaverNormal = float2(-S_tail.y, S_tail.x);
-            float beaverBend = 0.035 * (S_tail.z - 2.0) * (S_tail.z - 2.0) * 0.12 - 0.6 * sin(0.7);
-            float2 tailAim = beaverRoot + S_tail.xy * 2.0 + beaverNormal * beaverBend;
-            float2 td = normalize(tailAim - wc + float2(0.0001, 0.0)); float s = dot(dw, td); float qq = dot(dw, float2(-td.y, td.x));
+            // Aim the low wall-cloud tail (the web build's: toward the inner part of the main inflow/beaver tail; the game's:
+            // at the forward-flank rain, tailCloudAim)
+            float2 td = normalize(tailCloudAim() - wc + float2(0.0001, 0.0)); float s = dot(dw, td); float qq = dot(dw, float2(-td.y, td.x));
             float nt = n3(float3(s * 0.3, qq * 1.0, p.z * 1.5) + float3(0.2, 0.6, 0.1));
             if (_WallP.z > 0.5) { }   // (checks: no tail cloud)
             else if (_WallP.y > 0.5)
@@ -267,6 +350,9 @@ float nearField(float3 p, float fine)
                 // kilometre across, tapering away; its underside is rounded (deepest along its middle, curving up to the
                 // base at its sides) and grows out of the wall cloud's own underside at about its level (a tail cloud hangs
                 // about as low as the wall cloud it feeds), easing up toward the base with distance
+                // (its texture streams in toward the wall cloud, as the scud below does)
+                float suT = s + 1.6 * S_spin3.w;
+                if (S_spin3.w != 0.0) nt = n3(float3(suT * 0.3, qq * 1.0, p.z * 1.5) + float3(0.2, 0.6, 0.1));
                 float far = saturate((s - Rw) / 4.5);
                 float hw = lerp(0.6, 0.25, far) * (0.85 + 0.3 * nt);
                 float x = abs(qq) / hw;
@@ -279,6 +365,19 @@ float nearField(float3 p, float fine)
                 // joined to the wall cloud softly (a union, not the larger of the two), so no seam where they meet
                 float tv = S_wall2.z * tg * 0.9;
                 v = v + tv - v * tv;
+                // Scud (user, 2026-10-28; Stull ch. 14: ragged fragments "often form near the tip of the tail cloud and are
+                // drawn quickly into the tail and the wall cloud by strong winds"): torn fragments beside and below its
+                // outer half and out past its tip, from noise streaming in toward the wall cloud at 1.6 x the inflow's
+                // 15 m/s (S_spin3.w), so they race in along it and are taken up into it. Render pass only (fine).
+                if (fine > 0.0 && S_spin3.w != 0.0)
+                {
+                    float sc = 0.6 * n3k(float3(suT * 0.7, qq * 1.4, p.z * 2.5) / 2.5, 2.5, float3(0.33, 0.71, 0.19))
+                             + 0.4 * n3k(float3(suT * 1.8, qq * 3.2, p.z * 5.0) / 5.0, 5.0, float3(0.81, 0.27, 0.55));
+                    float zone = ss(Rw + 0.5, Rw + 2.0, s) * (1.0 - ss(Rw + 4.8, Rw + 6.3, s)) * ss(1.0, 0.45, abs(qq));
+                    float hang = ss(zb - D - 0.35, zb - D - 0.2, p.z) * ss(zb + 0.02, zb - 0.1, p.z);
+                    float scud = S_wall2.z * zone * hang * ss(0.58, 0.7, sc) * 0.85 * fine;
+                    v = v + scud - v * scud;
+                }
             }
             else
             {

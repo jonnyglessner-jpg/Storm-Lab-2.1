@@ -4,7 +4,9 @@
 // The mesocyclone's spin-up (16-30 storm min) then looked several times faster than its rate, and slowed right down when
 // the ramp ended; a widening wedge (its rate is wind / radius, falling about ninefold) turned fast and backwards; suction
 // vortices orbited too fast while the tornado formed. Here each angle grows by rate x frame step, so a change of rate is
-// a change of speed and nothing else; the shaders read the angles (slots 29-31, S_spin, S_spin2 and S_spin3).
+// a change of speed and nothing else; the shaders read the angles (slots 29-31, S_spin, S_spin2 and S_spin3). The last
+// value (S_spin3.w) is a distance, not an angle: how far the inflow has carried the beaver tail's air toward the updraft,
+// km, added up the same way (user, 2026-10-28: the beaver tail "needs to look as if it is flowing into the storm").
 //
 // Real rates (user, 2026-10-27: "everything must match real world speeds"): each feature turns at a real tangential wind
 // over its own radius, v / r, so its edge moves at that wind in real time. The web build's rates were picked by eye and
@@ -45,6 +47,9 @@ namespace StormLab
         public const double SatelliteWind = 35, AntiTornadoWind = 30;
         /// <summary>the anticyclonic tornado's visible radius low down, km (StormMarch.compute antiTornadoField)</summary>
         const double AntiTornadoR = 0.035;
+        /// <summary>the storm-relative inflow along the beaver tail, m/s (low-level inflow into a supercell is about 10-20
+        /// m/s; Stull ch. 14)</summary>
+        public const double InflowWind = 15;
         /// <summary>no texture turns faster than this, rad/s (a 20 m rope at 80 m/s)</summary>
         const double MaxRate = 4.0;
 
@@ -54,6 +59,7 @@ namespace StormLab
         // RFD lip, anti-mesocyclone (clockwise), satellite tornado, anticyclonic tornado (clockwise)
         readonly double[] angle = new double[N];
         readonly double[] rate = new double[N];
+        double flow, flowRate;
         double lastClock = double.NaN, lastT = double.NaN;
 
         /// <summary>this frame's rates, rad/s, counter-clockwise positive, in the order above (for checks)</summary>
@@ -70,17 +76,19 @@ namespace StormLab
         {
             var a = F.param;
             if (rates == SpinRates.Website) WebRates(a); else RealRates(a);
+            // (the web build's beaver tail does not flow: 0 keeps its look for the comparison)
+            flowRate = rates == SpinRates.Website ? 0 : InflowWind / 1000;
             double dt = clock - lastClock;
             bool same = dt == 0 && tMin == lastT;
             if (!same)
             {
-                if (double.IsNaN(dt) || dt <= 0) for (int i = 0; i < N; i++) angle[i] = rate[i] * clock % TwoPi;
-                else for (int i = 0; i < N; i++) angle[i] = (angle[i] + rate[i] * dt) % TwoPi;
+                if (double.IsNaN(dt) || dt <= 0) { for (int i = 0; i < N; i++) angle[i] = rate[i] * clock % TwoPi; flow = flowRate * clock; }
+                else { for (int i = 0; i < N; i++) angle[i] = (angle[i] + rate[i] * dt) % TwoPi; flow += flowRate * dt; }
             }
             lastClock = clock; lastT = tMin;
             int s = Slot0 * 4;
             for (int i = 0; i < N; i++) a[s + i] = (float)angle[i];
-            a[s + N] = 0;
+            a[s + N] = (float)flow;
         }
 
         // the web build's rates (its StormMarch / StormCommon constants), unchanged

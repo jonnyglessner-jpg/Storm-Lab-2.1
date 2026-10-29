@@ -15,8 +15,15 @@ RWTexture3D<float4> _OutD;
 
 // ---- game adaptation beside the port (StormTilt, user 2026-10-27): the tilted updraft's rain-free base and the clear
 // air round a tornado. x: the base's radius, y: the tornado's clear radius, km; zero for the web build's layout.
-// z: 1 leaves out all rain (StormRenderer.hideRain, for checks).
+// z: 1 leaves out all rain (StormRenderer.hideRain, for checks). w: the cloud's extinction (CloudMax) for RainUnderCloud,
+// 0 for the web build's layout.
 float4 _PrecipP;
+// RainUnderCloud's share of the rain kept, per column (written at the end of a repaint). x of _RainKeepP: 1 = Build applies
+// it as it writes (a repaint spread over frames: the volume is drawn while it is repainted); y: 1 = RainUnderCloud also
+// applies its new map to the volume in place (a repaint all at once, built with x = 0)
+Texture2D<float> _RainKeep;
+RWTexture2D<float> _OutKeep;
+float4 _RainKeepP;
 // what is left of the rain at p: none under the updraft's base on its inflow side (forward and right of the updraft,
 // up into the vault) or round a tornado on the ground; flat inside, a soft edge out (a super-Gaussian), so the exposed
 // base and the curtains' inner faces stay smooth
@@ -146,8 +153,8 @@ void Build(uint3 gid : SV_DispatchThreadID)
     // updraft's vaulted inflow side, kept apart from the rain on the forward flank
     if (S_tail.w > 0.0)
     {
-        float2 t0 = S_up.xy + S_f.xy * 2.5 + S_f.zw * 0.5;
-        float2 td = S_tail.xy; float2 tn = float2(-td.y, td.x);
+        float2 t0 = tailRoot();   // (game adaptation: the game's line along the forward flank's edge, StormCommon.hlsl tailDir)
+        float2 td = tailDir(); float2 tn = float2(-td.y, td.x);
         float sT = dot(p.xy - t0, td) + R * 0.6;                       // 0 at the updraft's edge, increasing outward
         float qT = dot(p.xy - t0, tn) - 0.035 * (S_tail.z - sT) * (S_tail.z - sT) * 0.12;
         if (sT > -3.0 && sT < S_tail.z && abs(qT) < 6.0 && p.z < zb + 5.0)
@@ -161,8 +168,15 @@ void Build(uint3 gid : SV_DispatchThreadID)
             float wI = (1.0 + 2.2 * rise) * (0.8 + 0.4 * nI);
             // laminar bands along the inflow
             float band = 0.85 + 0.15 * sin(6.2832 * (p.z - zb) / 0.45 + sT * 0.4);
-            float iv = S_tail.w * 0.9 * ss(wI + 0.4, wI - 0.6, abs(qT)) * ss(botI - 0.1, botI + 0.2, p.z) * ss(topI + 0.3, topI - 0.5, p.z)
-                * ss(-3.0, -1.0, sT) * (1.0 - ss(S_tail.z * (8.0 / 11.0), S_tail.z, sT)) * band;
+            // (game adaptation, _WallP.w; user, 2026-10-28: the beaver tail "too big and too long", and should "blend into
+            // the main updraft more smoothly" and flow in: this ramp ran 10 km out and was the band seen, but the volume is
+            // repainted only every few seconds, so it could not flow. In the game it keeps its first few kilometres, where
+            // it rises into the updraft's side, and the render pass's beaver tail (StormCommon.hlsl beaverTail, streaming
+            // in each frame) is the band beyond it, its widened root overlapping this ramp's end)
+            // (an HP storm's reaches further, as its bigger beaver tail does: tailHP)
+            float reachI = _WallP.w > 0.5 ? 1.0 - ss(lerp(2.5, 4.0, tailHP()), lerp(5.5, 9.0, tailHP()), sT + (nI - 0.5) * 1.5) : 1.0 - ss(S_tail.z * (8.0 / 11.0), S_tail.z, sT);
+            float iv = tailAmt() * 0.9 * ss(wI + 0.4, wI - 0.6, abs(qT)) * ss(botI - 0.1, botI + 0.2, p.z) * ss(topI + 0.3, topI - 0.5, p.z)
+                * ss(-3.0, -1.0, sT) * reachI * band;
             mw += iv * iv; ms += iv * iv * water(0.15);
             cloud = max(cloud, iv);
         }
@@ -328,7 +342,74 @@ void Build(uint3 gid : SV_DispatchThreadID)
         // Once the storm is in its late phase (S_up.w, after the first tornado cycle) the straight-down forward-flank rain
         // is lighter, and lighter still close to the tornado: most of that rain is carried round with the RFD instead.
         float lateFfd = (1.0 - 0.45 * S_up.w) * lerp(1.0, ss(2.5, 7.5, length(p.xy - S_wall.xy)), S_up.w);
-        rain = max(rain, S_ffd.w * lateFfd * exp(-dot(rainEdge, rainEdge)) * curt * forwardBelow * ss(reachF - 0.2, reachF + 0.3, p.z));
+        float foot = exp(-dot(rainEdge, rainEdge));
+        // ---- game adaptation (user, 2026-10-28, with the cloud deck below: "straight edged"; the Tilted layout): the
+        // curtain's edge was the same at every height, so seen side-on it was a ruler-straight vertical line from the cloud
+        // to the ground, and crisp once the unified lighting's rain was denser. Its footprint now leans downwind with height
+        // (rain falls through the wind; about 15 degrees) and its edge frays with noise that changes every kilometre or so
+        // up, breaking it into shafts that end at different places.
+        if (_PrecipP.w > 0.0)
+        {
+            float2 fqL = fq - fw * 0.25 * max(p.z - zb, 0.0);
+            float2 rqL = float2(dot(fqL, fw) / (6.0 * S_ffd.z), dot(fqL, lf) / (4.0 * S_ffd.z));
+            float2 reL = rqL - sweep * saturate(dot(rqL, sweep) / max(dot(sweep, sweep), 0.0001));
+            float nR = n3(float3(p.x * 0.35, p.y * 0.35, p.z * 0.7) + float3(0.8, 0.2, 0.6)) - 0.5;
+            foot = exp(-dot(reL, reL));
+            foot *= ss(0.02, 0.4, foot + nR * 0.45);
+            // (user, 2026-10-28: "doesn't look like rain") separate shafts a few kilometres across, each tall and
+            // unbroken, with thinner rain between them, rather than one even haze
+            float shaft = n3(float3(p.x * 0.4, p.y * 0.4, p.z * 0.05) + float3(0.1, 0.7, 0.3));
+            foot *= 0.3 + 0.9 * ss(0.3, 0.7, shaft);
+            // and heavy only in the core: the shield swept downwind is light rain (a third), so it is seen into and its
+            // shafts show, rather than a bank whose first 200 m hide the rest
+            foot *= lerp(0.3, 1.0, ss(0.15, 0.7, exp(-dot(rainQ, rainQ))));
+        }
+        float rainF = S_ffd.w * lateFfd * foot * curt * forwardBelow * ss(reachF - 0.2, reachF + 0.3, p.z);
+        rain = max(rain, rainF);
+        // ---- game adaptation (user, 2026-10-28: "add the cloud deck"; the Tilted layout, _PrecipP.w): the forward-flank
+        // rain's own cloud. The web build has none (above), so its rain fell out of the anvil's underside alone and a sun
+        // under 40 degrees lit it from the side. A deep mass of cloud over the rain's footprint (its core and its sweep
+        // downwind), under the anvil and rising into it near the core. It comes with the anvil (a young storm's rain falls
+        // from its tower) and thins as the forward-flank rain does late in the storm.
+        // Its shape (user, same day: "unnatural, and straight edged. Blend it into the rain"): the first deck was a box, a
+        // flat base and top and steep sides over a smooth ellipse, floating under the anvil. Now its outline wanders (noise
+        // at about 5 km), it thins toward the outline as a lens does (the base rises and the top falls), its base is ragged
+        // and higher downwind (rain-cooled air condenses higher), and where the rain under it is heavy it trails ragged tags
+        // down into the rain over a kilometre and a half.
+        // Again (user, same day: "the forward flank precip seems to be forming on its own completely separate from the
+        // storm" and "the cloud deck itself is too prominent and doesn't look like rain"): the deck was solid cloud (an
+        // extinction of 22 a km: a hard white surface with walls and a flat top) on the core alone, 13 km out from the
+        // tower with clear air between. Now it is murk, the precipitation-laden cloud the rain falls through: about the
+        // rain's own extinction (2 a km), so its edges are soft over kilometres, densest only where it leaves the tower. It
+        // grows out of the tower's downshear side (a bridge from the tower, where it leans at each height, to the core)
+        // and rises into the anvil's underside near the tower and over the core, so it has no top of its own; further down
+        // the sweep it is lower and fades upward.
+        if (_PrecipP.w > 0.0 && S_anvil.w > 0.0)
+        {
+            float nD = fbm(p * 0.6 + float3(2.3, 0.7, 1.9)) - 0.5;
+            float nE = fbm(p * 0.18 + float3(0.9, 3.1, 0.4)) - 0.5;
+            float rag = n3(p * 1.3 + float3(0.4, 0.9, 0.2)) - 0.5;
+            float2 tw = S_up.xy + S_tilt.xy * clamp(zr, 0.0, el - zb);
+            float2 seg = S_ffd.xy - tw;
+            float tb = saturate(dot(p.xy - tw, seg) / max(dot(seg, seg), 0.01));
+            float dB = length(p.xy - tw - seg * tb) / lerp(0.9 * R, 3.0 * S_ffd.z, tb);
+            float bridge = exp(-dB * dB);
+            // (its outline's noise only near the outline, so it cannot raise murk far from the storm)
+            float shape = max(bridge, exp(-dot(rainEdge, rainEdge)));
+            float plan = ss(0.05, 0.8, shape + (nD * 0.25 + nE * 0.4) * ss(0.01, 0.25, shape));
+            float rise = saturate(S_anvil.w) * max(bridge * (1.0 - 0.5 * tb), ss(0.3, 0.9, exp(-dot(rainQ, rainQ))));
+            float zLo = zb + lerp(0.7, 1.8, along) + nD * 0.6 + rag * 0.5;
+            float zHi = lerp(zb + 3.5, S_anvil2.x + 0.6, rise) + nE * 1.5;
+            // (its lowest kilometre and a half thicker over the rain: a ragged, lowered base the shafts hang from, so the
+            // rain's top is not seen ending in thin air)
+            float baseBand = 0.13 * ss(0.05, 0.5, rainF) * ss(zLo + 1.6, zLo + 0.3, p.z);
+            float body = plan * ss(zLo - 0.4, zLo + 0.8, p.z) * ss(zHi + 1.0, zHi - 2.0, p.z)
+                * (lerp(0.07, 0.3, bridge * (1.0 - tb)) + baseBand) * (0.6 + 0.8 * saturate(0.5 + nD));
+            float drape = plan * ss(0.05, 0.4, rainF) * ss(zLo - 1.5, zLo, p.z) * saturate(0.6 + 0.8 * rag) * 0.05;
+            float deck = saturate(2.0 * S_anvil.w) * saturate(3.0 * S_ffd.w) * lateFfd * max(body, drape);
+            mw += deck * deck; ms += deck * deck * water(0.35);
+            cloud = max(cloud, deck);
+        }
     }
     if (S_hail.w > 0.0 && forwardBelow > 0.0)
     {
@@ -375,7 +456,65 @@ void Build(uint3 gid : SV_DispatchThreadID)
         rain = max(rain, 0.9 * (1.0 + 0.3 * S_up.w) * S_ffd.w * slotWrap * arc * curt * hgt * ss(reachW - 0.2, reachW + 0.3, p.z));
     }
     rain *= precipClear(p);   // game adaptation (StormTilt), not the web build's
+    // ---- game adaptation (user, 2026-10-28: vertical seams in two-storm views; the Tilted layout): above the base, rain
+    // only inside cloud. The web build's forward-flank curtains rise into the anvil (precipTop), so between the forward-flank
+    // deck and the anvil they hung in clear air: a sunlit white wall as tall as the storm with a vertical edge, hiding the
+    // storm behind it (game_15: a rain optical depth of 40 above base + 2 km). Precipitation aloft is in the cloud it falls
+    // from; the shafts come out of the deck's and the anvil's undersides.
+    // (Later the same day, with the deck now thin murk: the rain hangs on up into it, fading out over the first few
+    // kilometres above the base, so the shafts come out of the murk with no flat top at the base.)
+    if (_PrecipP.w > 0.0) rain *= lerp(1.0, ss(0.01, 0.08, cloud) * (1.0 - 0.75 * ss(zb + 1.0, zb + 4.5, p.z)), ss(zb + 0.5, zb + 2.0, p.z));
+    if (_RainKeepP.x > 0.5) rain *= _RainKeep[id.xy];   // game adaptation (RainUnderCloud below)
     _OutD[id] = float4(sqrt(saturate(cloud)), sqrt(saturate(rain)), sqrt(saturate(nearV)), ms / mw);
+}
+
+// ---- game adaptation (user, 2026-10-28: "trim the rain shield"), run once the whole volume is built: the forward-flank
+// rain's sweep downwind reaches the ground only out of cloud that reaches down to mid levels. The web build's forward-flank
+// rain has no cloud of its own (above: "precipitation only for now"); its sweep (up to 7.5 km past the core) fell 9 km out
+// of the anvil's underside with nothing below 6 km, and a sun under 40 degrees slipped under the anvil and lit it white
+// from 20 km off (StormGameCheck -slGameProbe). Heavy rain falls from deep cloud; an anvil alone gives virga. Per column:
+// the cloud's optical depth below the base + 6 km, averaged over 9 columns out to 5 km (so the rain's edge is soft and
+// does not follow the cloud's noise), keeps the rain by smoothstep(0.5, 10) of it; the designed cores (the forward-flank
+// core's own ellipse without its sweep, the hail core) keep theirs. Cutting the cores too left no forward-flank rain.
+// The share kept goes to a per-column map (_OutKeep). A repaint spread over frames applies the last repaint's map as it
+// writes each slab: trimming the volume in place only when the last slab was done left every slab repainted before it
+// with the whole sweep for a few frames, a flash at every repaint (user, 2026-10-28; StormLightCheck -slLightFlicker:
+// 11 % more rain for 3 frames). The map then lags the storm by one repaint, a fraction of a second.
+#pragma kernel RainUnderCloud
+[numthreads(8, 8, 1)]
+void RainUnderCloud(uint3 id : SV_DispatchThreadID)
+{
+    uint nv = (uint)S_grid.x; uint nz = (uint)S_grid.y;
+    if (id.x >= nv || id.y >= nv) return;
+    if (_PrecipP.w <= 0.0) { _OutKeep[id.xy] = 1.0; return; }
+    float L = S_grid.z;
+    float2 p = float2(-L + (id.x + 0.5) * 2.0 * L / S_grid.x, -L + (id.y + 0.5) * 2.0 * L / S_grid.x);
+    float core = 0.0;
+    if (S_ffd.w > 0.0)
+    {
+        float2 fq = p - S_ffd.xy;
+        float2 rq = float2(dot(fq, S_f.xy) / (6.0 * S_ffd.z), dot(fq, S_f.zw) / (4.0 * S_ffd.z));
+        core = exp(-dot(rq, rq));
+    }
+    if (S_hail.w > 0.0) { float hq = length(p - S_hail.xy) / S_hail.z; core = max(core, exp(-hq * hq)); }
+    float keepCore = ss(0.05, 0.4, core);
+    if (keepCore >= 1.0) { _OutKeep[id.xy] = 1.0; return; }
+    float dz = S_grid.w / S_grid.y;
+    uint ztop = min(nz, (uint)ceil((S_base.x + 6.0) / dz));
+    float km = S_grid.x / (2.0 * L);   // cells per km
+    int a = max(1, (int)round(2.5 * km)), b = max(1, (int)round(3.5 * km));
+    int2 taps[9] = { int2(0, 0), int2(a, 0), int2(-a, 0), int2(0, a), int2(0, -a), int2(b, b), int2(-b, b), int2(b, -b), int2(-b, -b) };
+    float tau = 0.0;
+    [unroll] for (int k = 0; k < 9; k++)
+    {
+        uint2 xy = (uint2)clamp(int2(id.xy) + taps[k], 0, (int)nv - 1);
+        for (uint z = 0; z < ztop; z++) { float c = _OutD[uint3(xy, z)].r; tau += c * c; }   // (the volume holds sqrt(cloud))
+    }
+    float kept = max(keepCore, ss(0.5, 10.0, tau / 9.0 * dz * _PrecipP.w));
+    _OutKeep[id.xy] = kept;
+    float keep = sqrt(kept);
+    if (keep >= 1.0 || _RainKeepP.y < 0.5) return;
+    for (uint z2 = 0; z2 < nz; z2++) { float4 d = _OutD[uint3(id.xy, z2)]; d.g *= keep; _OutD[uint3(id.xy, z2)] = d; }
 }
 
 // ------------------------------------------------------------------------------------------------ light
@@ -497,8 +636,16 @@ void SkyVis(uint3 gid : SV_DispatchThreadID)
 // ------------------------------------------------------------------------------------------------ ground light
 // StormLab 2.0: how lit the ground is, averaged over the 4 km a cloud base above it sees (13 taps): r the sun's (or
 // moon's) transmittance to the ground, g its sky from above. The march turns it into light bounced up onto undersides.
-RWTexture2D<float2> _OutG;
+// Unified lighting (_LM.x > 0): the sun's share as the unified lighting has it (sunReach), as the scene's shadow does.
+// b: town light on the base above, relative to StormRenderer.lightPollution's (1 where no towns are given): the towns
+// in _Towns (storm frame, km: xy, radius, glow), each a lit disc whose light on a base zb up falls off as
+// 1 / (1 + d^2 / (r + zb)^2)^2 (a Lambertian source seen from above), over a faint rural floor: a town of 15,000 (glow 1)
+// lights the base over it 4x as brightly as the even town light, open country about a seventh as brightly.
+RWTexture2D<float4> _OutG;
 Texture3D<float4> _LightIn;
+float4 _LM;
+float4 _Towns[16];
+float4 _TownP;   // x: how many towns, y: the open country's share (StormRenderer.TownFloor)
 
 [numthreads(8, 8, 1)]
 void GroundLight(uint3 id : SV_DispatchThreadID)
@@ -513,7 +660,19 @@ void GroundLight(uint3 id : SV_DispatchThreadID)
         float r = k == 0 ? 0.0 : (k <= 6 ? 2.0 : 4.0);
         float a = k * 1.0472 + (k > 6 ? 0.5236 : 0.0);
         float4 l = _LightIn.SampleLevel(sampler_LinearClamp, luvw(float3(p + r * float2(cos(a), sin(a)), 0.05)), 0);
-        acc += float2(sunT(l.r), l.g);
+        acc += float2(_LM.x > 0.5 ? sunReach(l.r, _LM) : sunT(l.r), l.g);
     }
-    _OutG[id.xy] = acc / 13.0;
+    float town = 1.0;
+    if (_TownP.x > 0.5)
+    {
+        town = _TownP.y;
+        for (int i = 0; i < (int)_TownP.x; i++)
+        {
+            float a = _Towns[i].z + max(_LP.w, 0.5);
+            float2 dd = p - _Towns[i].xy;
+            float f = 1.0 / (1.0 + dot(dd, dd) / (a * a));
+            town += 4.0 * _Towns[i].w * f * f;
+        }
+    }
+    _OutG[id.xy] = float4(acc / 13.0, town, 0.0);
 }

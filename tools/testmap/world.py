@@ -686,14 +686,14 @@ def spawn_points(profs, datum):
     return out
 
 
-def routes(profs, datum):
+def routes(profs, datum, step=25.0):
     """Centre lines (world x, y, z every ~25 m, flattened) of the state routes, the paved roads and the three longest gravel
-    roads, for the drive test's autopilot and the HUD."""
+    roads, for the drive test's autopilot and the HUD. The real-data maps take 10 m: their curves are much tighter."""
     half = cfg.SIZE_M / 2
     gravel = sorted((p for p in profs if p["cls"] == "gravel"), key=lambda p: -p["s"][-1])[:3]
     out = []
     for pr in [p for p in profs if p["cls"] != "gravel"] + gravel:
-        idx = np.unique(np.searchsorted(pr["s"], np.arange(0, pr["s"][-1], 25.0)).clip(0, len(pr["s"]) - 1))
+        idx = np.unique(np.searchsorted(pr["s"], np.arange(0, pr["s"][-1], step)).clip(0, len(pr["s"]) - 1))
         pts = [round(v, 2) for i in idx for v in (float(pr["pts"][i, 0] - half), float(pr["h"][i] - datum),
                                                   float(pr["pts"][i, 1] - half))]
         out.append(dict(name=pr["name"], cls=pr["cls"], pts=pts))

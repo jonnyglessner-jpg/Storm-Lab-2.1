@@ -6,6 +6,8 @@
 // validation/reports/game_tracks.csv.
 //   StormLab > Test Map > Game Check
 // Batch: -executeMethod StormGameCheck.RunFromCommandLine [-slGameSeed <n>] [-slGamePreset <key>] (never with -nographics)
+// -slGameProbe: with the 25 min view of each storm alone, the unified light's parts (game_25_storm<k>_dbg1..4.png) and the
+// cloud, rain and light grids along the view (in the report)
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -212,7 +214,12 @@ public static class StormGameCheck
         var mv3 = new Vector3((float)game.Storms[0].Plan.motion.x, 0, (float)game.Storms[0].Plan.motion.y).normalized;
         var viewFrom = (new Vector3(mv3.z, 0, -mv3.x) - mv3).normalized;
         var times = new[] { 6f, 15f, 25f, 35f, 45f, 55f };
-        var pose25 = (Vector3.zero, Quaternion.identity);
+        // -slGameAlone 15,35: the views at those minutes with each storm alone too (25 always), to tell which storm draws what
+        var argvA = System.Environment.GetCommandLineArgs(); int ai = Array.IndexOf(argvA, "-slGameAlone");
+        var aloneArg = ai >= 0 && ai + 1 < argvA.Length ? argvA[ai + 1] : null;
+        var alone = new List<float> { 25f };
+        if (!string.IsNullOrEmpty(aloneArg)) foreach (var a in aloneArg.Split(',')) if (float.TryParse(a, NumberStyles.Float, CultureInfo.InvariantCulture, out var am) && !alone.Contains(am)) alone.Add(am);
+        var poses = new Dictionary<float, (Vector3, Quaternion)>();
         foreach (var g in times)
         {
             game.gameMinutes = g; game.Apply();
@@ -224,25 +231,159 @@ public static class StormGameCheck
             from.x = Mathf.Clamp(from.x, -half + 500f, half - 500f); from.z = Mathf.Clamp(from.z, -half + 500f, half - 500f);
             from.y = Physics.Raycast(from + Vector3.up * 3000f, Vector3.down, out var hit, 6000f) ? hit.point.y + 2f : 2f;
             cam.transform.SetPositionAndRotation(from, Quaternion.LookRotation(new Vector3(mid.x, from.y + 3200f, mid.z) - from, Vector3.up));
-            if (g == 25f) pose25 = (from, cam.transform.rotation);
+            if (alone.Contains(g)) poses[g] = (from, cam.transform.rotation);
             foreach (var r in live) r.ResetHistory(cam);
             foreach (var x in Frames(3)) yield return x;
             StormLabTestKit.Render(cam, Path.Combine(ShotDir, $"game_{g:00}.png"), 1600, 900, 6);
+            if (alone.Contains(g))
+            {
+                var amb = StormSceneAmbient.Current;
+                rep.AppendLine($"- game_{g:00}.png scene ambient: camera-wide {(amb ? amb.Ambient : 1f):0.00}, local {(amb && amb.LocalActive ? "on" : "off")}");
+                // which storm draws what in the composite: each storm in turn drawn as its light grid's depths (lightDebug 1)
+                for (int k = 0; k < live.Count; k++)
+                {
+                    live[k].lightDebug = 1; foreach (var r in live) r.ResetHistory(cam);
+                    foreach (var x in Frames(2)) yield return x;
+                    StormLabTestKit.Render(cam, Path.Combine(ShotDir, $"game_{g:00}_which{Enumerable.Range(0, game.Storms.Count).First(i => game.Storms[i] == live[k]) + 1}.png"), 800, 450, 6);
+                    live[k].lightDebug = 0;
+                }
+                foreach (var r in live) r.ResetHistory(cam);
+            }
             rep.AppendLine($"- game_{g:00}.png: game {g:0} min; " + string.Join("; ", Enumerable.Range(0, game.Storms.Count).Select(i =>
                 game.Alive(i) ? $"storm {i + 1} {game.Storms[i].Frame.stage} ({game.StormMinutes(i):0} storm min), {Out(game.UpdraftWorld(i)) / -1000:0.0} km inside the map" : $"storm {i + 1} not on (life {game.StormMinutes(i):0} min)")));
         }
-        // the last mid-game view with each storm alone, to tell which storm draws what
+        // the mid-game view (and -slGameAlone's) with each storm alone, to tell which storm draws what
+        foreach (var ga in alone)
         {
-            game.gameMinutes = 25f; game.Apply();
-            cam.transform.SetPositionAndRotation(pose25.Item1, pose25.Item2);
+            if (!poses.TryGetValue(ga, out var pose)) continue;
+            game.gameMinutes = ga; game.Apply();
+            cam.transform.SetPositionAndRotation(pose.Item1, pose.Item2);
             for (int k = 0; k < game.Storms.Count; k++)
             {
+                if (!game.Alive(k)) continue;
+                // (the runner's Update shows every live storm each frame: paused while one is shown alone)
+                game.enabled = false;
                 for (int j = 0; j < game.Storms.Count; j++) game.Storms[j].gameObject.SetActive(j == k);
                 game.Storms[k].StepTo(game.Storms[k].StormTime, game.Storms[k].Clock, true);
                 game.Storms[k].ResetHistory(cam);
                 foreach (var x in Frames(3)) yield return x;
-                StormLabTestKit.Render(cam, Path.Combine(ShotDir, $"game_25_storm{k + 1}.png"), 1600, 900, 6);
+                StormLabTestKit.Render(cam, Path.Combine(ShotDir, $"game_{ga:00}_storm{k + 1}.png"), 1600, 900, 6);
+                if (ga != 25f)
+                {
+                    // where the storm's volume box stands in the frame: its vertical edges (corners) at 1 km up, screen x of 1600
+                    var rk = game.Storms[k]; float Lm = StormVolume.L;
+                    var xs = new List<string>();
+                    foreach (var (cx, cy) in new[] { (-Lm, -Lm), (Lm, -Lm), (Lm, Lm), (-Lm, Lm) })
+                    {
+                        var w = rk.StormToWorld(new Vector3(cx, cy, 1f));
+                        var sp = cam.WorldToViewportPoint(w);
+                        xs.Add(sp.z > 0f ? $"({cx:+0;-0}, {cy:+0;-0}) x {sp.x * 1600f:0}" : $"({cx:+0;-0}, {cy:+0;-0}) behind");
+                    }
+                    var cS = rk.WorldToStorm(cam.transform.position);
+                    rep.AppendLine($"- game_{ga:00}_storm{k + 1}.png: camera at ({cS.x:0.0}, {cS.y:0.0}) km in its frame; box corners: {string.Join(", ", xs)}");
+                    // what the view crosses, column by column: rain and cloud optical depth along the rays at the frame's
+                    // middle and three quarters up (the volume holds sqrt(density)), and a plan of the storm's rain
+                    {
+                        var vol = rk.Volume; int NV = vol.NV, NZ = vol.NZ;
+                        var rq = UnityEngine.Rendering.AsyncGPUReadback.Request(vol.Dens, 0, 0, NV, 0, NV, 0, NZ, TextureFormat.RGBA32); rq.WaitForCompletion();
+                        var lay = new byte[NZ][]; for (int z = 0; z < NZ; z++) lay[z] = rq.GetData<byte>(z).ToArray();
+                        float D(int ch, Vector3 q)
+                        {
+                            int ix = Mathf.FloorToInt((q.x + Lm) / (2f * Lm) * NV), iy = Mathf.FloorToInt((q.y + Lm) / (2f * Lm) * NV), iz = Mathf.FloorToInt(q.z / StormVolume.ZT * NZ);
+                            if (ix < 0 || iy < 0 || iz < 0 || ix >= NV || iy >= NV || iz >= NZ) return 0f;
+                            float v = lay[iz][(iy * NV + ix) * 4 + ch] / 255f; return v * v;
+                        }
+                        float rMax = StormVolume.RainMax * vol.rainScale, zb = rk.Frame.param[4];
+                        foreach (var vy in new[] { 0.5f, 0.75f })
+                        {
+                            var line = new StringBuilder($"  - rays {vy * 100:0}% up, screen x: rain tau / cloud tau / rain tau above base+2 km / opacity / mean distance km:");
+                            for (int sx = 0; sx <= 1600; sx += 50)
+                            {
+                                var ray = cam.ViewportPointToRay(new Vector3(sx / 1600f, vy, 0f));
+                                var o = rk.WorldToStorm(ray.origin); var d = StormRenderer.WorldToStormDir(ray.direction);
+                                float tr = 0f, tc = 0f, tu = 0f, T = 1f, ds = 0f, ws = 0f;
+                                for (float t = 0.1f; t < 120f; t += 0.2f)
+                                {
+                                    var q = o + d * t; if (q.z > StormVolume.ZT || q.z < 0f) break;
+                                    float r = D(1, q) * rMax * 0.2f, c = D(0, q) * StormVolume.CloudMax * 0.2f; tr += r; tc += c; if (q.z > zb + 2f) tu += r;
+                                    float a = 1f - Mathf.Exp(-(r + c)); ds += T * a * t; ws += T * a; T *= 1f - a;
+                                }
+                                line.Append($" {sx}: {tr:0.0}/{tc:0}/{tu:0.0}/{1f - T:0.00}/{(ws > 1e-3f ? ds / ws : -1f):0};");
+                            }
+                            rep.AppendLine(line.ToString());
+                        }
+                        // the plan: red the cloud below base + 6 km, green the rain at 1 km, blue the rain above base + 2 km;
+                        // white the camera and its rays at screen x 0, 400, 800, 1200 and 1600
+                        var img = new Texture2D(NV, NV, TextureFormat.RGB24, false); var px = new Color32[NV * NV];
+                        for (int iy = 0; iy < NV; iy++) for (int ix = 0; ix < NV; ix++)
+                        {
+                            float cl = 0f, rl = 0f, ru = 0f;
+                            for (int z = 0; z < NZ; z++)
+                            {
+                                float zz = (z + 0.5f) * StormVolume.ZT / NZ; int i = (iy * NV + ix) * 4;
+                                float c = lay[z][i] / 255f, rr = lay[z][i + 1] / 255f;
+                                if (zz < zb + 6f) cl += c * c * StormVolume.CloudMax * StormVolume.ZT / NZ;
+                                if (Mathf.Abs(zz - 1f) < StormVolume.ZT / NZ) rl = Mathf.Max(rl, rr * rr);
+                                if (zz > zb + 2f) ru = Mathf.Max(ru, rr * rr);
+                            }
+                            px[iy * NV + ix] = new Color(Mathf.Clamp01(cl / 30f), Mathf.Clamp01(rl * 1.5f), Mathf.Clamp01(ru * 1.5f));
+                        }
+                        foreach (var sx in new[] { 0, 400, 800, 1200, 1600 })
+                        {
+                            var ray = cam.ViewportPointToRay(new Vector3(sx / 1600f, 0.5f, 0f));
+                            var o = rk.WorldToStorm(ray.origin); var d = StormRenderer.WorldToStormDir(ray.direction); d.z = 0f; d.Normalize();
+                            for (float t = 0f; t < 120f; t += 0.1f)
+                            {
+                                var q = o + d * t; int ix = Mathf.FloorToInt((q.x + Lm) / (2f * Lm) * NV), iy = Mathf.FloorToInt((q.y + Lm) / (2f * Lm) * NV);
+                                if (ix < 0 || iy < 0 || ix >= NV || iy >= NV) continue;
+                                px[iy * NV + ix] = sx == 800 ? new Color32(255, 255, 0, 255) : new Color32(255, 255, 255, 255);
+                            }
+                        }
+                        img.SetPixels32(px); img.Apply();
+                        File.WriteAllBytes(Path.Combine(ShotDir, $"game_{ga:00}_storm{k + 1}_plan.png"), img.EncodeToPNG());
+                        Object.DestroyImmediate(img);
+                    }
+                    rk.hideRain = true; rk.StepTo(rk.StormTime, rk.Clock, true); rk.ResetHistory(cam);
+                    foreach (var x in Frames(3)) yield return x;
+                    StormLabTestKit.Render(cam, Path.Combine(ShotDir, $"game_{ga:00}_storm{k + 1}_norain.png"), 1600, 900, 6);
+                    rk.hideRain = false; rk.StepTo(rk.StormTime, rk.Clock, true);
+                }
+                // -slGameProbe: what the view crosses (StormLightCheck.Probe): cloud and rain, the sun's optical depth and
+                // the depth overhead, 1 km up along the view
+                if (ga == 25f && System.Environment.GetCommandLineArgs().Contains("-slGameProbe"))
+                {
+                    for (int dbg = 1; dbg <= 4; dbg++)
+                    {
+                        game.Storms[k].lightDebug = dbg; game.Storms[k].ResetHistory(cam);
+                        StormLabTestKit.Render(cam, Path.Combine(ShotDir, $"game_25_storm{k + 1}_dbg{dbg}.png"), 800, 450, 6);
+                    }
+                    game.Storms[k].lightDebug = 0;
+                    var r = game.Storms[k]; var vol = r.Volume;
+                    var f = cam.transform.forward; f.y = 0f; f.Normalize();
+                    var F = r.Frame.param; var u0 = r.WorldToStorm(r.UpdraftWorld(r.StormTime));
+                    rep.AppendLine().AppendLine($"Storm {k + 1}: forward-flank core size {F[38]:0.00} amount {F[39]:0.00}; motion/forward ({F[0]:0.00}, {F[1]:0.00})");
+                    rep.AppendLine().AppendLine($"Storm {k + 1} along the 25 min view (1 km up): km, cloud, rain, sun depth, depth overhead");
+                    foreach (var km in new[] { 0f, 5f, 10f, 15f, 20f, 25f, 30f, 35f })
+                    {
+                        var p = r.WorldToStorm(cam.transform.position + f * km * 1000f); p.z = 1f;
+                        var d = StormLightCheck.Probe(vol.Dens, vol.NV, vol.NZ, p.x, p.y, p.z, TextureFormat.RGBA32);
+                        var l = StormLightCheck.Probe(vol.LightTex, vol.LN, vol.LZ, p.x, p.y, p.z);
+                        // the cloud's optical depth in the whole column, and below 5 km over the base (the volume holds sqrt(cloud))
+                        float L = StormVolume.L, dz = StormVolume.ZT / vol.NZ, zb = r.Frame.param[4];
+                        int ix = Mathf.Clamp(Mathf.FloorToInt((p.x + L) / (2f * L) * vol.NV), 0, vol.NV - 1), iy = Mathf.Clamp(Mathf.FloorToInt((p.y + L) / (2f * L) * vol.NV), 0, vol.NV - 1);
+                        var col = UnityEngine.Rendering.AsyncGPUReadback.Request(vol.Dens, 0, ix, 1, iy, 1, 0, vol.NZ, TextureFormat.RGBA32); col.WaitForCompletion();
+                        float tAll = 0f, tLow = 0f, zLow = -1f;
+                        for (int z = 0; z < vol.NZ; z++)
+                        {
+                            float c = col.GetData<byte>(z)[0] / 255f, t = c * c * StormVolume.CloudMax * dz;
+                            tAll += t; if ((z + 0.5f) * dz < zb + 5f) tLow += t;
+                            if (zLow < 0f && c * c > 0.1f) zLow = (z + 0.5f) * dz;
+                        }
+                        rep.AppendLine($"- {km:0} km: cloud {d.x:0.00}, rain {d.y:0.00}, sun depth {l.x:0.0}, overhead {-10f * Mathf.Log(Mathf.Max(l.y, 1e-12f)):0.0}; column cloud depth {tAll:0.0}, below base + 5 km {tLow:0.0}, lowest cloud {zLow:0.0} km (base {zb:0.0}); from the updraft {Vector2.Distance(new Vector2(p.x, p.y), new Vector2(u0.x, u0.y)):0.0} km, forward-flank core {Vector2.Distance(new Vector2(p.x, p.y), new Vector2(F[36], F[37])):0.0} km, hail core {Vector2.Distance(new Vector2(p.x, p.y), new Vector2(F[40], F[41])):0.0} km, surge {Vector2.Distance(new Vector2(p.x, p.y), new Vector2(F[72], F[73])):0.0} km (radius {F[74]:0.0})");
+                    }
+                }
             }
+            game.enabled = true;
             game.Apply();
         }
         Sheet(times.Select(g => $"game_{g:00}.png").ToArray(), "game_sheet.jpg");
@@ -295,6 +436,34 @@ public static class StormGameCheck
                 File.WriteAllBytes(Path.Combine(ShotDir, name), tex.EncodeToPNG());
                 Object.DestroyImmediate(tex); rt.Release(); Object.DestroyImmediate(rt);
                 names.Add(name);
+                // -slGameProbe: the unified light's parts alone in the same view (StormRenderer.lightDebug)
+                if (argv.Contains("-slGameProbe"))
+                    for (int dbg = 1; dbg <= 4; dbg++)
+                    {
+                        foreach (var r in game.Storms) { r.lightDebug = dbg; r.ResetHistory(cam); }
+                        StormLabTestKit.Render(cam, Path.Combine(ShotDir, name.Replace(".png", $"_dbg{dbg}.png")), 1600, 900, 8);
+                    }
+                foreach (var r in game.Storms) r.lightDebug = 0;
+                // -slGameSpotFrames count,seconds: more frames of the same view as Play draws them, that many seconds apart
+                // (the game running at real time), for motion: Screenshots/<name>_f<k>.png
+                int fi = Array.IndexOf(argv, "-slGameSpotFrames");
+                if (fi >= 0 && fi + 1 < argv.Length)
+                {
+                    var fs = argv[fi + 1].Split(',');
+                    int count = int.Parse(fs[0]); float gap = float.Parse(fs[1], CultureInfo.InvariantCulture);
+                    for (int k = 1; k <= count; k++)
+                    {
+                        float tw = Time.realtimeSinceStartup;
+                        while (Time.realtimeSinceStartup - tw < gap) yield return null;
+                        var rtk = new RenderTexture(1600, 900, 24);
+                        cam.targetTexture = rtk; cam.Render(); cam.Render();
+                        RenderTexture.active = rtk; var tk = new Texture2D(1600, 900, TextureFormat.RGB24, false); tk.ReadPixels(new Rect(0, 0, 1600, 900), 0, 0); tk.Apply();
+                        RenderTexture.active = null; cam.targetTexture = keepT;
+                        File.WriteAllBytes(Path.Combine(ShotDir, name.Replace(".png", $"_f{k}.png")), tk.EncodeToPNG());
+                        rep.AppendLine($"- frame {k}: inflow flow " + string.Join(", ", game.Storms.Select(r => $"{r.Frame.param[StormSpin.Slot0 * 4 + 11]:0.000} km (clock {r.Clock:0.0} s, rates {r.spinRates})")));
+                        Object.DestroyImmediate(tk); rtk.Release(); Object.DestroyImmediate(rtk);
+                    }
+                }
             }
             game.playing = false;
             rep.AppendLine().AppendLine($"Live views at game {game.gameMinutes:0.0} min: `Screenshots/spot_live_*.png`.");

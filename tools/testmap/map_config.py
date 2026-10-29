@@ -44,9 +44,9 @@ MAPS = {
                       big_river="Mississippi River", bridge_route="US 84", levees=True,
                       lowland_m=32.0,            # ground below this (m) is the floodplain: bottomland forest, delta farms
                       pine=(0.25, 0.85), farm_p=0.18,
-                      # WSR-88D KDGX (Jackson / Brandon, MS), about 160 km to the north-east. Site position and ground
-                      # elevation as remembered, not yet checked against the NWS site list; antenna 20 m up
-                      radar=dict(name="KDGX", lat=32.27994, lon=-89.98444, elev=151.0 + 20.0),
+                      # WSR-88D KDGX (Jackson / Brandon, MS), about 160 km to the north-east. Antenna 609 ft above sea
+                      # level (NWS WSR-88D radar list, 18 Aug 2026); the position is not in that list
+                      radar=dict(name="KDGX", lat=32.27994, lon=-89.98444, elev=609 * 0.3048),
                       spawns=[("US 61", "US 61"), ("Natchez Trace", "Natchez Trace Parkway"), ("US 84 / US 98", "US 84 / US 98"),
                               ("LA 15", "LA 15, the delta"), ("MS 33", "MS 33")])),
     # Effingham, IL: lat 39.1200 N, lon 88.5434 W (downtown, by the courthouse)
@@ -59,9 +59,9 @@ MAPS = {
                         big_river=None, bridge_route=None, levees=False, lowland_m=None,
                         pine=(0.02, 0.02), farm_p=0.55,
                         # WSR-88D KILX (Lincoln, IL; the NWS office whose area takes in Effingham County), about 135 km
-                        # to the north-west. Site position and ground elevation as remembered, not yet checked against
-                        # the NWS site list; antenna 20 m up
-                        radar=dict(name="KILX", lat=40.15052, lon=-89.33676, elev=177.0 + 20.0),
+                        # to the north-west. Antenna 731 ft above sea level (NWS WSR-88D radar list, 18 Aug 2026); the
+                        # position is not in that list
+                        radar=dict(name="KILX", lat=40.15052, lon=-89.33676, elev=731 * 0.3048),
                         spawns=[("I-57", "I-57"), ("I-70", "I-70"), ("US 45", "US 45"), ("US 40", "US 40, the National Road"),
                                 ("IL 33", "IL 33"), ("IL 32", "IL 32")])),
 }

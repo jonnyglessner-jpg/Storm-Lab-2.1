@@ -58,7 +58,10 @@ namespace StormLab
                 var storm = drawn[i];
                 // the march reads the depth buffer as a texture, so nothing may have it bound as a target meanwhile
                 CoreUtils.SetRenderTarget(ctx.cmd, ctx.cameraColorBuffer, ClearFlag.None);
-                var tex = storm.RecordMarch(ctx.cmd, cam, ctx.cameraDepthBuffer, w, h, i == 0, out var dist);
+                // (the nearest other storm's cloud from its last march: this one's light shafts stop behind it)
+                int n = drawn.Count;
+                var other = n < 2 ? null : drawn[i == n - 1 ? n - 2 : n - 1];
+                var tex = storm.RecordMarch(ctx.cmd, cam, ctx.cameraDepthBuffer, w, h, i == 0, out var dist, other != null ? other.HalfFor(cam) : null);
                 if (tex != null) marched.Add((storm, tex, dist));
             }
             CoreUtils.SetRenderTarget(ctx.cmd, ctx.cameraColorBuffer, ctx.cameraDepthBuffer, ClearFlag.None);
@@ -68,7 +71,11 @@ namespace StormLab
                 // farthest first; each storm is laid in front of or behind the one before it pixel by pixel (their
                 // mean distances along the ray), since a near storm's forward-flank rain can reach far past its updraft
                 var under = i > 0 ? marched[i - 1].Item1 : null;
-                storm.RecordComposite(ctx.cmd, cam, tex, dist, w, h, writeDepth, under, under != null ? marched[i - 1].Item2 : null);
+                // (the light shafts, kept apart when two or more storms are drawn, go on once all the storms' cloud is laid:
+                // the first storm's with the second's composite, each later storm's with its own)
+                bool many = marched.Count > 1;
+                storm.RecordComposite(ctx.cmd, cam, tex, dist, w, h, writeDepth, under, under != null ? marched[i - 1].Item2 : null,
+                    shaftsOwn: !many || i > 0, shaftsUnder: many && i == 1);
                 Composites++;
             }
         }

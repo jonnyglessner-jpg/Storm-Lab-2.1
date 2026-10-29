@@ -31,6 +31,12 @@ README.md has the layout, use, checks and known gaps.
 - Storms die leaving the map (`StormLife`, after `StormDesign.At` and `StormTornadoes.Apply`): no tornado may be off the
   map; check with `validation/parity/csharp -- --life` after changing tracks, placement or cycles.
 - Look changes: one named problem at a time, checked in the test map; say when a request is taste, not a bug.
+- Lighting (`lighting = Unified`, the default since 2026-10-28; user: "everything on the storm needs to respond the same
+  way"): every medium takes its light from `stormLight` in StormMarch.compute and differs only in its phase function,
+  albedo and scattering octaves. Never give a part of the storm its own light formula or multiplier; fix the shared one.
+  What the storm shades besides itself (the scene's sun cookie, its ground light) takes the sun the same way
+  (`sunReach` in StormCommon.hlsl, and the rain extinction); check with `StormLightCheck -slLightScene`.
+  Check with `StormLightCheck` (physical beside unified, at 17 h and 18.8 h).
 - Funnels are smooth (no vertical grooves), as in 2.0.
 - `Runtime/Lightning` (core) is 2.0's unchanged code but for its namespace and the `ThunderOverride` hook (2026-10-26,
   for `StormAudio`'s thunder); fixes there should go back to 2.0 too.
@@ -44,7 +50,8 @@ README.md has the layout, use, checks and known gaps.
 
 - Unity 6000.6.6f1, project `tests/StormLabTest`, headless with `-batchmode` (never `-nographics`).
 - `StormLabTests.RunFromCommandLine [-slQuick] [-slCompare <cases.json> -slOut <dir>]`, `TestMapBuilder.BuildFromCommandLine`,
-  `TestMapTests.RunFromCommandLine [-testmapShotsOnly]`.
+  `TestMapTests.RunFromCommandLine [-testmapShotsOnly] [-testmapMap dixie|midwest]`; the real-data maps build with
+  `BuildDixieFromCommandLine` / `BuildMidwestFromCommandLine` after `tools/testmap/real` (README there).
 - Play-mode checks on the test map: `StormPlayCheck`, `StormDayCheck`, `StormGameCheck [-slGameSeed n] [-slGamePreset key]`,
   `StormAudioCheck [-slAudioWiring]` (all `.RunFromCommandLine`); `StormSpawnCheck` runs without Play.
 - Sound synths offline: `dotnet run --project validation/audio` (WAVs to `validation/audio/out/`).

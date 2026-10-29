@@ -12,7 +12,8 @@ plains map's format.
    them falls more than 2.5 m or a road, a stream or another building is in the way.
 4. The countryside: a house or a mobile home every few hundred metres along the roads, with a shed and yard trees;
    farm headquarters (shop, bins) on the delta floodplain (dixie) or on any farm road (midwest). Yards are graded flat.
-5. Forest: a canopy shell over the woods' interior (a 31 m mesh at crown height, 18-26 m, with a crown texture) and
+5. Forest: a canopy shell over the woods' interior (a 31 m roof at crown height, 18-26 m, with a crown texture,
+   closed by vertical walls in the understory's shade) and
    real trees where the shell would show its edge: the front row along every road, the forest edges within 45 m of a
    road, and the town's wooded lots. Dixie: pines in the hills, oaks and sweetgums on the floodplain, bald cypress
    round the lakes. Midwest: oak-hickory timber, a few planted pines.
@@ -41,7 +42,7 @@ import map_config as cfg
 import meshes as M
 import profiles as P
 import world as W
-from groundtex import CANOPY_M, LAYERS
+from groundtex import CANOPY_M, CANOPY_SIDE_M, LAYERS
 from land import COVER_STEP, NCOV, GeoTiles, WC_BARE, WC_BUILT, WC_CROP, WC_GRASS, WC_SHRUB, WC_TREE, WC_WATER, WC_WETLAND
 from terrain import sample
 
@@ -49,13 +50,14 @@ REAL = cfg.SPEC["real"]
 rng = np.random.default_rng({"dixie": 1817, "midwest": 1818}.get(cfg.MAP, 0))     # (the years of statehood)
 T0 = time.time()
 L_PASTURE, L_TILLED, L_YOUNG, L_FOREST, L_LAWN, L_WETLAND, L_SAND, L_DIRT = range(8)
-M.MAT += ["river", "canopy_hard", "canopy_pine"]
-M_RIVER, M_CANOPY_HARD, M_CANOPY_PINE = len(M.MAT) - 3, len(M.MAT) - 2, len(M.MAT) - 1
+M.MAT += ["river", "canopy_hard", "canopy_pine", "canopy_side"]
+M_RIVER, M_CANOPY_HARD, M_CANOPY_PINE, M_CANOPY_SIDE = range(len(M.MAT) - 4, len(M.MAT))
 DOWNTOWN = (cfg.SIZE_M / 2 + REAL["downtown"][0], cfg.SIZE_M / 2 + REAL["downtown"][1])
 DOWNTOWN_R = REAL["downtown_r"]
 TREE_PINE, TREE_OAK, TREE_CYPRESS, TREE_SHRUB = range(4)
 CANOPY_G = 4                                            # canopy shell grid: every 4th height sample (31 m)
 SHELL_CLEAR_M = 22.0                                    # the shell starts this far from a road's edge ...
+CANOPY_FRINGE_M = 6.0                                   # the walls rise this far above the roof: the crowns' ragged tops
 EDGE_TREES_M = 45.0                                     # ... and real trees stand in front of it, and on forest edges this near a road
 
 
@@ -463,50 +465,90 @@ def edge_trees(f, shell, pine, plain, clear, water_kind, town, spacing=8.0):
 
 
 def canopy_meshes(tm, graded, shell, pine, plain, clear):
-    """The canopy shell, tile by tile on a 31 m grid: crown height over the shell, dropping to the ground 31 m outside
-    it; quads split into pine and hardwood by the pine share."""
+    """The canopy shell, tile by tile on a 31 m grid: a roof at crown height over the shell (a grid cell with all four
+    corners in the shell, or the half of it three corners span), split into pine and hardwood by the pine share, and a
+    vertical wall round it from the ground to a ragged fringe of crowns above the roof (alpha-tested). (A roof that sloped to the ground
+    over a grid cell read as a grassy hill from the road.)"""
     G = CANOPY_G
     cov = ndimage.uniform_filter(shell.astype(np.float32), G)[::G, ::G]
     cov = ndimage.gaussian_filter(cov, 0.6)
     gh = graded[::G, ::G]
     ht = np.where(plain[::G, ::G], 25.0, 21.0) * (0.85 + 0.3 * smooth_noise(gh.shape, 6, 9)) + rng.normal(0, 1.2, gh.shape)
-    # near a road the shell comes down to the ground, and no quad with a corner within 16 m of a road edge is drawn,
-    # so the shell never spans a road (its corners are 31 m apart)
+    # near a road no roof corner is drawn within 16 m of a road edge, so the shell never spans a road (its corners are
+    # 31 m apart), and the shell starts SHELL_CLEAR_M from the road
     cl = clear[::G, ::G].astype(np.float32)
-    cov = np.where(cl < SHELL_CLEAR_M, 0.0, cov)
-    top = gh + ht * np.clip((cov - 0.15) / 0.45, 0, 1) - np.where(cov < 0.15, 1.5, 0.0)
-    road_corner = cl < 16.0
+    inside = (cov > 0.15) & (cl >= SHELL_CLEAR_M) & (cl >= 16.0)
+    top = gh + ht
+    foot = gh - 3.0                                   # the wall's foot, below the ground between grid samples
     pn = pine[::G, ::G].astype(np.float32) > 0.5
     per = (cfg.TILE_RES - 1) // G
     count = 0
     for r in range(cfg.TILES):
         for c in range(cfg.TILES):
             j0, i0 = r * per, c * per
-            sub = cov[j0:j0 + per + 1, i0:i0 + per + 1]
-            if (sub > 0.15).sum() == 0:
+            ins = inside[j0:j0 + per + 1, i0:i0 + per + 1]
+            if not ins.any():
                 continue
-            hh = top[j0:j0 + per + 1, i0:i0 + per + 1]
+            hh, ff = top[j0:j0 + per + 1, i0:i0 + per + 1], foot[j0:j0 + per + 1, i0:i0 + per + 1]
             pp = pn[j0:j0 + per, i0:i0 + per]
             ny, nx = hh.shape
             X = (i0 + np.arange(nx)) * G * cfg.CELL
             Z = (j0 + np.arange(ny)) * G * cfg.CELL
             XX, ZZ = np.meshgrid(X, Z)
             V = np.stack([XX.ravel(), hh.ravel(), ZZ.ravel()], 1)
-            UV = np.stack([XX.ravel() / CANOPY_M, ZZ.ravel() / CANOPY_M + hh.ravel() / CANOPY_M], 1)
-            q = (sub[:-1, :-1] > 0.15) | (sub[1:, :-1] > 0.15) | (sub[:-1, 1:] > 0.15) | (sub[1:, 1:] > 0.15)
-            rc = road_corner[j0:j0 + per + 1, i0:i0 + per + 1]
-            q &= ~(rc[:-1, :-1] | rc[1:, :-1] | rc[:-1, 1:] | rc[1:, 1:])
-            for mat, sel in ((M_CANOPY_PINE, q & pp), (M_CANOPY_HARD, q & ~pp)):
-                jj, ii = np.nonzero(sel)
-                if not len(jj):
+            UV = np.stack([XX.ravel() / CANOPY_M, ZZ.ravel() / CANOPY_M], 1)
+            # cell corners: a (j, i), b (j+1, i), d (j, i+1), e (j+1, i+1)
+            A, B, D, E = ins[:-1, :-1], ins[1:, :-1], ins[:-1, 1:], ins[1:, 1:]
+            jj, ii = np.mgrid[0:ny - 1, 0:nx - 1]
+            a = jj * nx + ii
+            b, d, e = a + nx, a + 1, a + nx + 1
+            full = A & B & D & E
+            # triangles of the roof: two per full cell, one per cell with three corners in (the three it has)
+            tris, tpine = [], []
+            for sel, t in ((full, (a, b, d)), (full, (d, b, e)),
+                           (~full & A & B & D, (a, b, d)), (~full & B & D & E, (d, b, e)),
+                           (~full & A & B & E & ~D, (a, b, e)), (~full & A & D & E & ~B, (a, e, d))):
+                tris.append(np.stack([t[0][sel], t[1][sel], t[2][sel]], 1))
+                tpine.append(pp[sel])
+            T = np.concatenate(tris)
+            if not len(T):
+                continue
+            TP = np.concatenate(tpine)
+            for mat, sel in ((M_CANOPY_PINE, TP), (M_CANOPY_HARD, ~TP)):
+                if not sel.any():
                     continue
-                a = jj * nx + ii
-                T = np.concatenate([np.stack([a, a + nx, a + 1], 1), np.stack([a + 1, a + nx, a + nx + 1], 1)])
-                used = np.unique(T)
+                used = np.unique(T[sel])
                 remap = np.full(len(V), -1)
                 remap[used] = np.arange(len(used))
-                tm.add((c, r, "canopy"), mat, V[used], UV[used], remap[T])
-                count += len(jj)
+                tm.add((c, r, "canopy"), mat, V[used], UV[used], remap[T[sel]])
+            count += len(T)
+            # the walls: every roof edge that only one roof triangle has, dropped to the foot, facing away from it
+            edges = np.concatenate([T[:, [0, 1]], T[:, [1, 2]], T[:, [2, 0]]])
+            third = np.concatenate([T[:, 2], T[:, 0], T[:, 1]])
+            key = np.sort(edges, 1)
+            _, first, n = np.unique(key[:, 0] * len(V) + key[:, 1], return_index=True, return_counts=True)
+            k = first[n == 1]
+            p, q, o = edges[k, 0], edges[k, 1], third[k]
+            if not len(k):
+                continue
+            P0, P1, PO = V[p], V[q], V[o]
+            along = P1 - P0
+            out = np.cross(along, [0.0, 1.0, 0.0])
+            out[:, 1] = 0
+            flip = ((out * (P0 - PO)).sum(1) < 0)
+            out[flip] *= -1
+            F0 = np.stack([P0[:, 0], ff.ravel()[p], P0[:, 2]], 1)
+            F1 = np.stack([P1[:, 0], ff.ravel()[q], P1[:, 2]], 1)
+            m = len(k)
+            T0, T1 = P0 + [0, CANOPY_FRINGE_M, 0], P1 + [0, CANOPY_FRINGE_M, 0]      # the crowns' fringe above the roof
+            WV = np.concatenate([T0, T1, F1, F0])
+            u0 = (P0[:, 0] + P0[:, 2]) / CANOPY_SIDE_M
+            u1 = u0 + np.hypot(along[:, 0], along[:, 2]) / CANOPY_SIDE_M
+            WUV = np.concatenate([np.stack([u0, np.ones(m)], 1), np.stack([u1, np.ones(m)], 1),
+                                  np.stack([u1, np.zeros(m)], 1), np.stack([u0, np.zeros(m)], 1)])
+            idx = np.arange(m)
+            WT = np.concatenate([np.stack([idx, idx + m, idx + 2 * m], 1), np.stack([idx, idx + 2 * m, idx + 3 * m], 1)])
+            tm.add((c, r, "canopy"), M_CANOPY_SIDE, WV, WUV, WT, want=np.concatenate([out, out]))
     return count
 
 
@@ -859,7 +901,7 @@ def main():
     nb = M.build_bridges(tm, profs, ground)
     nw = M.build_water(tm, ribbons) + water_meshes(tm, kind, level)
     ncan = canopy_meshes(tm, graded, shell, pine, plain, clear)
-    log(f"meshes: {pads} junction pads, {nb} bridges, {nw} water pieces, {ncan:,} canopy quads")
+    log(f"meshes: {pads} junction pads, {nb} bridges, {nw} water pieces, {ncan:,} canopy triangles")
 
     if cfg.UNITY_DATA.exists():
         shutil.rmtree(cfg.UNITY_DATA)
@@ -873,7 +915,7 @@ def main():
     meta = dict(sizeM=cfg.SIZE_M, tiles=cfg.TILES, tileM=cfg.TILE_M, tileRes=cfg.TILE_RES, splatRes=cfg.SPLAT_RES,
                 datum=datum, hmin=hmin, hmax=hmax, layers=LAYERS, materials=M.MAT, skirt=skirt,
                 scenarioOriginKm=(cfg.SIZE_M / 2) / 1000.0 - (cfg.SCENARIO_MILES * cfg.MILE / 2) / 1000.0,
-                spawns=spawns, routes=W.routes(profs, datum), title=cfg.SPEC["title"],
+                spawns=spawns, routes=W.routes(profs, datum, step=10.0), title=cfg.SPEC["title"],
                 source=dict(terrain="USGS 3DEP 1/3 arc-second (lidar-derived), resampled to 7.86 m",
                             streams="USGS NHDPlus High Resolution", water="USGS NHDPlus HR areas and waterbodies, wet where the lidar is",
                             roads="USGS National Transportation Dataset, generalised",

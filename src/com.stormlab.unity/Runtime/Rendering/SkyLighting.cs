@@ -36,6 +36,9 @@ namespace StormLab
         public float dim;
         /// <summary>town light radiance (relative units)</summary>
         public float townLight;
+        /// <summary>the share of townLight on the horizon and the haze: 1 for an even town light everywhere, the open
+        /// country's (StormRenderer.TownFloor) when the towns are given and their light falls on the bases above them</summary>
+        public float townSky;
         /// <summary>light level of the scene relative to 1.0's evening sun</summary>
         public float level;
         /// <summary>exposure gain of night adaptation, 1 by day</summary>
@@ -119,7 +122,7 @@ namespace StormLab
             Vector3 hz = Vector3.Lerp(new Vector3(0.78f, 0.8f, 0.84f) * Mathf.Lerp(0.6f, 1f, Mathf.Clamp01(skyK)) * L.dim, warm * glowK, Mathf.Pow(Mathf.Max(cg, 0f), spread) * 0.8f);
             float up = 1f - Mathf.Pow(1f - el, 3f);
             Vector3 glow = Vector3.Scale(warm, new Vector3(1f / 0.95f, 0.85f / 0.82f, 0.6f / 0.66f)) * (0.5f * aur * Mathf.Pow(Mathf.Max(cg, 0f), 24f) * glowK);
-            return hz * (1f - up) + new Vector3(0.33f, 0.47f, 0.72f) * (skyK * up) + glow + new Vector3(1f, 0.75f, 0.5f) * (L.townLight * 0.5f * Mathf.Pow(1f - el, 6f));
+            return hz * (1f - up) + new Vector3(0.33f, 0.47f, 0.72f) * (skyK * up) + glow + new Vector3(1f, 0.75f, 0.5f) * (L.townLight * L.townSky * 0.5f * Mathf.Pow(1f - el, 6f));
         }
 
         /// <summary>
@@ -181,7 +184,7 @@ namespace StormLab
             float skyK = sunSky + moonSky + StarSky;
             o.skyC = new Vector4(0.42f * skyK, 0.52f * skyK, 0.68f * skyK, skyK);
             o.dim = Mathf.Min(skyK / SkyFloor, 1f);
-            o.townLight = n.lightPollution * TownLight;
+            o.townLight = n.lightPollution * TownLight; o.townSky = 1f;
 
             // the scene's light level: half sky, half the key light at the ground (by day the two are about equal)
             float keyGround = o.keyIsMoon ? moon * moonUp : SunColour(sunEl).magnitude / SunColour(15f).magnitude * Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(-1f, 1.5f, sunEl));

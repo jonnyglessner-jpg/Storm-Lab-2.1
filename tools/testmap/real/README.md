@@ -58,8 +58,12 @@ and 128. Teutopolis, Altamont, Mattoon's edge, Newton, Neoga and the rest are sm
 
 ## Forest
 
-The forest interior is a canopy shell: a 31 m mesh at crown height (18-26 m) with a crown texture, pine or hardwood.
-It starts 22 m from a road's edge, and no shell quad touches a road. Real trees stand in front of it: the front row of
+The forest interior is a canopy shell: a flat roof on a 31 m grid at crown height (18-26 m) with a crown texture, pine
+or hardwood, closed by vertical walls from the ground to 6 m above the roof. The walls show the edge of the woods: two
+rows of lit crowns whose tops are cut out against the sky (alpha-tested), the shade with trunks under them,
+understory along the foot (`canopy_side`). (The first build sloped the roof down to the ground over one grid cell
+instead; from the road that read as a grassy hill.) It starts 22 m from a road's edge, and no roof corner is within
+16 m of one. Real trees stand in front of it: the front row of
 the woods along every road, the forest edges within 45 m of a road, and the town's wooded lots. Dixie has loblolly
 pine in the hills, oak and sweetgum on the floodplain and bald cypress round the lakes; the Midwest has oak-hickory
 with a few pines. The shell has no collider and casts shadows.
@@ -92,15 +96,27 @@ The NHDPlus HR zip for the Wabash basin (HU4 0512) is 4 GB and unpacks to 8.6 GB
 `nhd_*.json` and `tran_roads.json`, the zips can be deleted.
 
 Then **StormLab > Midwest Map > Build World** (or **Dixie Map**) in Unity, or headless:
-`-executeMethod TestMapBuilder.BuildMidwestFromCommandLine` (`BuildDixieFromCommandLine`). The generated data
-(`<Map>MapData/`, `Assets/TestMap/Generated<Map>`, the scenes) is not in git.
+`-executeMethod TestMapBuilder.BuildMidwestFromCommandLine` (`BuildDixieFromCommandLine`), about 2 minutes. The
+generated data (`<Map>MapData/`, `Assets/TestMap/Generated<Map>`, the scenes) is not in git.
+
+In Play, the storm panel's **Map** row (Tab) switches between the plains, Dixie and Midwest maps; the storm setup
+and the clock carry over. The storm buttons below it change only the storm.
+
+Checks: **StormLab > Midwest Map > Run Drive Test + Screenshots** (headless: `-executeMethod
+TestMapTests.RunFromCommandLine -testmapMap midwest`). The autopilot drives the ten longest highways and the three
+longest paved and gravel roads, slowing for curves (3.5 m/s2 sideways); the report is
+`validation/reports/<Map>MapReport.md`, the views `Screenshots/<map>_*.png`. Both maps pass (2026-10-28: Dixie 16 of
+16 roads, Midwest 15 of 15, within 1.4 m of the centre line). The routes for the autopilot are sampled every 10 m
+(the plains map's 25 m cut across these roads' 30-60 m curves).
 
 ## Known limits
 
-- Not seen in Unity yet: the Python stages ran and their previews are in `docs/testmap/<map>`, but neither world has
-  been built or driven. Expect a round of fixes on the first build (junction pads where real roads meet at odd angles,
-  the canopy shell's look, tree counts).
+- Built and driven headless (2026-10-28), not yet played in the editor. Seen in the views and left as they are:
+  junction pads are large and irregular where real roads meet at odd angles; the canopy walls are flat faces up close
+  and end square; a car that leaves the road into the woods drives under the roof in deep shade, with no trunks.
+- Dead ends: 856 rural ones in Dixie and 842 in the Midwest stay (real roads end; only those under 1.2 km are pruned).
 - Divided highways and interstates are two-lane, and interchanges and overpasses are at grade.
-- The radar sites (KDGX, KILX) were taken from memory and still need checking against the NWS site list.
+- Radar antenna heights are the NWS WSR-88D list's (18 Aug 2026: KDGX 609 ft, KILX 731 ft); the positions are not in
+  that list and were taken from memory.
 - Crop type is a patchwork of tilled ground and young crops, not the real fields.
 - Colours are picked by eye, not calibrated against photos of the regions.

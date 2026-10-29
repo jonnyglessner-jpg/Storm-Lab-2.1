@@ -55,7 +55,7 @@ public static class StormPlayCheck
     {
         if (s == PlayModeStateChange.EnteredPlayMode)
         {
-            errors = 0; errorLines.Clear(); editorNoise.Clear(); rep.Clear(); ok = true; phase = 0; phaseStart = -1;
+            errors = 0; errorLines.Clear(); editorNoise.Clear(); rep.Clear(); ok = true;
             Application.logMessageReceived += OnLog;
             routine = Run().GetEnumerator();
             EditorApplication.update += Tick;
@@ -78,7 +78,7 @@ public static class StormPlayCheck
     }
 
     static readonly StringBuilder rep = new StringBuilder();
-    static bool ok; static int phase; static float phaseStart;
+    static bool ok;
     static IEnumerator<object> routine;
 
     static void Tick()

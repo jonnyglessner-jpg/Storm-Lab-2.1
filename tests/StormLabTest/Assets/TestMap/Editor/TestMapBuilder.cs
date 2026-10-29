@@ -194,15 +194,17 @@ public static class TestMapBuilder
             var imp = (TextureImporter)AssetImporter.GetAtPath(p);
             if (!imp) continue;
             string n = Path.GetFileNameWithoutExtension(p);
-            bool normal = n.EndsWith("_n"), road = n.StartsWith("road_");
+            bool normal = n.EndsWith("_n"), road = n.StartsWith("road_"), side = n == "canopy_side";
             imp.textureType = normal ? TextureImporterType.NormalMap : TextureImporterType.Default;
             imp.sRGBTexture = !normal;
             imp.mipmapEnabled = true;
             imp.anisoLevel = 8;
             imp.wrapModeU = road ? TextureWrapMode.Clamp : TextureWrapMode.Repeat;
-            imp.wrapModeV = TextureWrapMode.Repeat;
+            imp.wrapModeV = side ? TextureWrapMode.Clamp : TextureWrapMode.Repeat;     // (the wall spans it once, ground to crowns)
             imp.maxTextureSize = 2048;
-            imp.alphaSource = n.StartsWith("ground_") && !normal ? TextureImporterAlphaSource.FromInput : TextureImporterAlphaSource.None;
+            imp.alphaSource = (n.StartsWith("ground_") || side) && !normal ? TextureImporterAlphaSource.FromInput : TextureImporterAlphaSource.None;
+            // the canopy walls' crown fringe is alpha-tested: keep it from thinning out in the small mips
+            imp.mipMapsPreserveCoverage = side; imp.alphaTestReferenceValue = 0.5f;
             imp.SaveAndReimport();
         }
     }
@@ -248,6 +250,12 @@ public static class TestMapBuilder
             byName["river"] = Lit("river", null, new Color(0.33f, 0.28f, 0.20f), 0.9f);    // the Mississippi's silt
             byName["canopy_hard"] = Lit("canopy_hard", Tex("canopy_hard"), Color.white, 0.1f);
             byName["canopy_pine"] = Lit("canopy_pine", Tex("canopy_pine"), Color.white, 0.1f);
+            // the shell's walls: their top is a fringe of crowns cut out against the sky
+            var side = byName["canopy_side"] = Lit("canopy_side", Tex("canopy_side"), Color.white, 0.05f);
+            side.SetFloat("_AlphaCutoffEnable", 1f); side.SetFloat("_AlphaCutoff", 0.5f); side.EnableKeyword("_ALPHATEST_ON");
+            side.SetFloat("_DoubleSidedEnable", 1f);
+            HDMaterial.ValidateMaterial(side);
+            EditorUtility.SetDirty(side);
             foreach (var n in new[] { "canopy_hard", "canopy_pine" })
             {
                 byName[n].SetTexture("_NormalMap", Tex(n + "_n"));
@@ -718,7 +726,7 @@ public static class TestMapBuilder
         var hd = go.AddComponent<HDAdditionalLightData>();
         l.lightUnit = LightUnit.Lumen; l.intensity = lumens; l.color = c;
         l.spotAngle = angle; l.innerSpotAngle = inner; l.range = range; l.shadows = LightShadows.None;
-        hd.enableSpotReflector = true; hd.fadeDistance = fade; hd.volumetricDimmer = 0f;
+        l.enableSpotReflector = true; hd.fadeDistance = fade; hd.volumetricDimmer = 0f;
         return l;
     }
 

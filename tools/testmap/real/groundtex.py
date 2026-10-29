@@ -115,9 +115,49 @@ def canopy():
     for name, (col, h) in out.items():
         save(name, col)
         save(name + "_n", normal_map(h, 3.0) * 255)
+    canopy_side()
+
+
+def canopy_side():
+    """The canopy shell's walls, as the edge of the woods looks from a road: two rows of rounded crowns lit from above,
+    their tops cut out against the sky (alpha; the wall rises CANOPY_FRINGE_M above the roof, so the top quarter is
+    the fringe), the dark shade under them with trunks, understory along the foot. The top of the texture is the top
+    of the wall. Tiles across every CANOPY_SIDE_M metres; spans the wall's height (about 30 m) once."""
+    S = (N, N)
+    yy, xx = np.mgrid[0:N, 0:N] / N                  # yy 0 at the top of the wall
+    rng = np.random.default_rng(7)
+    leaves = fbm(S, (30, 120, 400), (0.5, 0.6, 0.4))
+    # the shade under the crowns: dark, trunks, understory along the foot
+    col = colourise(leaves, [(-1, (10, 13, 9)), (0, (17, 22, 14)), (1, (26, 32, 20))])
+    for x0, w in zip(rng.uniform(0, 1, 34), rng.uniform(0.004, 0.01, 34)):
+        trunk = np.abs((xx - x0 + 0.5) % 1 - 0.5) < w
+        col[trunk] = (22, 19, 16)
+    under = yy > 0.8 - 0.06 * fbm(S, (50,), (1.0,))
+    col = np.where(under[..., None], colourise(leaves, [(-1, (14, 21, 11)), (1, (32, 46, 22))]), col)
+    alpha = (yy > 0.27 + 0.04 * fbm(S, (40,), (1.0,))).astype(float)
+    light = np.array([0.25, -0.75, 0.6]) / np.linalg.norm([0.25, -0.75, 0.6])
+    pal = [(-0.4, (18, 26, 14)), (0.3, (38, 54, 26)), (0.8, (64, 88, 40)), (1.3, (92, 120, 58))]
+    # back row high and darker, front row lower and lit; painted back to front
+    for row, (y0, y1, dim, n) in enumerate(((0.12, 0.2, 0.8, 14), (0.26, 0.4, 1.0, 12))):
+        for _ in range(n):
+            cx, cy = rng.uniform(0, 1), rng.uniform(y0, y1)
+            rx = rng.uniform(0.09, 0.14)
+            ry = rx * rng.uniform(0.75, 1.0)
+            dx = (xx - cx + 0.5) % 1 - 0.5
+            dy = yy - cy
+            # a ragged rim: the radius wobbles with the leaf noise
+            d2 = (dx / rx) ** 2 + (dy / ry) ** 2 - 0.25 * leaves
+            m = d2 < 1
+            nz = np.sqrt(np.clip(1 - d2, 0, 1))
+            sh = np.clip(dx / rx * light[0] + dy / ry * light[1] + nz * light[2], 0, 1)
+            c = colourise(sh * 1.5 - 0.3 + 0.35 * leaves, pal) * dim
+            col[m] = c[m]
+            alpha[m] = 1.0
+    save("canopy_side", col, alpha=alpha)
 
 
 CANOPY_M = 48.0
+CANOPY_SIDE_M = 24.0
 
 
 def main():

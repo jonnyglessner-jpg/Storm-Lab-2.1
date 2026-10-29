@@ -1,8 +1,13 @@
 // The storm's shadow on the game's scene (StormSceneShadow): a cookie for the HDRP sun. Each texel is a line along the
 // sunlight through the cookie's plane; from where that line meets the ground (the storm frame's z = 0) it marches up
 // toward the sun through the storm volume, with the light grid's extinction (StormVolume.compute: betaL) and the storm's
-// own transmittance curve (sunT), so the ground is shaded as the storm's cloud is. Storms multiply into one cookie.
+// own transmittance curve (sunT; the unified lighting's sunReach under it), so the ground is shaded as the storm's cloud
+// is. Storms multiply into one cookie.
+// Ambient: the storms' shade on the scene's sky light (StormSceneAmbient), a map round the camera of the sky the ground
+// sees, as the storm's SkyVis grid has it, for a decal that sets the scene's ambient occlusion (HDRP's AO darkens its
+// sky light and reflections, not the sun). Storms multiply into one map.
 #pragma kernel Cookie
+#pragma kernel Ambient
 
 #include "Packages/com.stormlab.unity/Runtime/Rendering/Shaders/StormCommon.hlsl"
 
@@ -14,6 +19,7 @@ float4 _CkU;   // xyz: the light's up in the storm frame (unit)
 float4 _CkL;   // xyz: toward the light in the storm frame (unit); w: texels across
 float4 _CkV;   // x: the volume's half-width, km; y: its top, km; z: cloud extinction; w: rain extinction (per km)
 float4 _CkP;   // x: 1 for the first storm (write), 0 to multiply into what is there
+float4 _CkM;   // the unified lighting's sun reach (StormCommon.hlsl sunReach); x = 0 for the other lightings (sunT)
 
 float3 ckUvw(float3 p) { return float3((p.x + _CkV.x) / (2.0 * _CkV.x), (p.y + _CkV.x) / (2.0 * _CkV.x), p.z / _CkV.y); }
 
@@ -39,11 +45,40 @@ void Cookie(uint3 id : SV_DispatchThreadID)
             float4 d = _Dens.SampleLevel(sampler_LinearClamp, ckUvw(s), 0);
             tau += ((d.r * d.r + d.b * d.b) * _CkV.z + d.g * d.g * _CkV.w) * st;
         }
-        T = sunT(tau);
+        T = _CkM.x > 0.5 ? sunReach(tau, _CkM) : sunT(tau);
     }
     // the sampler clamps past the cookie's edge: fade to no shadow there
     float2 e = abs(f) * 2.0;
     T = lerp(T, 1.0, ss(0.9, 1.0, max(e.x, e.y)));
     float prev = _CkP.x > 0.5 ? 1.0 : _Cookie[id.xy].r;
     _Cookie[id.xy] = float4(prev * T, prev * T, prev * T, 1.0);
+}
+
+// ------------------------------------------------------------------------------------------------ ambient
+Texture3D<float4> _SkyVis;
+RWTexture2D<float4> _AmbOut;
+float4 _AmO;   // xyz: the map's centre in the storm frame, km (z: the ground); w: its width, km
+float4 _AmP;   // x: 1 for the first storm (write), 0 to multiply; y: texels across; z: the storm's underside, as a share
+               // of the sky it hides
+
+[numthreads(8, 8, 1)]
+void Ambient(uint3 id : SV_DispatchThreadID)
+{
+    uint n = (uint)_AmP.y;
+    if (id.x >= n || id.y >= n) return;
+    float2 f = (float2(id.xy) + 0.5) / n - 0.5;
+    float3 p = float3(_AmO.xy + f * _AmO.w, max(_AmO.z, 0.05));
+    float a = 1.0;
+    if (abs(p.x) < _CkV.x && abs(p.y) < _CkV.x)
+    {
+        // the cap, the ring and the horizon by their solid angles (StormMarch.compute skyLight); what the storm hides is
+        // replaced by its underside
+        float4 sv = _SkyVis.SampleLevel(sampler_LinearClamp, ckUvw(p), 0);
+        float vis = saturate(0.18 * sv.r + 0.477 * sv.g + 0.342 * sv.b);
+        a = vis + (1.0 - vis) * _AmP.z;
+    }
+    float prev = _AmP.x > 0.5 ? 1.0 : _AmbOut[id.xy].g;
+    // r metallic (unused), g the ambient occlusion, b the decal's opacity (fading out at the map's edge), a smoothness (unused)
+    float2 e = abs(f) * 2.0;
+    _AmbOut[id.xy] = float4(0.0, prev * a, 1.0 - ss(0.85, 1.0, max(e.x, e.y)), 0.0);
 }

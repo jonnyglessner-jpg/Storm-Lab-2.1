@@ -24,6 +24,15 @@ namespace StormLab
         public Vector4 wallParams;
         /// <summary>the tilted updraft's rain-free base and a tornado's clear air (_PrecipP; StormTilt.Clear, km)</summary>
         public Vector4 precipParams;
+        /// <summary>rain's extinction in the light grids as a multiple of RainMax (the unified lighting's rainExtinction; 1 otherwise)</summary>
+        public float rainScale = 1f;
+        /// <summary>the unified lighting's sun reach (StormCommon.hlsl sunReach: octaves, octave extinction, diffusion,
+        /// diffused sun) for the ground light; zero for the other lightings (sunT)</summary>
+        public Vector4 sunReach;
+        /// <summary>the towns lighting the base at night, storm frame (km: x, y, radius, glow), and how many (StormRenderer.Towns)</summary>
+        public readonly Vector4[] towns = new Vector4[MaxTowns];
+        public int townCount;
+        public const int MaxTowns = 16;
 
         public RenderTexture Dens => dens;
         public RenderTexture LightTex => light;
@@ -31,11 +40,14 @@ namespace StormLab
         public RenderTexture LightWebTex => lightWeb;
         public RenderTexture SkyVisTex => skyVis;
         public RenderTexture GroundTex => ground;
-        public long VramBytes => 4L * NV * NV * NZ + 9L * LN * LN * LZ + 8L * SN * SN * SZ + 4L * LN * LN;
+        public long VramBytes => 4L * NV * NV * NZ + 9L * LN * LN * LZ + 8L * SN * SN * SZ + 8L * LN * LN + 2L * NV * NV;
 
         readonly RenderTexture dens, light, lightWeb, skyVis, ground;
+        // RainUnderCloud's share of the rain kept per column, from the last repaint (a slab repaint applies it as it writes)
+        readonly RenderTexture rainKeep;
+        bool rainKeepValid;
         readonly ComputeShader cs;
-        readonly int kBuild, kLight, kSky, kGround;
+        readonly int kBuild, kLight, kSky, kGround, kRain;
         readonly Vector4[] sp = new Vector4[StormSpin.NSLOT];
         int slab = -1, slabZ;
         float pendingBase;
@@ -45,7 +57,7 @@ namespace StormLab
         public StormVolume(StormQuality q, ComputeShader shader)
         {
             cs = shader;
-            kBuild = cs.FindKernel("Build"); kLight = cs.FindKernel("Light"); kSky = cs.FindKernel("SkyVis"); kGround = cs.FindKernel("GroundLight");
+            kBuild = cs.FindKernel("Build"); kLight = cs.FindKernel("Light"); kSky = cs.FindKernel("SkyVis"); kGround = cs.FindKernel("GroundLight"); kRain = cs.FindKernel("RainUnderCloud");
             // the web build's QUALITY_HIGH and QUALITY_LOW
             if (q == StormQuality.Low) { NV = 256; NZ = 72; } else { NV = 416; NZ = 144; }
             LN = Mathf.Max(8, NV / 3); LZ = Mathf.Max(4, NZ / 3);
@@ -54,12 +66,18 @@ namespace StormLab
             light = Vol(LN, LZ, "storm light", RenderTextureFormat.ARGBHalf);       // r: key light optical depth
             lightWeb = Vol(LN, LZ, "storm light (web build)", RenderTextureFormat.R8);
             skyVis = Vol(SN, SZ, "storm sky visibility", RenderTextureFormat.ARGBHalf);
-            ground = new RenderTexture(LN, LN, 0, RenderTextureFormat.RGHalf, RenderTextureReadWrite.Linear)
+            ground = new RenderTexture(LN, LN, 0, RenderTextureFormat.ARGBHalf, RenderTextureReadWrite.Linear)
             {
                 enableRandomWrite = true, useMipMap = false, wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear,
                 name = "storm ground light", hideFlags = HideFlags.DontSave
             };
             ground.Create();
+            rainKeep = new RenderTexture(NV, NV, 0, RenderTextureFormat.RHalf, RenderTextureReadWrite.Linear)
+            {
+                enableRandomWrite = true, useMipMap = false, wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Point,
+                name = "storm rain kept", hideFlags = HideFlags.DontSave
+            };
+            rainKeep.Create();
         }
 
         static RenderTexture Vol(int n, int nz, string name, RenderTextureFormat format)
@@ -84,7 +102,7 @@ namespace StormLab
             return sp;
         }
 
-        void Build(CommandBuffer cmd, float[] param, int z0, int nz)
+        void Build(CommandBuffer cmd, float[] param, int z0, int nz, bool applyKeep)
         {
             var p = GpuParams(param);
             p[20] = new Vector4(z0, 0, 0, 0);
@@ -93,7 +111,21 @@ namespace StormLab
             cmd.SetComputeVectorParam(cs, "_PrecipP", precipParams);
             cmd.SetComputeTextureParam(cs, kBuild, "_Noise", noise);
             cmd.SetComputeTextureParam(cs, kBuild, "_OutD", dens);
+            cmd.SetComputeTextureParam(cs, kBuild, "_RainKeep", rainKeep);
+            cmd.SetComputeVectorParam(cs, "_RainKeepP", new Vector4(applyKeep && rainKeepValid && precipParams.w > 0f ? 1 : 0, 0, 0, 0));
             cmd.DispatchCompute(cs, kBuild, G(NV, 4), G(NV, 4), G(nz, 4));
+        }
+
+        /// <summary>The game's layout (precipParams.w): rain only out of cloud that reaches down to mid levels
+        /// (RainUnderCloud), once the whole volume is built: its map of the rain kept for the next slab repaint, applied
+        /// to the volume now too when it was built all at once (inPlace). Uses the last Build's parameters.</summary>
+        void TrimRain(CommandBuffer cmd, bool inPlace)
+        {
+            cmd.SetComputeTextureParam(cs, kRain, "_OutD", dens);
+            cmd.SetComputeTextureParam(cs, kRain, "_OutKeep", rainKeep);
+            cmd.SetComputeVectorParam(cs, "_RainKeepP", new Vector4(0, inPlace ? 1 : 0, 0, 0));
+            cmd.DispatchCompute(cs, kRain, G(NV, 8), G(NV, 8), 1);
+            rainKeepValid = true;
         }
 
         /// <summary>The light grid, sky visibility and ground light for a key light (sun or moon), all at once.</summary>
@@ -104,7 +136,7 @@ namespace StormLab
             cmd.SetComputeTextureParam(cs, kLight, "_OutLW", lightWeb);
             cmd.SetComputeVectorParam(cs, "_LSun", keyVol);
             cmd.SetComputeVectorParam(cs, "_LDims", new Vector4(LN, LZ, L, ZT));
-            cmd.SetComputeVectorParam(cs, "_LP", new Vector4(CloudMax, RainMax, 0.8f, zbKm));
+            cmd.SetComputeVectorParam(cs, "_LP", new Vector4(CloudMax, RainMax * rainScale, 0.8f, zbKm));
             cmd.SetComputeVectorParam(cs, "_LSlab", Vector4.zero);
             cmd.DispatchCompute(cs, kLight, G(LN, 4), G(LN, 4), G(LZ, 4));
 
@@ -115,6 +147,9 @@ namespace StormLab
 
             cmd.SetComputeTextureParam(cs, kGround, "_LightIn", light);
             cmd.SetComputeTextureParam(cs, kGround, "_OutG", ground);
+            cmd.SetComputeVectorParam(cs, "_LM", sunReach);
+            cmd.SetComputeVectorArrayParam(cs, "_Towns", towns);
+            cmd.SetComputeVectorParam(cs, "_TownP", new Vector4(townCount, StormRenderer.TownFloor, 0, 0));
             cmd.SetComputeVectorParam(cs, "_LDims", new Vector4(LN, LZ, L, ZT));
             cmd.DispatchCompute(cs, kGround, G(LN, 8), G(LN, 8), 1);
         }
@@ -124,7 +159,8 @@ namespace StormLab
         {
             noise = noiseTex;
             slab = -1;
-            Build(cmd, param, 0, NZ);
+            Build(cmd, param, 0, NZ, false);
+            TrimRain(cmd, true);
             Relight(cmd, keyVol, param[4]);
         }
 
@@ -143,17 +179,17 @@ namespace StormLab
         {
             if (slab < 0) return false;
             int z0 = slab * slabZ;
-            Build(cmd, pending, z0, Mathf.Min(slabZ, NZ - z0));
+            Build(cmd, pending, z0, Mathf.Min(slabZ, NZ - z0), true);
             slab++;
             bool done = slab * slabZ >= NZ;
-            if (done) { Relight(cmd, pendingKey, pendingBase); slab = -1; }
+            if (done) { TrimRain(cmd, false); Relight(cmd, pendingKey, pendingBase); slab = -1; }
             return done;
         }
         public bool Rebuilding => slab >= 0;
 
         public void Dispose()
         {
-            foreach (var r in new[] { dens, light, lightWeb, skyVis, ground }) if (r) { r.Release(); UnityEngine.Object.DestroyImmediate(r); }
+            foreach (var r in new[] { dens, light, lightWeb, skyVis, ground, rainKeep }) if (r) { r.Release(); UnityEngine.Object.DestroyImmediate(r); }
         }
     }
 }
