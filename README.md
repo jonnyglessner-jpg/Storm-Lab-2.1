@@ -104,7 +104,14 @@ Lighting (`lighting`):
   and rain, storms darken the sky, hail glows green): the physical model as one light field (`stormLight` in
   StormMarch.compute). The light reaching a point is worked out once, the same way for cloud, wall cloud, funnel, rain,
   hail, dust and the air under the storm; the media differ only in their phase function, albedo and how many times light
-  scatters in them (cloud: the four octaves; rain and dust, thin media, once). Light diffusing through thick cloud falls
+  scatters in them (cloud: the four octaves; rain and dust, thin media, once). Raindrops send nearly all their light
+  forward (`rainPhase`: 0.16 of an isotropic medium's share straight back, 0.23 to the side; user, 2026-10-28: "fix the
+  rain band", the rain under the base glowing as a pale flat-topped band, three times too bright when lit from behind
+  the eye). Media that scatter once also send the sky's light on in their phase: round a storm the sky is open on one
+  side, so rain under the base seen from the open country takes the open sky behind the eye by back scatter (0.18 of an
+  even sky's), and seen from under the storm against the open sky beyond it, by forward scatter (1.8); which side is open
+  comes from how open the sky is at the rain and at the eye (`hemiPhase`, `skyOpen`). Cloud, scattered many times, takes
+  the sky evenly. `StormLightCheck -slLightFfd -slLightDebug` draws the sun's, sky's and ground's parts. Light diffusing through thick cloud falls
   off as 1 / (1 + `diffusion` tau) (two-stream diffuse transmission) instead of the physical model's floor of a fifth of
   the sky everywhere, so under a deep storm the base is lit by the horizon under its edge and the ground below. Rain is
   `rainExtinction` (2.5) times the drawn rain's extinction, for the eye and for the light alike (heavy rain is about 4-7

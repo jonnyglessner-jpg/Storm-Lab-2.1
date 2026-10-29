@@ -626,7 +626,8 @@ public static class StormLightCheck
     /// cloud deck "too prominent" and not like rain): the storm at several ages as its forward flank grows, side-on to the
     /// line from the updraft to the forward-flank core on the sun's side, from the air (3 km up, 32 km off, as a flying
     /// camera sees it) and from the ground (22 km off); each again without rain (the cloud alone).
-    /// Screenshots/light_ffdage_&lt;min&gt;_{air,ground}[_norain].png
+    /// Screenshots/light_ffdage_&lt;min&gt;_{air,ground}[_norain].png; with -slLightDebug, at 40 min the sun's, sky's and
+    /// ground's light alone (_dbg2..4).
     /// </summary>
     static IEnumerable<object> FfdAges(StormRenderer storm, Camera cam)
     {
@@ -656,6 +657,14 @@ public static class StormLightCheck
                 StormLabTestKit.Render(cam, Path.Combine(ShotDir, "light_warmup.png"), 1600, 900, 12);
                 storm.ResetHistory(cam);
                 StormLabTestKit.Render(cam, Path.Combine(ShotDir, $"light_ffdage_{at:00}_{nm}.png"), 1600, 900, 8);
+                // -slLightDebug: the unified light's parts alone (sun, sky, ground: StormRenderer.lightDebug 2-4)
+                if (SessionState.GetBool(DebugKey, false) && at == 40f)
+                    for (int d = 2; d <= 4; d++)
+                    {
+                        storm.lightDebug = d; storm.ResetHistory(cam);
+                        StormLabTestKit.Render(cam, Path.Combine(ShotDir, $"light_ffdage_{at:00}_{nm}_dbg{d}.png"), 1600, 900, 8);
+                        storm.lightDebug = 0;
+                    }
                 storm.hideRain = true; storm.StepTo(storm.StormTime, storm.Clock, true); storm.ResetHistory(cam);
                 StormLabTestKit.Render(cam, Path.Combine(ShotDir, $"light_ffdage_{at:00}_{nm}_norain.png"), 1600, 900, 8);
                 storm.hideRain = false; storm.StepTo(storm.StormTime, storm.Clock, true);

@@ -742,15 +742,26 @@ float3 hailTint(float m) { return exp(-float3(0.34, 0.057, 0.0092) * m); }
 // self-shadowing (cloud billows; 1 otherwise); tauX: optical depth to the sun beyond the grid's (a funnel's far side, dust
 // inside its own cloud); ice: anvil ice (its shade under the ice above, light grid a); nOct: the multiple-scattering
 // octaves the medium has (cloud all of them; rain and dust are thin, a photon's free path in them is about a kilometre,
-// so what reaches the eye from them has scattered once: one)
-float3 stormLight(float3 q, float4 lt, float4 sv, float3 sunz, float3 sunc0, float ph, float selfSh, float tauX, float ice, int nOct)
+// so what reaches the eye from them has scattered once: one); phA: for those single-scattering media, their phase's mean
+// over the hemisphere behind the eye and over the one beyond the medium (hemiPhase; cloud, scattered many times, is
+// isotropic: (1, 1)).
+// The sky's light is not even: round a storm it is open on one side. (User, 2026-10-28: "fix the rain band", the rain
+// under the base a pale band brighter than the base above it, lit by the open horizon as if it scattered that light
+// evenly.) A medium that scatters once sends the sky's light on in its phase, so open sky behind the eye (the eye in the
+// open, the medium under the storm) reaches the eye only by back scatter, and open sky beyond the medium (the eye under
+// the storm looking out) by forward scatter. Which side is open is taken from how open the sky is at the medium and at
+// the eye: the same openness at both is an even sky.
+static float g_openCam = 1.0;
+float skyOpen(float4 sv) { return saturate(0.18 * sv.r + 0.477 * sv.g + 0.342 * sv.b); }
+float3 stormLight(float3 q, float4 lt, float4 sv, float3 sunz, float3 sunc0, float ph, float selfSh, float tauX, float ice, int nOct, float2 phA = float2(1.0, 1.0))
 {
     float tau = lt.r + tauX;
     float iceSun = lerp(1.0, lt.a, ice), iceSky = lerp(1.0, 0.3 + 0.7 * lt.a, ice);
     // (the diffused part has lost its direction: isotropic, and none of it at a surface the sun lights directly)
     float sun = (octaves(tau, ph, selfSh, min(nOct, (int)_PL.w)) + _PL3.z * diffuseT(tau) * (1.0 - exp(-0.1 * tau))) * _PL.z * iceSun;
     float3 sky = (0.5 * (0.18 * g_zen * sv.r + 0.477 * g_mid * sv.g + 0.342 * horLight(sv))
-                + 0.5 * skyMean() * (_PL2.z * diffuseT(upDepth(lt)) + _Night.z)) * _PL2.x * iceSky * (0.8 + 0.2 * selfSh);
+                + 0.5 * skyMean() * (_PL2.z * diffuseT(upDepth(lt)) + _Night.z)) * _PL2.x * iceSky * (0.8 + 0.2 * selfSh)
+                * lerp(phA.x, phA.y, saturate(0.5 + skyOpen(sv) - g_openCam));
     float3 gnd = groundLight(q, sunc0) * lerp(1.0, 0.3, ss(S_base.x - 0.4, S_base.x + 1.5, q.z));
     // checks only (StormRenderer.lightDebug): 1 the sun's optical depth / 60, the depth overhead / 60, metres of hail;
     // 2-4 the sun's, the sky's, the ground's light alone
@@ -765,8 +776,20 @@ float3 stormLight(float3 q, float4 lt, float4 sv, float3 sunz, float3 sunc0, flo
 float airLight(float4 lt, float4 sv) { return 0.5 * exp(-0.38 * lt.r) + 0.5 * saturate(0.18 * sv.r + 0.477 * sv.g + 0.342 * sv.b); }
 // phase functions of the other media (normalised as hg4: isotropic 1). Raindrops: a strong forward lobe (diffraction by
 // millimetre drops), capped as the cloud's is; dust: a milder one
-float rainPhase(float c) { return min(0.55 * hg4(0.8, c) + 0.45, 12.0); }
+// (user, 2026-10-28: "fix the rain band", the rain under the base glowing as a bright flat-topped band in a low sun from
+// behind the camera) Millimetre drops send nearly everything forward: to the side and back, rainbow and reflections
+// together, they scatter a fifth or less of an isotropic medium's share (Mie theory for 1-2 mm drops: about 0.05 at 90
+// degrees, 0.1-0.2 at the rainbow and straight back). The earlier 0.45 isotropic floor sent back about half and lit the
+// rain's sunward face three times too bright; now 0.12 (back 0.16, side 0.23). Backlit rain still glows (the cap).
+float rainPhase(float c) { return min(0.88 * hg4(0.85, c) + 0.12, 12.0); }
 float dustPhase(float c) { return min(0.6 * hg4(0.6, c) + 0.4, 6.0); }
+// a phase a * hg(g) + (1 - a)'s mean over the backward and the forward hemisphere (isotropic 1): hg sends
+// (1 - g) / 2g * ((1 + g) / sqrt(1 + g^2) - 1) of its light backward. Rain (0.18, 1.82), dust (0.55, 1.45).
+float2 hemiPhase(float a, float g)
+{
+    float b = (1.0 - g) / (2.0 * g) * ((1.0 + g) / sqrt(1.0 + g * g) - 1.0);
+    return float2(a * 2.0 * b + 1.0 - a, a * 2.0 * (1.0 - b) + 1.0 - a);
+}
 
 // the web build's display curve, then to linear for HDRP's colour buffer
 float3 toneMap(float3 c) { float3 cc = 1.0 - exp(-_MP.z * c); cc = pow(max(cc, 0.0), 1.0 / 1.1); return pow(cc, 2.2); }
@@ -817,6 +840,8 @@ void March(uint3 gid : SV_DispatchThreadID)
     // (unified) how lit the air is where the eye is: the haze toward the storm is taken as lit as the mean of here and there
     float3 cpu = uvw(cp);
     float airCam = uni ? airLight(_Light.SampleLevel(sampler_LinearClamp, cpu, 0), _SkyVis.SampleLevel(sampler_LinearClamp, cpu, 0)) : 1.0;
+    g_openCam = skyOpen(_SkyVis.SampleLevel(sampler_LinearClamp, cpu, 0));
+    float2 phAR = hemiPhase(0.88, 0.85), phAD = hemiPhase(0.6, 0.6);
     // tornado bounding cylinder
     float torR = max(S_tor2.y * 1.3 + 0.25 * S_wall.z, S_tor2.x * 2.4 + 0.06) * 1.2 + 0.4;
     float2 torC = 0.5 * (S_tor.xy + S_tor3.xy);
@@ -1135,14 +1160,14 @@ void March(uint3 gid : SV_DispatchThreadID)
                 float fwd = 1.0 + 2.2 * pow(max(cosg, 0.0), 4.0);     // rain scatters forward: curtains glow against the light
                 // (unified: lit as the cloud around it is, so under the storm it is as dark as the base; raindrops and
                 // hail absorb next to nothing, so it is grey, and green only by the light that reaches it through hail)
-                float3 pc = uni ? stormLight(q, lt, sv, sunz, sunc, phR, 1.0, 0.0, 0.0, 1) * 0.9
+                float3 pc = uni ? stormLight(q, lt, sv, sunz, sunc, phR, 1.0, 0.0, 0.0, 1, phAR) * 0.9
                     : lerp(float3(0.55, 0.6, 0.66), float3(0.8, 0.88, 0.86), saturate(hw)) * (sunz * sunL * 0.9 * fwd + skyc * (0.35 + 0.5 * lt.g));
                 be += br; Lc += pc * br;
             }
             if (tv.y > 0.0)
             {
                 // dust and debris: lit like the ground beneath, fading into the haze
-                float3 tl = uni ? stormLight(q, lt, sv, sunz, sunc, phD, 1.0, 0.0, 0.0, 1) : sunz * sunL * 0.8 + skyc * (0.3 + 0.5 * lt.g) + bounceC * 0.3;
+                float3 tl = uni ? stormLight(q, lt, sv, sunz, sunc, phD, 1.0, 0.0, 0.0, 1, phAD) : sunz * sunL * 0.8 + skyc * (0.3 + 0.5 * lt.g) + bounceC * 0.3;
                 be += tv.y; Lc += tl * float3(0.5, 0.44, 0.37) * tv.y;
             }
             // light shafts: haze under the storm (where the sky is hidden overhead) lit where sunlight gets through, i.e. the
@@ -1306,7 +1331,7 @@ void March(uint3 gid : SV_DispatchThreadID)
                     {
                         // as the funnel: its sun test, and the sun crossing its own cloud to reach the far side
                         float4 ltD = lt; ltD.r = min(lt.r, -log(max(tsun, 1e-6)) / 0.38);
-                        tl = stormLight(q, ltD, sv, sunz, sunc, phD, 1.0, od * (0.15 + 0.65 * (1.0 - lit)) / 0.38, 0.0, 1) * (0.65 + 0.35 * shade);
+                        tl = stormLight(q, ltD, sv, sunz, sunc, phD, 1.0, od * (0.15 + 0.65 * (1.0 - lit)) / 0.38, 0.0, 1, phAD) * (0.65 + 0.35 * shade);
                     }
                     be += tv.y; Lc += tl * soil * tv.y;
                 }
