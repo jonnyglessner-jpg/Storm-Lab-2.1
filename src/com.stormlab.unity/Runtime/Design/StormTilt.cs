@@ -55,7 +55,12 @@ namespace StormLab
             var a = F.param;
             double ux = a[16 * 4], uy = a[16 * 4 + 1];
             var (rain, hail) = Shift(P);
-            Push(a, 9 * 4, ux, uy, rain);
+            // (user, 2026-10-28: the forward-flank rain "forming on its own completely separate from the storm") the first
+            // rain falls from the tower's own downshear flank; the core moves out to where the tilt and drift carry it as the
+            // storm spreads its anvil (slot 4 w) and the rain falls from higher up. It used to start 15 km off under clear sky.
+            double g = C.Clamp(a[4 * 4 + 3], 0, 1);
+            Pull(a, 9 * 4, ux, uy, 0.4 + 0.6 * g);
+            Push(a, 9 * 4, ux, uy, rain * g);
             Push(a, 10 * 4, ux, uy, hail);
             double tilt0 = Math.Sqrt(P.tilt.x * P.tilt.x + P.tilt.y * P.tilt.y);
             // the shield spreads as it is carried further
@@ -70,6 +75,11 @@ namespace StormLab
             double dx = a[i] - ux, dy = a[i + 1] - uy, m = Math.Sqrt(dx * dx + dy * dy);
             if (m < 0.1) return;
             a[i] = (float)(a[i] + dx / m * by); a[i + 1] = (float)(a[i + 1] + dy / m * by);
+        }
+
+        static void Pull(float[] a, int i, double ux, double uy, double k)
+        {
+            a[i] = (float)(ux + (a[i] - ux) * k); a[i + 1] = (float)(uy + (a[i + 1] - uy) * k);
         }
 
         /// <summary>The rain-free base's radius and the tornado's clear radius, km, for the volume's build and the radar.

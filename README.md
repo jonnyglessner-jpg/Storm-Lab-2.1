@@ -262,7 +262,9 @@ thunder clips (`cut.py` remakes them from the raw recordings, `analyse.py` finds
 build leans the updraft at most 0.14 km a km and drops its rain at fixed places round the base. Here the updraft leans
 by its storm-relative wind over its speed (half the 0-6 km shear over the plan's updraft: 0.27 plains, 0.43 Dixie), and
 the rain lands where the lean and its fall through the storm-relative wind carry it: rain (5 m/s, about 15 minutes'
-fall) 4-5 km further off, hail (23 m/s) about 2 km, less drift in an HP storm. The base is rain-free on its inflow
+fall) 4-5 km further off, hail (23 m/s) about 2 km, less drift in an HP storm. The first rain falls from the tower's own
+downshear flank (0.4 of the design's distance) and moves out to that place as the anvil spreads (user, 2026-10-28: it
+started 13 km out under clear sky, "forming on its own completely separate from the storm"). The base is rain-free on its inflow
 side (1.4-2.2 km), and a tornado has clear air round it, 0.35 km + 0.15 a rating step, 1.6x in a classic storm and
 1x in an HP one, whose rain wraps outside it. The volume's build applies it after the port's rain (`precipClear`), so
 the 3-D storm, its rain sound and the radar agree; `-- --tilt` in `validation/parity/csharp` lists it per setup, and
@@ -274,11 +276,16 @@ of its own, and its sweep downwind (up to 7.5 km past the core) fell 9 km out of
 `RainUnderCloud` (StormVolume.compute) keeps that sweep's rain only where cloud within 6 km of the base lies within about
 5 km; the forward-flank and hail cores keep theirs (cutting them too left classic storms with no forward-flank curtain).
 The rain sound follows it; the radar (analytic) still shows the whole sweep. The forward-flank rain's own cloud (user,
-2026-10-28: "add the cloud deck", same layout, with the anvil): a deep mass over the rain's footprint, its ragged base 1-2.2
-km over the updraft's and rising downwind, its top 4-5.5 km over the base and rising into the anvil near the core; its
-outline wanders, it thins toward it like a lens, and ragged tags hang from its base into heavy rain (user, same day: the
-first deck was a box, "straight edged"). The curtain under it leans downwind with height and its edge frays, so side-on
-it is no longer a vertical line from cloud to ground (`ffd_25km`, `ffd_shade_20km` and their `_norain` frames). The rain
+2026-10-28: "add the cloud deck", same layout, with the anvil; then "too prominent and doesn't look like rain"): murk, the
+precipitation-laden cloud the rain falls through, not a solid deck. Its extinction is about the rain's own (2 a km, against
+the solid cloud's 22), so its edges are soft over kilometres; it is densest only where it leaves the tower, and thicker in
+its lowest 1.5 km over the rain, a ragged lowered base the shafts hang from. It grows out of the tower's downshear side
+(a bridge from the leaning tower to the core) and rises into the anvil's underside near the tower and over the core, so it
+has no top of its own; further down the sweep it is lower and fades upward. The rain hangs on up into it and fades out over
+the first few kilometres above the base; it falls in separate shafts a few kilometres across and is heavy only in the core
+(a third of that over the shield). The curtain leans downwind with height and its edge frays, so side-on
+it is no longer a vertical line from cloud to ground (`ffd_25km`, `ffd_shade_20km` and their `_norain` frames;
+`StormLightCheck -slLightFfd` draws the forward flank at six ages from the air and the ground). The rain
 falls from cloud and is shaded by (inside the forward-flank rain 0.082 -> 0.027 of the frame's light in `StormLightCheck`). A face of it the sun lights is
 white, as a sunlit face of the updraft is (`ffd_12km`). A repaint spread over frames applies the last repaint's
 map of the rain kept as it writes each slab (trimming in place at the end flashed the whole sweep back for 3 frames at
@@ -336,11 +343,12 @@ Output: by default the storm's light is in HDRP's physical units under the game'
   each image's fine-detail energy above the horizon, and sheets with both frames and 1:1 crops
   (`Screenshots/detail_<view>_sheet.png`). Report: `validation/reports/CloudDetailCheck.md`. Last run: PASS.
 - **Lighting**: **StormLab > Test Map > Lighting Check** (`StormLightCheck.RunFromCommandLine [-slLightPreset key]
-  [-slLightHour h] [-slLightDebug]`, about 2 min): seven fixed views of one storm (the whole storm from 25 km, the base from
+  [-slLightHour h] [-slLightDebug] [-slLightFfd]`, about 2 min): seven fixed views of one storm (the whole storm from 25 km, the base from
   10 km, under the base, inside the forward-flank rain, against the sun, the forward flank side-on, the hail core), each drawn with the physical and
   the unified lighting: the brightness of the sky and storm in each, the scene's ambient scale, the march's GPU time, and
   sheets (`Screenshots/light_<preset>_<view>_sheet.png`). `-slLightDebug` adds the unified light's parts alone and the
-  light grids' values through the updraft, rain and hail cores. Report: `validation/reports/StormLightCheck[_preset].md`.
+  light grids' values through the updraft, rain and hail cores. `-slLightFfd`: the forward flank at 15-60 storm minutes,
+  side-on from the air and the ground, each with and without rain (`Screenshots/light_ffdage_*`). Report: `validation/reports/StormLightCheck[_preset].md`.
 - **Sound**: `dotnet run --project validation/audio` (the synths offline: wind and rain grow with their drivers, thunder
   falls off with distance, nothing clips; WAVs to listen to); `python -I validation/audio/thunder/check.py` (the thunder
   clips: tiers, levels, import settings, credits; a preview by distance). `-executeMethod StormAudioCheck.RunFromCommandLine` (about

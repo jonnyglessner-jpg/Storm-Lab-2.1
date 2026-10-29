@@ -28,7 +28,7 @@ using Object = UnityEngine.Object;
 public static class StormLightCheck
 {
     const string Key = "StormLightCheck.Active", BatchKey = "StormLightCheck.Batch", CodeKey = "StormLightCheck.Code";
-    const string PresetKey = "StormLightCheck.Preset", HourKey = "StormLightCheck.Hour", DebugKey = "StormLightCheck.Debug", FlickerKey = "StormLightCheck.Flicker", TailKey = "StormLightCheck.Tail", SceneKey = "StormLightCheck.Scene";
+    const string PresetKey = "StormLightCheck.Preset", HourKey = "StormLightCheck.Hour", DebugKey = "StormLightCheck.Debug", FlickerKey = "StormLightCheck.Flicker", TailKey = "StormLightCheck.Tail", SceneKey = "StormLightCheck.Scene", FfdKey = "StormLightCheck.Ffd";
     static string ShotDir => Path.Combine(StormLabTestKit.ProjectDir, "Screenshots");
     static string ReportDir => Path.Combine(StormLabTestKit.RepoRoot, "validation", "reports");
 
@@ -48,6 +48,7 @@ public static class StormLightCheck
         SessionState.SetBool(FlickerKey, args.Contains("-slLightFlicker"));
         SessionState.SetBool(TailKey, args.Contains("-slLightTailFlow"));
         SessionState.SetBool(SceneKey, args.Contains("-slLightScene"));
+        SessionState.SetBool(FfdKey, args.Contains("-slLightFfd"));
         EditorSceneManager.OpenScene(TestMapBuilder.ScenePath, OpenSceneMode.Single);
         SessionState.SetBool(Key, true); SessionState.SetBool(BatchKey, batch);
         EditorApplication.playModeStateChanged -= OnState;
@@ -152,6 +153,7 @@ public static class StormLightCheck
         if (SessionState.GetBool(TailKey, false)) { reportName += "_tail"; foreach (var x in TailFlow(storm, cam)) yield return x; yield break; }
         if (SessionState.GetBool(FlickerKey, false)) { reportName += "_flicker"; foreach (var x in Flicker(storm)) yield return x; yield break; }
         if (SessionState.GetBool(SceneKey, false)) { reportName += "_scene"; foreach (var x in SceneLight(storm, cam, panel)) yield return x; yield break; }
+        if (SessionState.GetBool(FfdKey, false)) { reportName += "_ffd"; foreach (var x in FfdAges(storm, cam)) yield return x; yield break; }
         rep.AppendLine($"Storm: {storm.preset}, seed {storm.seed}, {P.kind}, at {at:0.0} min ({storm.Frame.stage}); sun at {storm.solarHour:0.0} h solar. Hail core amount {F[10 * 4 + 3]:0.00}, radius {F[10 * 4 + 2]:0.0} km. March at half resolution.").AppendLine();
         rep.AppendLine($"Unified settings: diffusion {storm.diffusion:0.###}, diffused sun {storm.diffuseSun:0.##}, hail glow {storm.hailGlow:0.##}.").AppendLine();
         if (debug)
@@ -617,6 +619,50 @@ public static class StormLightCheck
         rep.AppendLine($"Beaver tail side-on from 5 km (its axis ({td.x:0.00}, {td.y:0.00}), {F[34]:0} km long in the web build's design), 8 frames 3 s apart. Flow carried: {flows.Last() - flows.First():0.000} km.").AppendLine();
         rep.AppendLine($"Frames: `Screenshots/light_{storm.preset}_tailflow_<k>.png`.");
         Check(flows.Last() - flows.First() > 0.2, "the inflow carries the beaver tail's air in while the storm is paused");
+    }
+
+    /// <summary>
+    /// -slLightFfd (user, 2026-10-28: the forward-flank rain "forming on its own completely separate from the storm", its
+    /// cloud deck "too prominent" and not like rain): the storm at several ages as its forward flank grows, side-on to the
+    /// line from the updraft to the forward-flank core on the sun's side, from the air (3 km up, 32 km off, as a flying
+    /// camera sees it) and from the ground (22 km off); each again without rain (the cloud alone).
+    /// Screenshots/light_ffdage_&lt;min&gt;_{air,ground}[_norain].png
+    /// </summary>
+    static IEnumerable<object> FfdAges(StormRenderer storm, Camera cam)
+    {
+        var k = storm.Lighting.keyDir; var toSun = new Vector3(k.x, 0f, k.y).normalized;
+        rep.AppendLine($"Storm: {storm.preset}, seed {storm.seed}, sun at {storm.solarHour:0.0} h solar.").AppendLine();
+        rep.AppendLine("| min | forward-flank amount | core from updraft, km | size scale | anvil growth |").AppendLine("| --- | --- | --- | --- | --- |");
+        foreach (float at in new[] { 15f, 18f, 22f, 28f, 40f, 60f })
+        {
+            storm.stormMinutes = at; storm.StepTo(at, storm.Clock, true);
+            foreach (var x in Wait(0.5f)) yield return x;
+            var F = storm.Frame.param;
+            var u = storm.UpdraftWorld(storm.StormTime); u.y = 0f;
+            var c = storm.StormToWorld(new Vector3(F[36], F[37], 0f)); c.y = 0f;
+            var u2 = storm.WorldToStorm(u);
+            rep.AppendLine($"| {at:0} | {F[39]:0.00} | {new Vector2(F[36] - u2.x, F[37] - u2.y).magnitude:0.0} | {F[38]:0.00} | {F[19]:0.00} |");
+            var mid = Vector3.Lerp(u, c, 0.5f);
+            var along = (c - u).normalized;
+            var side = Vector3.Cross(Vector3.up, along);
+            if (Vector3.Dot(side, toSun) < 0f) side = -side;
+            foreach (var (nm, km, up, aim, fov) in new[] { ("air", 32f, 3000f, 4.5f, 60f), ("ground", 22f, 2f, 4f, 65f) })
+            {
+                var from = mid + side * km * 1000f;
+                from.y = (Physics.Raycast(from + Vector3.up * 3000f, Vector3.down, out var hit, 6000f) ? hit.point.y : 0f) + up;
+                var aimAt = new Vector3(mid.x, aim * 1000f, mid.z);
+                cam.transform.SetPositionAndRotation(from, Quaternion.LookRotation(aimAt - from, Vector3.up));
+                cam.fieldOfView = fov;
+                StormLabTestKit.Render(cam, Path.Combine(ShotDir, "light_warmup.png"), 1600, 900, 12);
+                storm.ResetHistory(cam);
+                StormLabTestKit.Render(cam, Path.Combine(ShotDir, $"light_ffdage_{at:00}_{nm}.png"), 1600, 900, 8);
+                storm.hideRain = true; storm.StepTo(storm.StormTime, storm.Clock, true); storm.ResetHistory(cam);
+                StormLabTestKit.Render(cam, Path.Combine(ShotDir, $"light_ffdage_{at:00}_{nm}_norain.png"), 1600, 900, 8);
+                storm.hideRain = false; storm.StepTo(storm.StormTime, storm.Clock, true);
+                yield return null;
+            }
+        }
+        rep.AppendLine().AppendLine("Frames: `Screenshots/light_ffdage_<min>_{air,ground}[_norain].png`.");
     }
 
     /// <summary>
