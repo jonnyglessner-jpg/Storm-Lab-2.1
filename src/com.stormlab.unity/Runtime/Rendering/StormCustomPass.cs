@@ -71,7 +71,11 @@ namespace StormLab
                 // farthest first; each storm is laid in front of or behind the one before it pixel by pixel (their
                 // mean distances along the ray), since a near storm's forward-flank rain can reach far past its updraft
                 var under = i > 0 ? marched[i - 1].Item1 : null;
-                storm.RecordComposite(ctx.cmd, cam, tex, dist, w, h, writeDepth, under, under != null ? marched[i - 1].Item2 : null);
+                // (the light shafts, kept apart when two or more storms are drawn, go on once all the storms' cloud is laid:
+                // the first storm's with the second's composite, each later storm's with its own)
+                bool many = marched.Count > 1;
+                storm.RecordComposite(ctx.cmd, cam, tex, dist, w, h, writeDepth, under, under != null ? marched[i - 1].Item2 : null,
+                    shaftsOwn: !many || i > 0, shaftsUnder: many && i == 1);
                 Composites++;
             }
         }

@@ -566,13 +566,14 @@ namespace StormLab
         // ------------------------------------------------------------------ per-camera march
         sealed class CamState
         {
-            public RenderTexture cur, dist, half; public readonly RenderTexture[] hist = new RenderTexture[2]; public int h;
-            public Vector3 prevPos, prevFwd, prevRight, prevUp; public bool valid, wasTransient; public int frame;
+            public RenderTexture cur, dist, half, shaft; public readonly RenderTexture[] hist = new RenderTexture[2]; public int h;
+            public Vector3 prevPos, prevFwd, prevRight, prevUp; public bool valid, wasTransient, shaftApart; public int frame;
             public void Ensure(int w, int hh)
             {
                 if (cur && cur.width == w && cur.height == hh) return;
                 Dispose();
                 cur = RT(w, hh, RenderTextureFormat.ARGBHalf); dist = RT(w, hh, RenderTextureFormat.RFloat); half = RT(w, hh, RenderTextureFormat.RFloat);
+                shaft = RT(w, hh, RenderTextureFormat.ARGBHalf);
                 hist[0] = RT(w, hh, RenderTextureFormat.ARGBHalf); hist[1] = RT(w, hh, RenderTextureFormat.ARGBHalf);
                 valid = false; wasTransient = false;
             }
@@ -583,8 +584,8 @@ namespace StormLab
             }
             public void Dispose()
             {
-                foreach (var r in new[] { cur, dist, half, hist[0], hist[1] }) if (r) { r.Release(); UnityEngine.Object.DestroyImmediate(r); }
-                cur = dist = half = hist[0] = hist[1] = null;
+                foreach (var r in new[] { cur, dist, half, shaft, hist[0], hist[1] }) if (r) { r.Release(); UnityEngine.Object.DestroyImmediate(r); }
+                cur = dist = half = shaft = hist[0] = hist[1] = null;
             }
         }
         readonly Dictionary<Camera, CamState> cams = new Dictionary<Camera, CamState>();
@@ -680,7 +681,11 @@ namespace StormLab
             cmd.SetComputeTextureParam(marchCs, kM, "_OutHalf", st.half);
             bool other = otherHalf && otherHalf.width == st.half.width && otherHalf.height == st.half.height;
             cmd.SetComputeTextureParam(marchCs, kM, "_OtherHalf", other ? (Texture)otherHalf : Texture2D.blackTexture);
-            cmd.SetComputeVectorParam(marchCs, "_OtherP", new Vector4(other ? 1 : 0, 0, 0, 0));
+            // drawn alongside another storm: the light shafts kept apart for the composite (not with the backdrop's tone map)
+            bool apart = otherHalf != null && !toneMap;
+            cmd.SetComputeTextureParam(marchCs, kM, "_OutShaft", st.shaft);
+            cmd.SetComputeVectorParam(marchCs, "_OtherP", new Vector4(other ? 1 : 0, apart ? 1 : 0, 0, 0));
+            st.shaftApart = apart;
             cmd.SetComputeIntParam(marchCs, "_TransientLightOn", 0);
             cmd.SetComputeTextureParam(marchCs, kM, "_TransientLightTex", Black3D);
             bool transient = TransientLighting != null && TransientLighting.RecordLighting(cmd, this, cam, marchCs, kM);
@@ -708,13 +713,15 @@ namespace StormLab
         /// <summary>where this storm's cloud hides half of what is behind it for a camera, from its last march (km along
         /// each ray, -1 where none), or null: for another storm drawn alongside (its light shafts stop there)</summary>
         public RenderTexture HalfFor(Camera cam) => cams.TryGetValue(cam, out var st) && st.valid ? st.half : null;
+        /// <summary>this storm's light shafts for a camera when its last march kept them apart (drawn alongside another storm), or null</summary>
+        public RenderTexture ShaftFor(Camera cam) => cams.TryGetValue(cam, out var st) && st.shaftApart ? st.shaft : null;
 
         MaterialPropertyBlock compositeProps;
         /// <summary>Draw the storm over the bound colour target (out = storm.rgb x light scale + storm.a x target) and, with
         /// writeDepth, write its depth where it is opaque. under: the storm composited just before (and its march
         /// texture), which this one is laid behind wherever it is the nearer of the two along the ray.</summary>
         public void RecordComposite(CommandBuffer cmd, Camera cam, Texture storm, Texture dist, int w, int h, bool writeDepth,
-            StormRenderer under = null, Texture underTex = null)
+            StormRenderer under = null, Texture underTex = null, bool shaftsOwn = true, bool shaftsUnder = false)
         {
             if (!compositeMat || storm == null) return;
             var mpb = compositeProps ??= new MaterialPropertyBlock(); mpb.Clear();
@@ -728,6 +735,11 @@ namespace StormLab
             mpb.SetTexture("_UnderTex", layered ? underTex : Texture2D.blackTexture);
             mpb.SetTexture("_UnderMean", layered ? ust.dist : Texture2D.blackTexture);
             mpb.SetVector("_UnderP", new Vector4(layered ? 1 : 0, layered ? (under.toneMap ? 0 : under.Luminance) : 0, 0, 0));
+            // the light shafts kept apart in the marches (drawn alongside another storm), added over both storms
+            var ownS = shaftsOwn ? ShaftFor(cam) : null; var underS = shaftsUnder && under != null ? under.ShaftFor(cam) : null;
+            mpb.SetTexture("_ShaftTex", ownS ? ownS : Texture2D.blackTexture);
+            mpb.SetTexture("_UnderShaftTex", underS ? underS : Texture2D.blackTexture);
+            mpb.SetVector("_ShaftP", new Vector4(ownS ? 1 : 0, underS ? 1 : 0, underS && !under.toneMap ? under.Luminance : 0, 0));
             float tanY = Mathf.Tan(cam.fieldOfView * 0.5f * Mathf.Deg2Rad);
             mpb.SetVector("_StormTan", new Vector4(tanY * w / (float)h, tanY, 0, 0));
             cmd.BeginSample(CompositeSampler);

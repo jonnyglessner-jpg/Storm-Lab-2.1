@@ -28,6 +28,12 @@ RWTexture2D<float> _OutHalf;
 // another storm drawn alongside: where its cloud hides half of what is behind it, km (its _OutHalf from its last march;
 // -1 where none), and x of _OtherP 1 when given
 Texture2D<float> _OtherHalf;
+// y of _OtherP: 1 to keep the light shafts (sunlit haze under the storm: light with no opacity) apart in _OutShaft. The
+// composite lays each storm as one layer, in front of or behind the other by its distance along the ray, and the shafts
+// in that layer moved with it: in front of the other storm's tower they washed it out, behind it they vanished, and the
+// order switching between drew light and dark patches over the tower (user, 2026-10-28). Kept apart, the composite adds
+// them over both storms; they end at the other storm's cloud (_OtherHalf).
+RWTexture2D<float4> _OutShaft;
 float4 _OtherP;
 
 // camera in the volume frame (km): position, forward, right, up; xy of _CamTan = tan of the half angles
@@ -815,6 +821,7 @@ void March(uint3 gid : SV_DispatchThreadID)
     float torR = max(S_tor2.y * 1.3 + 0.25 * S_wall.z, S_tor2.x * 2.4 + 0.06) * 1.2 + 0.4;
     float2 torC = 0.5 * (S_tor.xy + S_tor3.xy);
     float3 col = 0.0; float T = 1.0; float dsum = 0.0, wsum = 0.0; float tHalf = 1e9;
+    float3 colS = 0.0;   // the light shafts, when kept apart (_OtherP.y)
     int nSteps = 0, nTorSteps = 0; float lastBe = 0.0;
     int maxSteps = (int)_DepthP.w;
     bool det = _TorP.x > 0.5;
@@ -1155,7 +1162,9 @@ void March(uint3 gid : SV_DispatchThreadID)
             {
                 float ks = 0.05 * (1.0 - lt.g) * shaftFade;
                 float3 sc = sunz * sunL * (0.25 + 2.4 * pow(max(cosg, 0.0), 6.0)) * 0.9;
-                col += T * (1.0 - exp(-ks * dtI)) * sc;
+                float3 shaft = T * (1.0 - exp(-ks * dtI)) * sc;
+                // drawn alongside another storm (_OtherP.y): kept apart, for the composite to add over both storms
+                if (_OtherP.y > 0.5) colS += shaft; else col += shaft;
             }
             if (inTor)
             {
@@ -1360,6 +1369,7 @@ void March(uint3 gid : SV_DispatchThreadID)
         col = nightGrade(col);
         _Out[id.xy] = float4(_Opt.w > 0.5 ? toneMap(col) : col * _MP.z, T);
     }
+    if (_OtherP.y > 0.5) _OutShaft[id.xy] = float4(nightGrade(colS) * _MP.z, 0.0);
 }
 
 // ------------------------------------------------------------------------------------------------ temporal resolve

@@ -261,6 +261,8 @@ public static class StormGameCheck
             for (int k = 0; k < game.Storms.Count; k++)
             {
                 if (!game.Alive(k)) continue;
+                // (the runner's Update shows every live storm each frame: paused while one is shown alone)
+                game.enabled = false;
                 for (int j = 0; j < game.Storms.Count; j++) game.Storms[j].gameObject.SetActive(j == k);
                 game.Storms[k].StepTo(game.Storms[k].StormTime, game.Storms[k].Clock, true);
                 game.Storms[k].ResetHistory(cam);
@@ -381,6 +383,7 @@ public static class StormGameCheck
                     }
                 }
             }
+            game.enabled = true;
             game.Apply();
         }
         Sheet(times.Select(g => $"game_{g:00}.png").ToArray(), "game_sheet.jpg");

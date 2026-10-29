@@ -377,10 +377,13 @@ tests/StormLabTest -executeMethod <method> -logFile <log>`. Never with `-nograph
   (StormGameCheck -slGameAlone 15,35 shows each storm alone, the composite with each storm in false colour, and the
   rain and cloud along the rays). Above the base, rain is now kept only inside cloud (game layout), and each storm's
   distance for the composite's ordering blends in where it draws next to nothing instead of switching at a threshold.
-  With that wall gone, flat hard-edged patches showed (user, same day): one storm's light shafts (sunlit haze under its
-  anvil, light with no opacity) reached tens of km past the other storm's tower and were laid over it with the rest of
-  that storm's layer. Each storm's shafts now stop where the other storm's cloud hides half of what is behind it (its
-  last march, `HalfFor`), and the composite's ordering blends over 3 km plus a quarter of the nearer's distance.
+  With that wall gone, light and dark patches showed over the farther storm's tower (user, same day): the composite lays
+  each storm as one layer, in front of or behind the other by its distance along the ray, and a storm's light shafts
+  (sunlit haze under its anvil, light with no opacity) moved with its layer, washing the tower out where in front and
+  vanishing where behind, the order switching between on hard lines. When two storms are drawn, each march now keeps
+  its shafts apart (`ShaftFor`), ending them where the other storm's cloud hides half of what is behind it (its last
+  march, `HalfFor`), and the composite adds them over both storms once their cloud is laid; the ordering also blends
+  over 3 km plus a quarter of the nearer's distance. A single storm draws as before.
 - Seen from under a storm's anvil well downstream (inside its forward-flank rain, e.g. 36 km down its motion), the
   rain region shows straight-edged openings onto the sky beyond. One storm alone does it, so it is the storm's own
   shape from there, not the game's two storms; it has not been compared with the website from that spot.
