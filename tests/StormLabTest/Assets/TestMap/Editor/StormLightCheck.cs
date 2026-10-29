@@ -28,7 +28,7 @@ using Object = UnityEngine.Object;
 public static class StormLightCheck
 {
     const string Key = "StormLightCheck.Active", BatchKey = "StormLightCheck.Batch", CodeKey = "StormLightCheck.Code";
-    const string PresetKey = "StormLightCheck.Preset", HourKey = "StormLightCheck.Hour", DebugKey = "StormLightCheck.Debug", FlickerKey = "StormLightCheck.Flicker", TailKey = "StormLightCheck.Tail", SceneKey = "StormLightCheck.Scene", FfdKey = "StormLightCheck.Ffd";
+    const string PresetKey = "StormLightCheck.Preset", HourKey = "StormLightCheck.Hour", DebugKey = "StormLightCheck.Debug", FlickerKey = "StormLightCheck.Flicker", TailKey = "StormLightCheck.Tail", SceneKey = "StormLightCheck.Scene", FfdKey = "StormLightCheck.Ffd", TorKey = "StormLightCheck.Tor";
     static string ShotDir => Path.Combine(StormLabTestKit.ProjectDir, "Screenshots");
     static string ReportDir => Path.Combine(StormLabTestKit.RepoRoot, "validation", "reports");
 
@@ -49,6 +49,7 @@ public static class StormLightCheck
         SessionState.SetBool(TailKey, args.Contains("-slLightTailFlow"));
         SessionState.SetBool(SceneKey, args.Contains("-slLightScene"));
         SessionState.SetBool(FfdKey, args.Contains("-slLightFfd"));
+        SessionState.SetBool(TorKey, args.Contains("-slLightTornado"));
         EditorSceneManager.OpenScene(TestMapBuilder.ScenePath, OpenSceneMode.Single);
         SessionState.SetBool(Key, true); SessionState.SetBool(BatchKey, batch);
         EditorApplication.playModeStateChanged -= OnState;
@@ -153,6 +154,7 @@ public static class StormLightCheck
         if (SessionState.GetBool(TailKey, false)) { reportName += "_tail"; foreach (var x in TailFlow(storm, cam)) yield return x; yield break; }
         if (SessionState.GetBool(FlickerKey, false)) { reportName += "_flicker"; foreach (var x in Flicker(storm)) yield return x; yield break; }
         if (SessionState.GetBool(SceneKey, false)) { reportName += "_scene"; foreach (var x in SceneLight(storm, cam, panel)) yield return x; yield break; }
+        if (SessionState.GetBool(TorKey, false)) { reportName += "_tornado"; foreach (var x in TornadoShade(world, storm, cam, panel)) yield return x; yield break; }
         if (SessionState.GetBool(FfdKey, false)) { reportName += "_ffd"; foreach (var x in FfdAges(storm, cam)) yield return x; yield break; }
         rep.AppendLine($"Storm: {storm.preset}, seed {storm.seed}, {P.kind}, at {at:0.0} min ({storm.Frame.stage}); sun at {storm.solarHour:0.0} h solar. Hail core amount {F[10 * 4 + 3]:0.00}, radius {F[10 * 4 + 2]:0.0} km. March at half resolution.").AppendLine();
         rep.AppendLine($"Unified settings: diffusion {storm.diffusion:0.###}, diffused sun {storm.diffuseSun:0.##}, hail glow {storm.hailGlow:0.##}.").AppendLine();
@@ -619,6 +621,80 @@ public static class StormLightCheck
         rep.AppendLine($"Beaver tail side-on from 5 km (its axis ({td.x:0.00}, {td.y:0.00}), {F[34]:0} km long in the web build's design), 8 frames 3 s apart. Flow carried: {flows.Last() - flows.First():0.000} km.").AppendLine();
         rep.AppendLine($"Frames: `Screenshots/light_{storm.preset}_tailflow_<k>.png`.");
         Check(flows.Last() - flows.First() > 0.2, "the inflow carries the beaver tail's air in while the storm is paused");
+    }
+
+    /// <summary>
+    /// -slLightTornado (user, 2026-10-28: "the tornadoes got left out in the lighting overhaul. They still remain white when
+    /// they aren't being lit"): the user's view (ohio, varied cycles, seed 504571, 46:36 storm min, 12:23 solar on 20 June
+    /// at 41.9 N; the camera 3.9 km east-south-east of the tornado, 85 m up, looking 299 deg and 15 deg up), and the same
+    /// spot in a low evening sun (the sun behind the funnel), and at noon from the north-east, under the forward flank (its
+    /// near side facing the shaded rain, not the open inflow side). For each: the funnel's luminance halfway up, the base's beside it, and the sun's part alone.
+    /// Screenshots/light_tornado_*.png
+    /// </summary>
+    static IEnumerable<object> TornadoShade(TestMapWorld world, StormRenderer storm, Camera cam, TestMapStormPanel panel)
+    {
+        storm.preset = "ohio"; storm.varied = true; storm.seed = 504571; storm.Replan(); world.PlaceStorm();
+        if (panel) { panel.dayOfYear = 171; panel.latitude = 41.9f; }
+        float at = 46.6f;
+        var parts = new List<string>();
+        rep.AppendLine("| view | funnel luminance | base beside it | funnel / base | funnel, sun only | base, sun only |").AppendLine("| --- | --- | --- | --- | --- | --- |");
+        foreach (var (nm, hour, fromDeg) in new[] { ("noon", 12.38f, 119f), ("evening", 18.8f, 119f), ("noon_ne", 12.38f, 40f) })
+        {
+            if (panel) { panel.hour = hour; panel.Apply(); }
+            storm.stormMinutes = at; storm.StepTo(at, storm.Clock, true);
+            foreach (var x in Wait(0.5f)) yield return x;
+            var F = storm.Frame.param;
+            var tor = storm.StormToWorld(new Vector3(F[52], F[53], 0f)); tor.y = 0f;
+            var off = new Vector3(Mathf.Sin(fromDeg * Mathf.Deg2Rad), 0f, Mathf.Cos(fromDeg * Mathf.Deg2Rad)) * 3900f;
+            var from = tor + off;
+            from.y = (Physics.Raycast(from + Vector3.up * 3000f, Vector3.down, out var hit, 6000f) ? hit.point.y : 0f) + 85f;
+            var look = Quaternion.Euler(-15f, fromDeg + 180f, 0f);
+            cam.transform.SetPositionAndRotation(from, look);
+            cam.fieldOfView = 50f;
+            StormLabTestKit.Render(cam, Path.Combine(ShotDir, "light_warmup.png"), 2000, 750, 12);
+            storm.ResetHistory(cam);
+            string path = Path.Combine(ShotDir, $"light_tornado_{nm}.png");
+            StormLabTestKit.Render(cam, path, 2000, 750, 8);
+            storm.lightDebug = 2; storm.ResetHistory(cam);
+            string pathS = Path.Combine(ShotDir, $"light_tornado_{nm}_sun.png");
+            StormLabTestKit.Render(cam, pathS, 2000, 750, 8);
+            for (int d = 3; d <= 4; d++)
+            {
+                storm.lightDebug = d; storm.ResetHistory(cam);
+                StormLabTestKit.Render(cam, Path.Combine(ShotDir, $"light_tornado_{nm}_dbg{d}.png"), 2000, 750, 8);
+            }
+            storm.lightDebug = 0;
+            // the funnel halfway up its exposed part, and the base 1.5 km to its side at the base's height
+            float zb = F[4] * 1000f;
+            var groundY = Physics.Raycast(tor + Vector3.up * 3000f, Vector3.down, out var h2, 6000f) ? h2.point.y : 0f;
+            var right = cam.transform.right; right.y = 0f; right.Normalize();
+            Vector2 Px(Vector3 w) { var v = cam.WorldToViewportPoint(w); return new Vector2(v.x, v.y); }
+            var pF = Px(new Vector3(tor.x, groundY + 0.4f * zb, tor.z));
+            var pB = Px(new Vector3(tor.x, groundY + 1.15f * zb, tor.z) + right * 1500f);
+            float lf = PatchLum(path, pF), lb = PatchLum(path, pB), sf = PatchLum(pathS, pF), sb = PatchLum(pathS, pB);
+            string P3 = Path.Combine(ShotDir, $"light_tornado_{nm}_dbg3.png"), P4 = Path.Combine(ShotDir, $"light_tornado_{nm}_dbg4.png");
+            parts.Add($"{nm}: funnel sky {PatchLum(P3, pF):0.000}, ground {PatchLum(P4, pF):0.000}; base sky {PatchLum(P3, pB):0.000}, ground {PatchLum(P4, pB):0.000}");
+            rep.AppendLine($"| {nm} ({hour:0.00} h) | {lf:0.000} | {lb:0.000} | {lf / Mathf.Max(lb, 1e-4f):0.00} | {sf:0.000} | {sb:0.000} |");
+            yield return null;
+        }
+        rep.AppendLine();
+        foreach (var l in parts) rep.AppendLine("- " + l);
+        rep.AppendLine().AppendLine($"Storm: {storm.preset}, seed {storm.seed}, at {at:0.0} min ({storm.Frame.stage}). Frames: `Screenshots/light_tornado_{{noon,evening,noon_ne}}[_sun,_dbg3,_dbg4].png`.");
+    }
+
+    /// <summary>Mean linear luminance of a 15 x 15 pixel patch round a viewport point (0..1 each way, origin bottom left).</summary>
+    static float PatchLum(string path, Vector2 vp)
+    {
+        var t = new Texture2D(2, 2); t.LoadImage(File.ReadAllBytes(path));
+        int w = t.width, h = t.height, cx = Mathf.RoundToInt(vp.x * w), cy = Mathf.RoundToInt(vp.y * h);
+        double s = 0; int n = 0;
+        for (int y = cy - 7; y <= cy + 7; y++) for (int x = cx - 7; x <= cx + 7; x++)
+        {
+            if (x < 0 || y < 0 || x >= w || y >= h) continue;
+            var c = t.GetPixel(x, y).linear; s += 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b; n++;
+        }
+        Object.DestroyImmediate(t);
+        return n > 0 ? (float)(s / n) : float.NaN;
     }
 
     /// <summary>

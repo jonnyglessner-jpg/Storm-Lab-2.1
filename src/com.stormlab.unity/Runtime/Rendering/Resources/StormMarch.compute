@@ -774,6 +774,41 @@ float3 stormLight(float3 q, float4 lt, float4 sv, float3 sunz, float3 sunc0, flo
 }
 // How lit the air at a point is, as a share of open air's: the haze between the eye and the storm is in its shadow too
 float airLight(float4 lt, float4 sv) { return 0.5 * exp(-0.38 * lt.r) + 0.5 * saturate(0.18 * sv.r + 0.477 * sv.g + 0.342 * sv.b); }
+
+// The detailed tornado's sun and horizon, unified (user, 2026-10-28: "the tornadoes got left out in the lighting overhaul.
+// They still remain white when they aren't being lit"). The light grid is too coarse to see a funnel's own surroundings
+// (the sun slipping under the base's edge), so the funnel had tests of its own, but they reached only 4.8 km toward the
+// sun and 8 km toward the horizon, counted rain hardly at all, and the funnel took the brighter of them and the grid: in
+// the storm's shade (the rain core, the hook's curtains, the forward flank between it and a low sun; the air under the
+// storm out to the horizon at noon) it stayed lit, 40 to 60 times the base beside it (StormLightCheck -slLightTornado).
+// Sun: the first 4.8 km marched finely at the volume's own extinctions (the light grid's betaL: cloud, the near field's
+// coarse copy, rain at the unified rain extinction), then the grid's depth from there on.
+float funnelSunDepth(float3 q)
+{
+    if (_Sun.z <= 0.0) return 1e3;
+    float od = 0.0;
+    [unroll] for (int k = 0; k < 16; k++)
+    {
+        float4 d = _Dens.SampleLevel(sampler_LinearClamp, uvw(q + _Sun.xyz * (0.3 * k + 0.15)), 0);
+        od += ((d.r * d.r + d.b * d.b) * _MP.x + d.g * d.g * _MP.y) * 0.3;
+    }
+    return od + _Light.SampleLevel(sampler_LinearClamp, uvw(q + _Sun.xyz * 4.8), 0).r;
+}
+// Horizon: the strip under the base that tornadoHorizon finds clear is only as bright as the air it looks out to is lit
+// (airLight where its rays end, 8 km out, on the three bearings it takes): under the storm that air is in its shade.
+float horizonFar(float3 q, float2 n)
+{
+    float2 l = float2(n.x * 0.643 - n.y * 0.766, n.x * 0.766 + n.y * 0.643);
+    float2 r = float2(n.x * 0.643 + n.y * 0.766, n.y * 0.643 - n.x * 0.766);
+    float v = 0.0;
+    [unroll] for (int j = 0; j < 3; j++)
+    {
+        float2 d = j == 0 ? n : (j == 1 ? l : r);
+        float3 t = uvw(float3(q.xy + d * 7.9, q.z + 0.5));
+        v += (j == 0 ? 0.5 : 0.25) * airLight(_Light.SampleLevel(sampler_LinearClamp, t, 0), _SkyVis.SampleLevel(sampler_LinearClamp, t, 0));
+    }
+    return v;
+}
 // phase functions of the other media (normalised as hg4: isotropic 1). Raindrops: a strong forward lobe (diffraction by
 // millimetre drops), capped as the cloud's is; dust: a milder one
 // (user, 2026-10-28: "fix the rain band", the rain under the base glowing as a bright flat-topped band in a low sun from
@@ -1285,12 +1320,18 @@ void March(uint3 gid : SV_DispatchThreadID)
                         // see of it: its own sun test (the sun under the base's edge), the horizon its side faces, and its
                         // far side in its own shadow (the sun crosses the funnel to reach it; a soft terminator, as on any
                         // cloud surface). Its albedo is its brightness (a rain-laden grey up to white) and the dirt it lofts.
-                        float4 ltF = lt; ltF.r = min(lt.r, -log(max(tsun, 1e-6)) / 0.38);
-                        float horF = _TorP.w > 0.5 ? sv.b : tornadoHorizon(q, g_torN);
+                        // (its sun and horizon: funnelSunDepth, horizonFar. Its far side: the sun crosses the funnel itself,
+                        // twice its radius here at its own extinction, less toward its edges as seen; a thin rope still
+                        // glows against the light, a cone is a dark silhouette. It was 8 grid units however wide, so a
+                        // funnel with the sun behind it glowed white.)
+                        float4 ltF = lt; ltF.r = _TorP.w > 0.5 ? lt.r : funnelSunDepth(q);
+                        float horF = _TorP.w > 0.5 ? sv.b : tornadoHorizon(q, g_torN) * horizonFar(q, g_torN);
                         float4 svF = sv; svF.b = 0.5 * (saturate(sv.b + (sv.a - sv.b) * cs) + horF);
                         float stain = S_tor9.w * pow(saturate(1.0 - hz / 0.45), 2.0);
                         float3 albF = lerp(min(alb, 1.0).xxx, soil * 0.85, stain) * tone;
-                        fc = stormLight(q, ltF, svF, sunz, sunc, g_phW, 1.0, 8.0 * (1.0 - lit), 0.0, 4) * lerp(0.85, 1.0, facing) * albF;
+                        float rF = lerp(S_tor2.x, S_tor2.y, pow(hz, lerp(3.0, 0.7, S_tor.w)));
+                        float across = 2.0 * rF * 3.5 * _MP.x * (1.0 - lit) * (0.2 + 0.8 * facing);
+                        fc = stormLight(q, ltF, svF, sunz, sunc, g_phW, 1.0, across, 0.0, 4) * lerp(0.85, 1.0, facing) * albF;
                         parent = stormLight(q, lt, sv, sunz, sunc, g_phW, 1.0, 0.0, 0.0, 4);
                     }
                     if (S_tor4.w > 0.5)
@@ -1330,7 +1371,7 @@ void March(uint3 gid : SV_DispatchThreadID)
                     if (uni)
                     {
                         // as the funnel: its sun test, and the sun crossing its own cloud to reach the far side
-                        float4 ltD = lt; ltD.r = min(lt.r, -log(max(tsun, 1e-6)) / 0.38);
+                        float4 ltD = lt; ltD.r = _TorP.w > 0.5 ? lt.r : funnelSunDepth(q);
                         tl = stormLight(q, ltD, sv, sunz, sunc, phD, 1.0, od * (0.15 + 0.65 * (1.0 - lit)) / 0.38, 0.0, 1, phAD) * (0.65 + 0.35 * shade);
                     }
                     be += tv.y; Lc += tl * soil * tv.y;

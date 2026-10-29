@@ -111,7 +111,14 @@ Lighting (`lighting`):
   side, so rain under the base seen from the open country takes the open sky behind the eye by back scatter (0.18 of an
   even sky's), and seen from under the storm against the open sky beyond it, by forward scatter (1.8); which side is open
   comes from how open the sky is at the rain and at the eye (`hemiPhase`, `skyOpen`). Cloud, scattered many times, takes
-  the sky evenly. `StormLightCheck -slLightFfd -slLightDebug` draws the sun's, sky's and ground's parts. Light diffusing through thick cloud falls
+  the sky evenly. `StormLightCheck -slLightFfd -slLightDebug` draws the sun's, sky's and ground's parts. The detailed
+  tornado (user, 2026-10-28: "they still remain white when they aren't being lit") takes its sun as the first 4.8 km
+  marched finely toward it at the volume's own extinctions plus the light grid's depth from there (it took the brighter
+  of a short test and the grid, so a funnel in the storm's shade kept the sun); its horizon is as bright as the air
+  8 km out is lit; and the sun crossing to its far side goes through its real thickness (twice its radius), so a cone with
+  the sun behind it is a dark silhouette and a thin rope still glows. Seen from the open inflow side it stays lighter
+  than the base, as real funnels lit by the bright horizon behind the viewer do. `StormLightCheck -slLightTornado`
+  draws the user's view and two others (`validation/reports/StormLightCheck_tornado.md`). Light diffusing through thick cloud falls
   off as 1 / (1 + `diffusion` tau) (two-stream diffuse transmission) instead of the physical model's floor of a fifth of
   the sky everywhere, so under a deep storm the base is lit by the horizon under its edge and the ground below. Rain is
   `rainExtinction` (2.5) times the drawn rain's extinction, for the eye and for the light alike (heavy rain is about 4-7
