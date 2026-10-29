@@ -50,7 +50,8 @@ README.md has the layout, use, checks and known gaps.
 
 - Unity 6000.6.6f1, project `tests/StormLabTest`, headless with `-batchmode` (never `-nographics`).
 - `StormLabTests.RunFromCommandLine [-slQuick] [-slCompare <cases.json> -slOut <dir>]`, `TestMapBuilder.BuildFromCommandLine`,
-  `TestMapTests.RunFromCommandLine [-testmapShotsOnly]`.
+  `TestMapTests.RunFromCommandLine [-testmapShotsOnly] [-testmapMap dixie|midwest]`; the real-data maps build with
+  `BuildDixieFromCommandLine` / `BuildMidwestFromCommandLine` after `tools/testmap/real` (README there).
 - Play-mode checks on the test map: `StormPlayCheck`, `StormDayCheck`, `StormGameCheck [-slGameSeed n] [-slGamePreset key]`,
   `StormAudioCheck [-slAudioWiring]` (all `.RunFromCommandLine`); `StormSpawnCheck` runs without Play.
 - Sound synths offline: `dotnet run --project validation/audio` (WAVs to `validation/audio/out/`).

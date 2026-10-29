@@ -1,4 +1,6 @@
-// Builds the plains test map (Assets/Scenes/TestMap.unity) from TestMapData/, which tools/testmap/*.py write:
+// Builds the plains test map (Assets/Scenes/TestMap.unity) from TestMapData/, which tools/testmap/*.py write,
+// or a real-data map from its own data, which tools/testmap/real/*.py write: the Dixie map (Assets/Scenes/DixieMap.unity,
+// DixieMapData/) or the Midwest map (Assets/Scenes/MidwestMap.unity, MidwestMapData/):
 // 100 terrain tiles of 5 x 5 miles with eight ground layers and their trees, the road, bridge and water meshes, the
 // farmsteads, the power lines, a horizon skirt three map widths across, then the scene: HDRP sky and sun, the car and
 // its camera, and a StormLab storm (StormRenderer with lightning) whose track crosses the map.
@@ -6,7 +8,10 @@
 //   StormLab > Test Map > Open Test Map     opens the scene and presses Play (builds it first if missing)
 //   StormLab > Test Map > Rebuild Farmsteads and Lights   only the farmsteads, their yard lights and the truck's
 //                                           headlights, in the scene as it is (keeps everything else in it)
-// Batch: -executeMethod TestMapBuilder.BuildFromCommandLine (or RebuildFarmsteadsFromCommandLine)
+//   StormLab > Dixie Map > Build World / Open Dixie Map         the same for the Dixie map (Natchez, MS)
+//   StormLab > Midwest Map > Build World / Open Midwest Map     the same for the Midwest map (Effingham, IL)
+// Batch: -executeMethod TestMapBuilder.BuildFromCommandLine (or RebuildFarmsteadsFromCommandLine, BuildDixieFromCommandLine,
+// BuildMidwestFromCommandLine)
 // Generated assets are not in git; the Python tools and this builder recreate them (README in tools/testmap).
 using System;
 using System.Collections.Generic;
@@ -24,8 +29,24 @@ using Object = UnityEngine.Object;
 
 public static class TestMapBuilder
 {
-    public const string Gen = "Assets/TestMap/Generated", ScenePath = "Assets/Scenes/TestMap.unity";
-    public static string DataDir => Path.GetFullPath(Path.Combine(Application.dataPath, "..", "TestMapData"));
+    /// <summary>One map: where its data, generated assets and scene are, and what grows and storms there.</summary>
+    public sealed class MapSpec
+    {
+        public string data, gen, scene, world, nav, preset;
+        public bool real;          // built from real data (tools/testmap/real): canopy shell, real trees, road names
+        public static readonly MapSpec Plains = new MapSpec { data = "TestMapData", gen = "Assets/TestMap/Generated",
+            scene = "Assets/Scenes/TestMap.unity", world = "Plains Test Map", nav = "TestMapNav", preset = "plains" };
+        public static readonly MapSpec Dixie = new MapSpec { data = "DixieMapData", gen = "Assets/TestMap/GeneratedDixie",
+            scene = "Assets/Scenes/DixieMap.unity", world = "Dixie Map", nav = "DixieMapNav", preset = "dixie", real = true };
+        public static readonly MapSpec Midwest = new MapSpec { data = "MidwestMapData", gen = "Assets/TestMap/GeneratedMidwest",
+            scene = "Assets/Scenes/MidwestMap.unity", world = "Midwest Map", nav = "MidwestMapNav", preset = "ohio", real = true };
+    }
+
+    /// <summary>The map the builder works on (plains unless a Dixie or Midwest menu or command set it).</summary>
+    public static MapSpec Map = MapSpec.Plains;
+    public static string Gen => Map.gen;
+    public static string ScenePath => Map.scene;
+    public static string DataDir => Path.GetFullPath(Path.Combine(Application.dataPath, "..", Map.data));
     const float Mile = 1609.344f;
 
     [Serializable] public class SkirtMeta { public int res; public float size, origin, hmin, hmax; }
@@ -54,9 +75,27 @@ public static class TestMapBuilder
     public static Meta LoadMeta() => JsonUtility.FromJson<Meta>(File.ReadAllText(Path.Combine(DataDir, "meta.json")));
 
     [MenuItem("StormLab/Test Map/Build World")]
-    public static void BuildMenu() => Build();
+    public static void BuildMenu() { Map = MapSpec.Plains; Build(); }
+
+    [MenuItem("StormLab/Dixie Map/Build World")]
+    public static void BuildDixieMenu() { Map = MapSpec.Dixie; try { Build(); } finally { Map = MapSpec.Plains; } }
+
+    [MenuItem("StormLab/Dixie Map/Open Dixie Map")]
+    public static void OpenDixie() { Map = MapSpec.Dixie; try { Open(); } finally { Map = MapSpec.Plains; } }
+
+    public static void BuildDixieFromCommandLine() { Map = MapSpec.Dixie; BuildFromCommandLine(); }
+
+    [MenuItem("StormLab/Midwest Map/Build World")]
+    public static void BuildMidwestMenu() { Map = MapSpec.Midwest; try { Build(); } finally { Map = MapSpec.Plains; } }
+
+    [MenuItem("StormLab/Midwest Map/Open Midwest Map")]
+    public static void OpenMidwest() { Map = MapSpec.Midwest; try { Open(); } finally { Map = MapSpec.Plains; } }
+
+    public static void BuildMidwestFromCommandLine() { Map = MapSpec.Midwest; BuildFromCommandLine(); }
 
     [MenuItem("StormLab/Test Map/Open Test Map")]
+    public static void OpenMenu() { Map = MapSpec.Plains; Open(); }
+
     public static void Open()
     {
         if (EditorApplication.isPlaying) { EditorApplication.ExitPlaymode(); return; }
@@ -71,8 +110,8 @@ public static class TestMapBuilder
     {
         var meta = LoadMeta();
         var scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
-        var worldGo = GameObject.Find("Plains Test Map");
-        if (!worldGo) throw new InvalidOperationException("no 'Plains Test Map' in " + ScenePath + ": build the world first");
+        var worldGo = GameObject.Find(Map.world);
+        if (!worldGo) throw new InvalidOperationException($"no '{Map.world}' in {ScenePath}: build the world first");
         foreach (var n in new[] { "Farmsteads", "Yard lights" }) { var t = worldGo.transform.Find(n); if (t) Object.DestroyImmediate(t.gameObject); }
         BuildBuildings(meta, worldGo.transform);
         var w = worldGo.GetComponent<TestMapWorld>();
@@ -109,7 +148,9 @@ public static class TestMapBuilder
     {
         var t0 = DateTime.Now;
         if (!File.Exists(Path.Combine(DataDir, "meta.json")))
-            throw new FileNotFoundException("TestMapData/meta.json is missing: run tools/testmap (fetch_terrain, terrain, roads, textures, world) first");
+            throw new FileNotFoundException(Map.real
+                ? $"{Map.data}/meta.json is missing: run tools/testmap/real (fetch, land, roadnet, groundtex, places, then navmap.py) first"
+                : "TestMapData/meta.json is missing: run tools/testmap (fetch_terrain, terrain, roads, textures, world) first");
         var meta = LoadMeta();
         try
         {
@@ -123,7 +164,7 @@ public static class TestMapBuilder
             var trees = TreePrototypes();
             Progress("scene", 0.05f);
             var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-            var world = new GameObject("Plains Test Map");
+            var world = new GameObject(Map.world);
             BuildTerrain(meta, layers, trees, world.transform);
             BuildMeshes(meta, mats, world.transform);
             BuildBuildings(meta, world.transform);
@@ -153,15 +194,17 @@ public static class TestMapBuilder
             var imp = (TextureImporter)AssetImporter.GetAtPath(p);
             if (!imp) continue;
             string n = Path.GetFileNameWithoutExtension(p);
-            bool normal = n.EndsWith("_n"), road = n.StartsWith("road_");
+            bool normal = n.EndsWith("_n"), road = n.StartsWith("road_"), side = n == "canopy_side";
             imp.textureType = normal ? TextureImporterType.NormalMap : TextureImporterType.Default;
             imp.sRGBTexture = !normal;
             imp.mipmapEnabled = true;
             imp.anisoLevel = 8;
             imp.wrapModeU = road ? TextureWrapMode.Clamp : TextureWrapMode.Repeat;
-            imp.wrapModeV = TextureWrapMode.Repeat;
+            imp.wrapModeV = side ? TextureWrapMode.Clamp : TextureWrapMode.Repeat;     // (the wall spans it once, ground to crowns)
             imp.maxTextureSize = 2048;
-            imp.alphaSource = n.StartsWith("ground_") && !normal ? TextureImporterAlphaSource.FromInput : TextureImporterAlphaSource.None;
+            imp.alphaSource = (n.StartsWith("ground_") || side) && !normal ? TextureImporterAlphaSource.FromInput : TextureImporterAlphaSource.None;
+            // the canopy walls' crown fringe is alpha-tested: keep it from thinning out in the small mips
+            imp.mipMapsPreserveCoverage = side; imp.alphaTestReferenceValue = 0.5f;
             imp.SaveAndReimport();
         }
     }
@@ -202,13 +245,33 @@ public static class TestMapBuilder
             ["concrete"] = Lit("concrete", Tex("concrete"), Color.white, 0.25f),
             ["water"] = Lit("water", null, new Color(0.16f, 0.2f, 0.2f), 0.93f),
         };
+        if (Map.real)
+        {
+            byName["river"] = Lit("river", null, new Color(0.33f, 0.28f, 0.20f), 0.9f);    // the Mississippi's silt
+            byName["canopy_hard"] = Lit("canopy_hard", Tex("canopy_hard"), Color.white, 0.1f);
+            byName["canopy_pine"] = Lit("canopy_pine", Tex("canopy_pine"), Color.white, 0.1f);
+            // the shell's walls: their top is a fringe of crowns cut out against the sky
+            var side = byName["canopy_side"] = Lit("canopy_side", Tex("canopy_side"), Color.white, 0.05f);
+            side.SetFloat("_AlphaCutoffEnable", 1f); side.SetFloat("_AlphaCutoff", 0.5f); side.EnableKeyword("_ALPHATEST_ON");
+            side.SetFloat("_DoubleSidedEnable", 1f);
+            HDMaterial.ValidateMaterial(side);
+            EditorUtility.SetDirty(side);
+            foreach (var n in new[] { "canopy_hard", "canopy_pine" })
+            {
+                byName[n].SetTexture("_NormalMap", Tex(n + "_n"));
+                byName[n].EnableKeyword("_NORMALMAP");
+                HDMaterial.ValidateMaterial(byName[n]);
+                EditorUtility.SetDirty(byName[n]);
+            }
+        }
         return meta.materials.Select(n => byName[n]).ToArray();
     }
 
     static TerrainLayer[] TerrainLayers(Meta meta)
     {
         var smooth = new Dictionary<string, float> { ["stubble"] = 0.18f, ["greencrop"] = 0.25f, ["fallow"] = 0.1f, ["range"] = 0.18f,
-            ["grass"] = 0.22f, ["sorghum"] = 0.2f, ["sand"] = 0.12f, ["dirt"] = 0.08f };
+            ["grass"] = 0.22f, ["sorghum"] = 0.2f, ["sand"] = 0.12f, ["dirt"] = 0.08f,
+            ["pasture"] = 0.2f, ["tilled"] = 0.1f, ["youngcrop"] = 0.18f, ["forest"] = 0.1f, ["lawn"] = 0.22f, ["wetland"] = 0.35f };
         return meta.layers.Select(n =>
         {
             string path = $"{Gen}/Layers/{n}.terrainlayer";
@@ -227,12 +290,19 @@ public static class TestMapBuilder
 
     // ---------------------------------------------------------------------------------------------------- trees
 
-    // 0 cottonwood, 1 elm / hackberry, 2 eastern red cedar, 3 shrub (plum, Russian olive)
+    // plains: 0 cottonwood, 1 elm / hackberry, 2 eastern red cedar, 3 shrub (plum, Russian olive)
+    // real-data maps: 0 loblolly pine, 1 oak / sweetgum / hickory, 2 bald cypress, 3 understory (yaupon, privet)
     static TreePrototype[] TreePrototypes()
     {
         var bark = Lit("bark", null, new Color(0.30f, 0.27f, 0.23f), 0.1f);
-        var leafTex = Tex("ground_grass");
-        var leaves = new[]
+        var leafTex = Tex(Map.real ? "ground_lawn" : "ground_grass");
+        var leaves = Map.real ? new[]
+        {
+            Lit("leaves_pine", leafTex, new Color(0.36f, 0.46f, 0.34f), 0.15f),
+            Lit("leaves_oak", leafTex, new Color(0.58f, 0.74f, 0.46f), 0.2f),
+            Lit("leaves_cypress", leafTex, new Color(0.62f, 0.78f, 0.50f), 0.2f),
+            Lit("leaves_understory", leafTex, new Color(0.50f, 0.64f, 0.40f), 0.2f),
+        } : new[]
         {
             Lit("leaves_cottonwood", leafTex, new Color(0.62f, 0.80f, 0.50f), 0.2f),
             Lit("leaves_elm", leafTex, new Color(0.55f, 0.72f, 0.44f), 0.2f),
@@ -243,7 +313,7 @@ public static class TestMapBuilder
         for (int k = 0; k < 4; k++)
         {
             string path = $"{Gen}/Trees/tree_{k}.prefab";
-            var mesh = TreeMesh(k);
+            var mesh = Map.real ? RealTreeMesh(k) : TreeMesh(k);
             mesh.name = $"tree_{k}";
             string mpath = $"{Gen}/Trees/tree_{k}.asset";
             AssetDatabase.DeleteAsset(mpath);
@@ -251,10 +321,10 @@ public static class TestMapBuilder
             var go = new GameObject($"tree_{k}");
             go.AddComponent<MeshFilter>().sharedMesh = mesh;
             go.AddComponent<MeshRenderer>().sharedMaterials = new[] { bark, leaves[k] };
-            if (k <= 1)
+            if (k <= (Map.real ? 2 : 1))
             {
                 var cap = go.AddComponent<CapsuleCollider>();
-                cap.radius = k == 0 ? 0.45f : 0.3f; cap.height = 6f; cap.center = new Vector3(0, 3f, 0);
+                cap.radius = k == 0 && !Map.real ? 0.45f : 0.3f; cap.height = 6f; cap.center = new Vector3(0, 3f, 0);
             }
             var prefab = PrefabUtility.SaveAsPrefabAsset(go, path);
             Object.DestroyImmediate(go);
@@ -295,6 +365,44 @@ public static class TestMapBuilder
             default:    // shrub
                 for (int i = 0; i < 3; i++)
                     b.Blob(1, new Vector3(R(-1f, 1f), R(1.2f, 2f), R(-1f, 1f)), new Vector3(R(1.4f, 2f), R(1.1f, 1.6f), R(1.4f, 2f)), rnd);
+                break;
+        }
+        return b.ToMesh(true);
+    }
+
+    static Mesh RealTreeMesh(int type)
+    {
+        var rnd = new System.Random(31 + type);
+        var b = new MeshBuilder(2);
+        float R(float a, float c) => a + (float)rnd.NextDouble() * (c - a);
+        switch (type)
+        {
+            case 0:     // loblolly pine: tall clear trunk, a small rounded crown of tufts at the top
+                b.Cylinder(0, Vector3.zero, 0.32f, 0.16f, 19f, 7);
+                for (int i = 0; i < 6; i++)
+                {
+                    float a = i * 60f * Mathf.Deg2Rad;
+                    var c = new Vector3(Mathf.Cos(a) * R(0.8f, 2f), R(16.5f, 21f), Mathf.Sin(a) * R(0.8f, 2f));
+                    b.Blob(1, c, new Vector3(R(1.8f, 2.6f), R(1.4f, 2f), R(1.8f, 2.6f)), rnd);
+                }
+                break;
+            case 1:     // oak / sweetgum: a stout trunk and a broad dome
+                b.Cylinder(0, Vector3.zero, 0.45f, 0.28f, 7f, 8);
+                for (int i = 0; i < 7; i++)
+                {
+                    float a = i * 51f * Mathf.Deg2Rad;
+                    var c = new Vector3(Mathf.Cos(a) * R(2f, 4f), R(10f, 14f), Mathf.Sin(a) * R(2f, 4f));
+                    b.Blob(1, c, new Vector3(R(3.2f, 4.5f), R(2.6f, 3.6f), R(3.2f, 4.5f)), rnd);
+                }
+                break;
+            case 2:     // bald cypress: flared base, straight trunk, a narrow open cone
+                b.Cylinder(0, Vector3.zero, 0.9f, 0.35f, 1.6f, 8);
+                b.Cylinder(0, new Vector3(0, 1.6f, 0), 0.35f, 0.18f, 14f, 7);
+                b.Cone(1, new Vector3(0, 6f, 0), 3.2f, 14f, 10, 6, rnd);
+                break;
+            default:    // understory
+                for (int i = 0; i < 3; i++)
+                    b.Blob(1, new Vector3(R(-1f, 1f), R(1.2f, 2.2f), R(-1f, 1f)), new Vector3(R(1.4f, 2.2f), R(1.2f, 1.8f), R(1.4f, 2.2f)), rnd);
                 break;
         }
         return b.ToMesh(true);
@@ -376,8 +484,8 @@ public static class TestMapBuilder
                 t.materialTemplate = mat;
                 t.heightmapPixelError = 4f;
                 t.basemapDistance = 2500f;
-                t.treeDistance = 5000f;
-                t.treeBillboardDistance = 5000f;
+                t.treeDistance = Map.real ? 3000f : 5000f;      // (real-data maps: the canopy shell carries the forest beyond)
+                t.treeBillboardDistance = t.treeDistance;
                 t.treeMaximumFullLODCount = 100000;
                 t.drawInstanced = true;
                 t.groupingID = 1;
@@ -478,8 +586,9 @@ public static class TestMapBuilder
             go.AddComponent<MeshFilter>().sharedMesh = mesh;
             var mr = go.AddComponent<MeshRenderer>();
             mr.sharedMaterials = matIds.Select(m => mats[m]).ToArray();
-            mr.shadowCastingMode = layer == "bridges" ? ShadowCastingMode.On : ShadowCastingMode.Off;
-            if (layer != "water") go.AddComponent<MeshCollider>().sharedMesh = mesh;
+            mr.shadowCastingMode = layer == "bridges" || layer == "canopy" ? ShadowCastingMode.On : ShadowCastingMode.Off;
+            // no collider on the water, nor on the canopy shell (a car driving into the woods would climb it)
+            if (layer != "water" && layer != "canopy") go.AddComponent<MeshCollider>().sharedMesh = mesh;
             GameObjectUtility.SetStaticEditorFlags(go, StaticEditorFlags.BatchingStatic);
         }
         AssetDatabase.SaveAssets();
@@ -617,7 +726,7 @@ public static class TestMapBuilder
         var hd = go.AddComponent<HDAdditionalLightData>();
         l.lightUnit = LightUnit.Lumen; l.intensity = lumens; l.color = c;
         l.spotAngle = angle; l.innerSpotAngle = inner; l.range = range; l.shadows = LightShadows.None;
-        hd.enableSpotReflector = true; hd.fadeDistance = fade; hd.volumetricDimmer = 0f;
+        l.enableSpotReflector = true; hd.fadeDistance = fade; hd.volumetricDimmer = 0f;
         return l;
     }
 
@@ -756,7 +865,7 @@ public static class TestMapBuilder
         sunGo.transform.rotation = Quaternion.Euler(32f, 70f, 0f);      // late afternoon, sun in the west-south-west
         RenderSettings.sun = sun;
 
-        string vpath = $"{Gen}/TestMapVolume.asset";
+        string vpath = $"{Gen}/TestMapVolume.asset";      // (one per map: Gen is the map's folder)
         AssetDatabase.DeleteAsset(vpath);
         var profile = ScriptableObject.CreateInstance<VolumeProfile>();
         AssetDatabase.CreateAsset(profile, vpath);
@@ -783,7 +892,7 @@ public static class TestMapBuilder
 
         var stormGo = new GameObject("Storm");
         var storm = stormGo.AddComponent<StormRenderer>();
-        storm.preset = "plains"; storm.varied = true; storm.seed = 1;
+        storm.preset = Map.preset; storm.varied = true; storm.seed = 1;
         // the storm is lit by the scene's sun, in the game's physical units under HDRP's exposure and tonemapping
         storm.sun = sun; storm.sunSource = SunSource.Light;
         storm.stormMinutes = 20f;
@@ -791,7 +900,7 @@ public static class TestMapBuilder
         rig.storm = storm;
 
         var w = world.AddComponent<TestMapWorld>();
-        w.car = car; w.cameraRig = rig; w.storm = storm; w.sizeM = meta.sizeM; w.datum = meta.datum;
+        w.car = car; w.cameraRig = rig; w.storm = storm; w.sizeM = meta.sizeM; w.datum = meta.datum; w.navResource = Map.nav; w.sectionGrid = !Map.real;
         // the storm and lighting panel (Tab): storm controls and a 24 hour clock for the sun, moon and exposure
         var panel = world.AddComponent<TestMapStormPanel>(); panel.world = w; panel.storm = storm; panel.sun = sun;
         w.spots = meta.spawns.Select(s => new TestMapWorld.Spot { name = s.name, position = new Vector3(s.x, s.y, s.z), heading = s.yaw }).ToArray();

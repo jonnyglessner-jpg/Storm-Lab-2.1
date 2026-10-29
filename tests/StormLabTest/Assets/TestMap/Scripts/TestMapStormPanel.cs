@@ -1,5 +1,5 @@
-// The test map's storm and lighting panel (Tab shows or hides it; drag it by its title). Storm: setup, seed, storm
-// clock and speed, jumps to the next wall cloud or tornado, bringing the storm to the truck, lighting model, lightning.
+// The test map's storm and lighting panel (Tab shows or hides it; drag it by its title). Map: the plains, Dixie or
+// Midwest map (loads that scene, keeping the storm setup and the clock). Storm: setup, seed, storm clock and speed, jumps to the next wall cloud or tornado, bringing the storm to the truck, lighting model, lightning.
 // Lighting: a 24 hour clock that drives the sun and the moon from the local solar time, the day of the year, the
 // latitude and the moon's phase, with an optional running clock, and the camera's exposure: Auto adapts to the scene's
 // light level as StormLab 2.0's night model does (SkyLighting: unchanged by day, a moonlit night shown at the storm's
@@ -16,6 +16,7 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.HighDefinition;
+using UnityEngine.SceneManagement;
 
 namespace StormLab.TestMap
 {
@@ -66,6 +67,12 @@ namespace StormLab.TestMap
         bool switchGame;
         static readonly string[] Presets = StormPreset.All.Select(p => p.key).ToArray();
         static readonly float[] Speeds = { 0f, 1f, 10f, 30f, 60f };
+        // the maps (each scene must be in the build settings; TestMapBuilder adds them)
+        static readonly (string name, string scene)[] Maps =
+            { ("plains", "Assets/Scenes/TestMap.unity"), ("dixie", "Assets/Scenes/DixieMap.unity"), ("midwest", "Assets/Scenes/MidwestMap.unity") };
+        // what the next map takes over from this one (set just before its scene loads)
+        static string carryPreset; static float carryHour = -1f;
+        string loadingMap; int loadingFrame;
 
         void Start()
         {
@@ -89,9 +96,19 @@ namespace StormLab.TestMap
                 // the storm's unit of light stays the full sun's: its own model makes the night
                 storm.luminanceScale = sunLux * StormRenderer.SunToLuminance / Mathf.PI;
                 storm.nightAdaptation = false;
+                if (carryPreset != null && storm.preset != carryPreset) { storm.preset = carryPreset; storm.Replan(); }
                 seedText = storm.seed.ToString();
             }
+            if (carryHour >= 0f) hour = carryHour;
+            carryPreset = null; carryHour = -1f;
             Apply();
+        }
+
+        /// <summary>Load another map, with this storm setup and clock.</summary>
+        void SwitchMap(string scene)
+        {
+            carryPreset = storm ? storm.preset : null; carryHour = hour;
+            SceneManager.LoadScene(scene, LoadSceneMode.Single);
         }
 
         void Update()
@@ -99,6 +116,8 @@ namespace StormLab.TestMap
             var kb = Keyboard.current;
             if (kb != null && kb.tabKey.wasPressedThisFrame) show = !show;
             if (switchGame && world) { switchGame = false; world.SetGameMode(!world.gameMode); }
+            // loaded a frame after the click, so the window can say so first (a map takes some seconds)
+            if (loadingMap != null && Time.frameCount > loadingFrame + 2) { var m = loadingMap; loadingMap = null; SwitchMap(m); }
             if (clockRuns) hour = Mathf.Repeat(hour + Time.deltaTime / 60f * hoursPerMinute, 24f);
             Apply();
         }
@@ -155,6 +174,14 @@ namespace StormLab.TestMap
         {
             scroll = GUILayout.BeginScrollView(scroll);
             var P = storm.Plan;
+            // ---- the map
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Map", head, GUILayout.Width(44));
+            string active = SceneManager.GetActiveScene().path;
+            foreach (var (name, scene) in Maps)
+                if (GUILayout.Toggle(active == scene, name, "Button") && active != scene && loadingMap == null) { loadingMap = scene; loadingFrame = Time.frameCount; }
+            GUILayout.EndHorizontal();
+            if (loadingMap != null) GUILayout.Label("loading the map ...", small);
             // ---- storm, or the game
             bool gm = GUILayout.Toggle(world && world.gameMode, "game mode: two storms on an hour-long game clock (G)");
             // switched in Update: the window's layout changes with the mode

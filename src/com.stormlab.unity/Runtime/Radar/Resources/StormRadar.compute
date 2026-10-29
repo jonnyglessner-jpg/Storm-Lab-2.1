@@ -87,7 +87,7 @@ float2 warp(float2 q, float amp, float scale, float seed)
 }
 
 // Z from a rain rate and a mean drop diameter
-float ZR(float rr, float dm) { float k = dm / _RdZR.w; return rr > 1e-4 ? 300.0 * pow(rr, 1.4) * pow(k, 2.33) : 0.0; }
+float ZR(float rr, float dm) { float k = dm / _RdZR.w; return rr > 1e-4 ? 300.0 * pow(max(rr, 0.0), 1.4) * pow(max(k, 0.0), 2.33) : 0.0; }
 
 // reflectivity factor at p (storm frame, km), mm^6 m^-3
 float Zat(float3 p)

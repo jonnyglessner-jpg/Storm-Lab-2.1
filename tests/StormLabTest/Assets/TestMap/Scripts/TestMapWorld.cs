@@ -51,6 +51,11 @@ namespace StormLab.TestMap
         public float sizeM = 80467.2f;
         [Tooltip("elevation (m NAVD88) of world y = 0")]
         public float datum = 680f;
+        [Tooltip("the GPS data in Resources: <name>.json (roads, radar site) and <name>Base.png (tools/testmap/navmap.py)")]
+        public string navResource = "TestMapNav";
+        [Tooltip("roads on the mile grid (the plains map): the HUD names the section line; off (the Dixie map): it names " +
+                 "the nearest road from the GPS data")]
+        public bool sectionGrid = true;
         public bool showHelp = true;
         [Tooltip("all the HUD hidden (F1): the readouts, help and the storm panel")]
         public bool hudHidden;
@@ -72,7 +77,7 @@ namespace StormLab.TestMap
         {
             if (car && spots.Length > 0) TeleportTo(Mathf.Clamp(startSpot, 0, spots.Length - 1));
             // the towns lighting the storms' bases at night
-            TestMapTowns.Register(this, "TestMapNav");
+            TestMapTowns.Register(this, navResource);
             if (storm) { storm.minutesPerSecond = Timelapses[timelapseIndex] / 60f; SpawnStorm(); }
             // the storm and lighting panel, also in scenes built before it existed
             if (storm && !GetComponent<TestMapStormPanel>()) { var panel = gameObject.AddComponent<TestMapStormPanel>(); panel.world = this; panel.storm = storm; }
@@ -244,6 +249,17 @@ namespace StormLab.TestMap
         public string GridPosition(Vector3 p)
         {
             float x = p.x + sizeM / 2, z = p.z + sizeM / 2;
+            if (!sectionGrid)
+            {
+                var roads = GetComponent<TestMapMinimap>()?.Roads;
+                string near = "";
+                if (roads != null)
+                {
+                    var s = roads.Nearest(new Vector2(p.x, p.z));
+                    if (s.edge >= 0 && s.off < 400f) near = roads.edges[s.edge].name;
+                }
+                return $"{near}   ({x / Mile:0.0} mi E, {z / Mile:0.0} mi N)";
+            }
             int ix = Mathf.RoundToInt(x / Mile - 0.5f), iz = Mathf.RoundToInt(z / Mile - 0.5f);
             float dx = Mathf.Abs(x - (ix + 0.5f) * Mile), dz = Mathf.Abs(z - (iz + 0.5f) * Mile);
             string road = dx < dz ? $"Ave {ix}" : $"Rd {iz}";

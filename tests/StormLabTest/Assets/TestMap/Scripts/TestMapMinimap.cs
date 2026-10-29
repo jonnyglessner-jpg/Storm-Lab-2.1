@@ -61,8 +61,9 @@ namespace StormLab.TestMap
         void Start()
         {
             if (!world) world = GetComponent<TestMapWorld>();
-            Roads = TestMapRoads.Load();
-            baseMap = Resources.Load<Texture2D>("TestMapNavBase");
+            string nav = world ? world.navResource : "TestMapNav";
+            Roads = TestMapRoads.Load(nav);
+            baseMap = Resources.Load<Texture2D>(nav + "Base");
             var sh = Shader.Find("Hidden/StormLab/TestMapMapDraw");
             if (sh) mat = new Material(sh) { hideFlags = HideFlags.HideAndDontSave };
             if (!radar)

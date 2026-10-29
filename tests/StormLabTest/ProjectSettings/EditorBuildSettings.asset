@@ -8,4 +8,10 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/Scenes/TestMap.unity
     guid: 666eddea54189324681f7bd76c08c51f
+  - enabled: 1
+    path: Assets/Scenes/DixieMap.unity
+    guid: 83e97119c6d5fce4e874f00e76d85646
+  - enabled: 1
+    path: Assets/Scenes/MidwestMap.unity
+    guid: 9a786173fdf15c647a7182498dce820e
   m_configObjects: {}

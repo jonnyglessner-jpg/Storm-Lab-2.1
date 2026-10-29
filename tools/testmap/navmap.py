@@ -11,7 +11,11 @@ cover splats, buildings), and writes into the Unity project's Resources (gitigno
 - TestMapNavBase.png: 2048 x 2048 (39 m a pixel), north up: land cover in the splat colours, hillshade, rivers and
   creeks, farmsteads. Roads are not in it: the minimap draws them as lines.
 
-Run after world.py: python -I tools/testmap/navmap.py [build dir]. The build dir defaults to data/raw/testmap/build and
+For the real-data maps (--map dixie, --map midwest): DixieMapNav / MidwestMapNav (.json and Base.png) in
+Assets/TestMap/Generated<Map>/Resources, every road piece named after its real road, the water polygons in the base map,
+and the radar site from map_config (KDGX for Dixie, KILX for the Midwest).
+
+Run after world.py (or real/places.py): python -I tools/testmap/navmap.py [--map dixie|midwest] [build dir]. The build dir defaults to data/raw/testmap/build and
 falls back to Supercell Lab 2.0's (../supercell-lab-2/data/raw/testmap/build), where this map's network was made.
 """
 import json
@@ -24,21 +28,27 @@ from PIL import Image, ImageDraw
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import map_config as cfg
 
-OUT = cfg.ROOT / "tests" / "StormLabTest" / "Assets" / "TestMap" / "Generated" / "Resources"
+OUT = cfg.UNITY_GEN / "Resources"
+NAME = {"dixie": "DixieMapNav", "midwest": "MidwestMapNav"}.get(cfg.MAP, "TestMapNav")
 RES = 2048
 CLASSES = {"state": 0, "paved": 1, "gravel": 2}
 # WSR-88D KDDC (Dodge City, KS): 37.7608 N, 99.9689 W, the site about 789 m above sea level (NWS site list); the
 # antenna is taken 20 m up its tower
 RADAR = dict(name="KDDC", lat=37.76083, lon=-99.96889, elev=789.0 + 20.0)
+if "real" in cfg.SPEC:            # the real-data maps' radar (map_config: site, and how sure it is)
+    RADAR = cfg.SPEC["real"]["radar"]
 # the splat layers' colours (world.py's preview)
 COLOURS = np.array([(196, 168, 112), (78, 106, 44), (120, 96, 70), (140, 128, 86), (86, 106, 46), (150, 80, 42),
                     (190, 172, 140), (126, 114, 98)]) / 255.0
+if "real" in cfg.SPEC:            # real/places.py's layer colours
+    COLOURS = np.array([(96, 124, 52), (92, 80, 66), (88, 104, 60), (52, 66, 34), (90, 120, 50), (70, 80, 52),
+                        (192, 176, 144), (146, 122, 90)]) / 255.0
 
 
 def build_dir():
     if len(sys.argv) > 1:
         return Path(sys.argv[1])
-    for d in (cfg.OUT, cfg.ROOT.parent / "supercell-lab-2" / "data" / "raw" / "testmap" / "build"):
+    for d in (cfg.OUT, cfg.ROOT.parent / "supercell-lab-2" / "data" / "raw" / cfg.SPEC["raw"] / "build"):
         if (d / "network.json").exists():
             return d
     raise FileNotFoundError("network.json not found: run roads.py, or pass the build directory")
@@ -81,7 +91,7 @@ def graph(net):
             seg = pts[ia:ib + 1]
             if len(seg) < 2:
                 continue
-            if st["cls"] == "state":
+            if st["cls"] == "state" or cfg.MAP != "plains":
                 pieces = [(na, nb, seg, st["name"])]
             else:
                 # split at the corners where a grid road turns from one section line onto the next
@@ -132,6 +142,10 @@ def base_map(meta, streams, buildings):
     lx, ly, lz = -0.5, 0.5, 0.707
     shade = np.clip((-gx * lx - gz * ly + lz) / np.sqrt(gx * gx + gz * gz + 1.0), 0, 1)
     img = np.clip(img * (0.45 + 0.75 * shade[..., None]), 0, 1)
+    wz = build_dir() / "water.npz"
+    if wz.exists():                  # the real-data maps' rivers and lakes (polygons, not stream lines)
+        k = np.load(wz)["kind"][::step, ::step][:T * R, :T * R]
+        img[k > 0] = np.array([58, 92, 120]) / 255.0
     im = Image.fromarray((img[::-1] * 255 + 0.5).astype(np.uint8)).resize((RES, RES), Image.LANCZOS)
 
     s = RES / cfg.SIZE_M
@@ -140,7 +154,7 @@ def base_map(meta, streams, buildings):
         return x * s, (cfg.SIZE_M - z) * s
     water = (58, 92, 120)
     for st in sorted(streams, key=lambda t: t["width"]):
-        if st["kind"] == "draw" or st["width"] <= 0:
+        if st["kind"] == "draw" or st["width"] <= 0 or st.get("polygon"):
             continue
         w = max(1, round(st["width"] * s * 1.5))
         dr.line([pix(x, z) for x, z in st["pts"]], fill=water, width=w, joint="curve")
@@ -159,13 +173,13 @@ def main():
     nodes, edges = graph(net)
     OUT.mkdir(parents=True, exist_ok=True)
     nav = dict(sizeM=cfg.SIZE_M, radar=radar_site(meta["datum"]), nodes=nodes, edges=edges)
-    json.dump(nav, open(OUT / "TestMapNav.json", "w"), separators=(",", ":"))
+    json.dump(nav, open(OUT / f"{NAME}.json", "w"), separators=(",", ":"))
     km = sum(np.hypot(*np.diff(np.array(e["pts"]).reshape(-1, 2), axis=0).T).sum() for e in edges) / 1000
     print(f"{len(nodes) // 2} junctions and corners, {len(edges)} road pieces, {km:.0f} km of road; radar {nav['radar']}")
     streams = json.load(open(bd / "streams.json"))
     buildings = json.load(open(cfg.UNITY_DATA / "buildings.json"))["items"]
-    base_map(meta, streams, buildings).save(OUT / "TestMapNavBase.png", optimize=True)
-    print(f"wrote {OUT / 'TestMapNav.json'} and TestMapNavBase.png")
+    base_map(meta, streams, buildings).save(OUT / f"{NAME}Base.png", optimize=True)
+    print(f"wrote {OUT / NAME}.json and {NAME}Base.png")
 
 
 if __name__ == "__main__":
