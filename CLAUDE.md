@@ -48,6 +48,13 @@ README.md has the layout, use, checks and known gaps.
   `validation/audio/thunder/cut.py` from `audio-sources/thunder`, credited in its CREDITS.md; new recordings must be
   CC0 or CC-BY and listed there; run `check.py` after a re-cut). The rest is procedural; the synths in `Synth/` stay plain
   C# (no UnityEngine) so `validation/audio` can render and check them. Run it after changing a synth, and `StormAudioCheck` after changing what drives them.
+- Performance (user, 2026-10-30: "spec is to my GPU", RX 7900 XT at 3440 x 1440; README Performance): the game runs the
+  `High` tier. Run `StormPerfCheck` (images against its baseline, GPU time per view) after touching StormMarch.compute
+  or the volume; a change meant to keep the look must stay at 0.00 / 0 against a baseline made just before it. Keep the
+  tornado's code out of the `STORM_NO_TORNADO` path, and anything new that changes where a ray may meet a tornado in
+  `reachesTornado` too (Classify), or tiles will be marched without it. Register pressure decides the march's speed:
+  a value kept live across the step loop can cost more than the work it saves (a shared light struct made the close
+  cone 50 -> 57 ms). FXC's temp count does not predict it; time it.
 - C: is nearly full (about 14 GB free on 2026-10-24); the test map's generated data is about 2 GB.
 
 ## Running

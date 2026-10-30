@@ -365,6 +365,42 @@ or the NWS steps.
 Output: by default the storm's light is in HDRP's physical units under the game's exposure and tonemapping.
 `UseStandaloneLook()` gives the website's backdrop and display curve (HDRP tonemapping off).
 
+## Performance
+
+Optimised for an RX 7900 XT at 3440 x 1440 (user, 2026-10-30: "spec is to my GPU"). `StormRenderer.performance` picks a
+tier; every tier keeps every feature (both storms, the detailed tornadoes, the unified lighting, lightning, radar, sound):
+
+| tier | what it does | typical views | under the base | close tornado (worst) | two storms |
+| --- | --- | --- | --- | --- | --- |
+| Ultra | the full look: half-resolution march, every pixel every frame | 0.9-3.6 ms | 6.8 ms | 16.9 ms | 4.6 ms |
+| **High** (default) | the same march over two frames (checkerboard; the temporal resolve fills in) | 0.9-2.5 ms | 5.0 ms | 9.4 ms | 3.3 ms |
+| Balanced | and a 0.42 march, steps 1.25 x | 0.8-1.8 ms | 3.5 ms | 6.1 ms | 2.5 ms |
+| Performance | and a 0.35 march, steps 1.5 x | 0.7-1.6 ms | 2.7 ms | 3.9 ms | 2.0 ms |
+| Custom | the quality fields as set (the checks use it) | | | | |
+
+March and temporal resolve, GPU, from `StormPerfCheck` (`validation/reports/StormPerf_<tier>.md`). Before this work the
+same views cost 4.4-10 ms, 25 ms under the base, 60 ms beside a cone and 14.7 ms for two storms. What changed, with the
+image unchanged unless said:
+- **Compiled variants** of the march (`STORM_UNIFIED`, `STORM_NO_TORNADO`, `STORM_PROBES`): the tornado's code alone made
+  every ray about three times slower, near a tornado or not. `Classify` sorts the march's 8 x 8 tiles by whether any ray in
+  them meets a tornado's span, and only those run the full kernel (`StormRenderer.DispatchMarch`).
+- **DXC** (`#pragma use_dxc` in StormMarch.compute): the driver keeps the big kernel's registers in check (close views
+  2-2.5x faster). Not on StormVolume.compute: there it changed the volume's build (mean 1.9/255) and was no faster.
+- **Longer steps where nothing is drawn**: below the base the near field's fine step doubles while the last one found it
+  far below drawing (`nearStride`; under the base 8.6 -> 6.8 ms), and rain with no cloud in it takes 0.2 km steps
+  (`rainStride`). Both at the level of the march's jitter (mean under 0.5/255).
+- **The volume's relight** (light grid, then sky visibility and ground light) is spread over three frames after the
+  repaint's slabs: the worst volume frame 2.0 -> 0.9 ms.
+- The tiers' checkerboard and march scale soften motion slightly; static views differ from Ultra by under 1/255 on
+  average (High) to about 1/255 (Performance).
+
+`StormPerfCheck.RunFromCommandLine [-slPerfQuality <tier>] [-slPerfBaseline] [-slPerfDiag] [-slPerfOnly views]
+[-slPerfFull]` (StormLab > Perf Check): eleven views (the storm from 25, 15, 10 and 8 km, under the base, in the rain, a
+rope, cone and wedge close up, two storms), the volume's repaint frame by frame, and the CPU. `-slPerfBaseline` writes the
+images later runs compare with; `-slPerfDiag` adds steps a pixel by kind, heat maps (`Screenshots/perf_steps_*.png`) and
+the tornado probes; `-slPerfFull` runs the full kernel everywhere (what the variants save). The CPU's share is about 0.02
+ms a frame; nothing is allocated a frame.
+
 ## Checks
 
 - **Design parity**: `bash validation/parity/parity.sh` runs the website's own `design.ts` in Node and the C# port, and
@@ -459,6 +495,9 @@ tests/StormLabTest -executeMethod <method> -logFile <log>`. Never with `-nograph
   each of the 4 frames of a repaint plus 2.44 ms relight on the last (at most every 0.2 s while storm time moves), 5.9 ms
   for a full repaint after a seek. Worst frame about 6.9 ms at 1080p. An RTX 3060 was not measured (2.0's rough estimate is
   2.5x slower, which would put relight frames over an 8 ms budget).
-- Standalone checks at 1600 x 1000 and full march resolution: 21-26 ms a frame.
+- Standalone checks at 1600 x 1000 and full march resolution: 21-26 ms a frame. (The march compiles each variant the
+  first time it is used in the editor: the quick check's first website-lighting frame took 785 ms on 2026-10-30. A
+  player build compiles them all ahead.)
+- The frame costs above are from before the performance work (2026-10-30); see Performance.
 - The website checkout has an uncommitted change to `shaders.ts` (wedge debris wisps); this port follows the committed
   f5bd687, as the live site does.
