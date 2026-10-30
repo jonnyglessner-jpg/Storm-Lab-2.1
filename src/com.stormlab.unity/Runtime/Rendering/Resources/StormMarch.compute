@@ -418,14 +418,16 @@ float3 tornadoField(float3 q)
     // (a wedge's envelope: 0.3-0.6, from 0.45-0.85, which broke the outline of a mile-wide wedge into jagged lumps)
     // (and its crown no rougher than its sides: 0.3-0.6 heaped it into lumps where it meets the cloud)
     float rough = ((n1 - 0.5) * 0.3 + (n2 - 0.5) * 0.12) * roughK * (S_tor4.w > 0.5 ? lerp(0.3, 0.36, collar) : lerp(0.35, 0.6, collar));
-    // Striations: fine, nearly level rings (one slow helix, a third of the mean radius between rings, a few degrees off
-    // level), wavering and broken into patches, faint. Four coarse arms wound at 30 degrees read as a barber pole
-    // (user, 2026-10-26). Faded out before the rings are finer than a pixel, so a distant funnel does not shimmer.
-    float ringK = 18.0;
-    float ringFade = 1.0 - ss(0.15, 0.4, texFootprint * ringK / (6.2832 * rm));
-    float band = sin(zz * ringK + atan2(pr.y, pr.x) + (n2 - 0.5) * 2.5) * ss(0.4, 0.7, n1) * ringFade;
-    rough += S_tor8.w * 0.012 * band;
-    float tone = 1.0 + S_tor8.w * 0.05 * band + (n1 - 0.5) * 0.1 * saturate(roughK - 0.4);
+    // Striations (a laminar skin, S_tor8.w): faint, irregular streaks running up the funnel with the flow, about a dozen
+    // round it and many radii tall, turning with the vortex; no periodic pattern. Four coarse arms wound at 30 degrees
+    // read as a barber pole (user, 2026-10-26), and the level rings that replaced them (a sine, a third of a radius
+    // apart, +-5 % in tone) read as a ribbed, striped pipe (user, 2026-10-30): any regular band does. Faded out before
+    // the streaks are finer than a pixel, so a distant funnel does not shimmer.
+    float streakK = 14.0;
+    float streakFade = 1.0 - ss(0.15, 0.4, texFootprint * streakK / (6.2832 * rm));
+    float streak = (n3k(float3(pr * 2.2, zz * 0.12), 1.0, float3(0.53, 0.21, 0.67)) - 0.5) * streakFade;
+    rough += S_tor8.w * 0.006 * streak;
+    float tone = 1.0 + S_tor8.w * 0.03 * streak + (n1 - 0.5) * 0.1 * saturate(roughK - 0.4);
     // condensation reaches down to condBottom; below it only a faint sheath (a high base leaves a gap, filled by dust)
     float condBottom = zb * (1.0 - S_tor2.z);
     float down = ss(condBottom - 0.06, condBottom + 0.12, q.z);
