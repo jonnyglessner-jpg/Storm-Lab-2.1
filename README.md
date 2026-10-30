@@ -95,6 +95,15 @@ the truck; a 24 hour clock that drives the sun, the moon, HDRP's sky and the sto
 and a running clock); the lighting model and night settings; auto exposure that adapts as 2.0's night model does, or a
 manual EV; and the lightning (on/off, thunder, rate). **StormLab > Test Map > Day and Night Check** renders the chaser's
 view through the panel at eight times of day and night (`validation/reports/StormDayCheck.md`).
+Twilight (user, 2026-10-30: black ground under still-sunlit clouds): HDRP's sky is lit by the sun Light, which fades out
+at 1 degree down, while the storm and the exposure follow 2.0's twilight sky; the panel's sky fill (a shadowless light
+from high in the sky toward the sun's bearing) gives the ground that sky's light on level ground for the share HDRP has
+lost, dimmed by how much sky the storms hide. The check's twilight sweep measures the ground and the storm from 18:36 to
+21:00 with it and without it (`-slDayQuick`: only that and the truck's lights).
+The truck's lights (user, 2026-10-30): **L** cycles off, low beams, high beams with a roof light bar, at any time of day
+(`TestMapNightLights`; on low beams if the drive starts in the dark). Each beam's shape is a cookie made at Start: a sharp
+top edge, less light on the road nearer the truck, low beams lit to about 60 m, high beams to about 150 m, the bar a wide
+flood to about 80 m. They follow the exposure up to `headlightMaxEV` (11), so by day they are lamps, not floodlights.
 
 Useful properties for a game: `Frame.stage` / `Frame.caption`, `TornadoAmount`, `TornadoGroundWorld`,
 `TornadoWindAt(world)` (a Rankine-vortex presentation wind), `UpdraftWorld(minutes)`.
