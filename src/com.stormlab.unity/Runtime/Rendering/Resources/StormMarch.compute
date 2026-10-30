@@ -436,7 +436,15 @@ float3 tornadoField(float3 q)
     float streakFade = 1.0 - ss(0.15, 0.4, texFootprint * streakK / (6.2832 * rm));
     float streak = (n3k(float3(pr * 2.2, zz * 0.12), 1.0, float3(0.53, 0.21, 0.67)) - 0.5) * streakFade;
     rough += S_tor8.w * 0.006 * streak;
-    float tone = 1.0 + S_tor8.w * 0.03 * streak + (n1 - 0.5) * 0.1 * saturate(roughK - 0.4);
+    float tone = 1.0 + S_tor8.w * 0.03 * streak + (n1 - 0.5) * 0.16 * saturate(roughK - 0.4);
+    // Tags (user, 2026-10-30: the rotation was barely visible): torn lumps of condensation standing off the funnel's edge
+    // by up to a third of its radius, five or six round it and a radius or two tall, turning with the skin, so the
+    // silhouette changes as they come round and the eye reads the spin; a little darker in tone. A laminar skin has a
+    // quarter of them, a wedge's envelope a third (its outline stays smooth, user 2026-10-26).
+    float tagN = n3k(float3(pr * 0.9, zz * 0.45), 1.0, float3(0.77, 0.29, 0.58));
+    float tag = ss(0.52, 0.8, tagN) * lerp(0.25, 1.0, saturate((roughK - 0.3) / 0.6)) * (S_tor4.w > 0.5 ? 0.35 : 1.0);
+    rough -= 0.3 * tag;
+    tone *= 1.0 - 0.12 * tag;
     // condensation reaches down to condBottom; below it only a faint sheath (a high base leaves a gap, filled by dust)
     float condBottom = zb * (1.0 - S_tor2.z);
     float down = ss(condBottom - 0.06, condBottom + 0.12, q.z);
@@ -511,8 +519,13 @@ float3 tornadoField(float3 q)
     float dh = tornadoDustTop(dust);
     float2 dustDv = q.xy - tornadoAxis(0.0, ztop, clock);
     float dustD = length(dustDv);
-    // noise in a frame turning with the whirl and rising with the lofted dust (about 15 m/s)
-    float3 dustQ = float3(rot2(dustDv, -S_spin2.y), q.z - clock * 0.015);
+    // noise in a frame turning with the dust and rising with it (about 15 m/s). The dust turns differentially (user,
+    // 2026-10-30: the rotation was barely visible): inside the radius of maximum wind at the core's angle (S_spin.z,
+    // solid-body, seconds per turn), three radii out at the whirl's (S_spin2.y, the slow 1 / r^2 flow), sheared between
+    // (both integrated angles, StormSpin). One frame at the whirl's rate turned a cone's whole column once in minutes.
+    float rcD = max(S_tor6.z, 0.02);
+    float turn = lerp(S_spin.z, S_spin2.y, ss(rcD, 3.0 * rcD, dustD));
+    float3 dustQ = float3(rot2(dustDv, -turn), q.z - clock * 0.015);
     float dn = n3k(dustQ, 0.7 / dr, float3(0.3, 0.1, 0.7));                                  // broad unevenness
     float fine = n3k(dustQ * float3(1.0, 1.0, 1.6), 2.0 / dr, float3(0.62, 0.18, 0.41));    // fine texture
     float lumps = n3k(dustQ * float3(1.0, 1.0, 0.7), 1.3 / dr, float3(0.11, 0.83, 0.49));   // the billows, taller than wide
@@ -539,7 +552,8 @@ float3 tornadoField(float3 q)
     // big and opaque (NOTES.md): the column and the curtains at the funnel's foot hide what is behind them; the fan and
     // the billows at the rim stay thin
     float debris = S_tor3.z * (colD * 30.0 + fan * 20.0 + sheath * 20.0);
-    return float3(funnel, debris, tone);
+    // the dust's tone churns with its texture (+-25 %), so its turning shows in the shading; the funnel's tone where it draws
+    return float3(funnel, debris, lerp(0.75 + 0.5 * fine, tone, saturate(funnel * 4.0)));
 }
 
 // Sunlight on the tornado. The light grid is coarse and puts everything under the base in the base's shadow, but with the
@@ -1410,7 +1424,7 @@ void March(uint3 gid : SV_DispatchThreadID)
                     }
                     // dense dust is darker than its soil (light lost to scattering in the thick core; the reference photos'
                     // columns are mid-brown, their thin rims tan)
-                    float3 dustAlb = soil * lerp(0.9, 0.6, saturate(tv.y / 20.0));
+                    float3 dustAlb = soil * lerp(0.9, 0.6, saturate(tv.y / 20.0)) * (tf.x < 0.01 ? tf.z : 1.0);
                     be += tv.y; Lc += tl * dustAlb * tv.y;
                 }
             }
