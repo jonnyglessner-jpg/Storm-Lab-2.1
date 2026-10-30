@@ -279,7 +279,13 @@ Cloud detail (`cloudDetail`, also on the panel; user, 2026-10-27):
 
 **Sound** (`Runtime/Audio`). `StormAudio` (one per scene) hears every storm at the `player`: the tornado wind
 (`TornadoWindAt`), silent below 3 m/s, then a gusty rush, moaning and whistling round the truck, the low roar, debris
-strikes and buffeting as it rises to full intensity at 80 m/s (`windRange`); rain and hail where the player is, read back
+strikes and buffeting as it rises to full intensity at 80 m/s (`windRange`); the tornado's roar heard from afar
+(`RoarSynth`, user 2026-10-30: loud a mile away, deafening close in, never clipping): the vortex's own sound, a deep
+swelling rumble, a turbulent waterfall body and, for a violent one, tearing in gusts, pulsing as the suction vortices
+come round, by the tornado's peak wind and size (`RoarStrength`), at full level within 400 m (`roarFullLevelM`) and
+falling as 1 / distance beyond (-12 dB at a mile), the air taking its highs with distance, fading out over 4-8 km
+(`roarFadeKm`); close in the mix is driven harder into a soft clipper, so it gets denser rather than louder than full
+scale, and the master limiter holds the rest; rain and hail where the player is, read back
 from the storm volume's precipitation (so it follows the shafts and curtains you see), from scattered drops ticking on the
 truck to a downpour's hiss and roar, with big hailstones thudding into the ground round the truck in the hail core; and
 thunder for every flash, through `LightningSystem.ThunderOverride`. `thunder` switches it on and off (on).
@@ -396,7 +402,7 @@ Output: by default the storm's light is in HDRP's physical units under the game'
   clips: tiers, levels, import settings, credits; a preview by distance). `-executeMethod StormAudioCheck.RunFromCommandLine` (about
   3 min, `-slAudioWiring` for the first part only) in Play on the test map: the truck's gears and squeal, dry upwind and
   pouring under the core, the wind sound walking in to a tornado and the birds falling silent, thunder heard and nearer
-  thunder louder. Report: `validation/reports/StormAudioCheck.md`. Last run: PASS.
+  thunder louder. Report: `validation/reports/StormAudioCheck.md`. Last run (2026-10-30, with the roar): wind, roar, birds, truck and thunder pass; the "under the forward-flank core it pours" check fails because the forward-flank rework (2026-10-28) moved the rain from the spot it reads: a stale check, not a sound bug.
 - **Map and radar**: **StormLab > Test Map > Map and Radar Check** (`TestMapMinimapCheck.RunFromCommandLine`): the road
   network in one piece, 300 random trips routed (continuous, ending where asked, not much longer than by the section
   grid), then in Play the radar through a plains storm's life and a Dixie storm (the inflow notch, the hook, the debris

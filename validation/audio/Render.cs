@@ -19,7 +19,7 @@ static class Render
     {
         string dir = args.Length > 0 ? args[0] : Path.Combine(AppContext.BaseDirectory, "../../../out");
         Directory.CreateDirectory(dir);
-        Wind(dir); Rain(dir); Thunder(dir); Truck(dir); Ambience(dir); MixLimiter();
+        Wind(dir); Roar(dir); Rain(dir); Thunder(dir); Truck(dir); Ambience(dir); MixLimiter();
         Console.WriteLine(failures == 0 ? "audio checks: all passed" : $"audio checks: {failures} FAILED");
         Environment.Exit(failures == 0 ? 0 : 1);
     }
@@ -65,6 +65,38 @@ static class Render
         }
         Console.WriteLine(line);
         Check(Rms(o, 0, (int)(1.0f * Fs) * 2) < 1e-4f, "wind silent in calm air");
+    }
+
+    static void Roar(string dir)
+    {
+        // the roar heard from afar: a violent tornado (strength 0.9) approached from 8 km to 40 m over 60 s (distance
+        // falling geometrically), and a weak one (0.3) the same way. Loud a mile out, deafening close in, never clipping.
+        Console.WriteLine("roar: strength 0.9, 8 km -> 40 m over 60 s (RMS dBFS by distance)");
+        var r = new RoarSynth(Fs, 5);
+        float DistAt(float t) => 8000f * (float)Math.Pow(40f / 8000f, Math.Min(t / 60f, 1f));
+        var o = Run(r, 60f, t => { r.strength = 0.9f; r.distanceM = DistAt(t); r.pan = 0.3f; });
+        Sane(o, "roar"); Console.WriteLine($"  flattened samples {Hot(o):P3}, peak {Db(Peak(o))}"); Wav(Path.Combine(dir, "roar_approach_strength0.9.wav"), o, 2, Fs);
+        float prev = -1; var line = ""; float atMile = 0f;
+        foreach (var d in new[] { 6400f, 3200f, 1609f, 800f, 400f, 200f, 100f, 50f })
+        {
+            float t = 60f * (float)(Math.Log(d / 8000f) / Math.Log(40f / 8000f));
+            int b = (int)(t * Fs) * 2, a = Math.Max(0, b - Fs * 2);
+            float x = Rms(o, a, b); line += $"  {d:0}m:{Db(x)}";
+            if (d == 1609f) atMile = x;
+            // (inside full level the roar only gets denser: allow it level within 1.5 dB)
+            Check(d < 400f ? x > prev * 0.84f : x > prev, $"roar louder at {d} m than farther out"); prev = x;
+        }
+        Console.WriteLine(line);
+        Check(atMile > Dsp.Db(-24f), $"roar at a mile at least -24 dBFS RMS (strength 0.9): {Db(atMile)}");
+        Check(Hot(o) < 0.02f, "roar never flattens against full scale for long (under 2 % of samples)");
+        // a weak tornado: quieter, but still heard a mile out
+        var w = new RoarSynth(Fs, 11);
+        var ow = Run(w, 60f, t => { w.strength = 0.3f; w.distanceM = DistAt(t); w.pan = -0.5f; });
+        Sane(ow, "weak roar"); Wav(Path.Combine(dir, "roar_approach_strength0.3.wav"), ow, 2, Fs);
+        float tm = 60f * (float)(Math.Log(1609f / 8000f) / Math.Log(40f / 8000f));
+        float weakMile = Rms(ow, (int)(tm * Fs) * 2 - Fs * 2, (int)(tm * Fs) * 2);
+        Console.WriteLine($"  strength 0.3 at a mile: {Db(weakMile)} dBFS; close: {Db(Rms(ow, ow.Length - Fs * 4, ow.Length))}");
+        Check(weakMile > Dsp.Db(-34f) && weakMile < atMile, "a weak tornado's roar is heard a mile out, below a violent one's");
     }
 
     static void Rain(string dir)

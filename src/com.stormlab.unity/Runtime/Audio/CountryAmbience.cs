@@ -1,5 +1,5 @@
 // Plains ambience round the listener: a soft breeze and birds calling now and then from the grass and fence lines. The
-// birds go quiet as soon as a tornado's wind is heard (StormAudio.TornadoAudio) and stay quiet until it has been gone a
+// birds go quiet as soon as a tornado is heard, its wind or its roar (StormAudio.TornadoHeard) and stay quiet until it has been gone a
 // while.
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -77,7 +77,7 @@ namespace StormLab.Audio
             float t = Time.time;
 
             // the birds stop the moment the tornado is heard, and come back a while after it has gone
-            if (storm && storm.TornadoAudio > 0.01f) silentUntil = t + birdsReturnAfter;
+            if (storm && storm.TornadoHeard > 0.01f) silentUntil = t + birdsReturnAfter;
             bool silent = t < silentUntil;
             if (silent && !BirdsSilenced) { foreach (var v in birdVoices) if (v) v.Stop(); birdVoices.Clear(); repeats = 0; }
             BirdsSilenced = silent;
