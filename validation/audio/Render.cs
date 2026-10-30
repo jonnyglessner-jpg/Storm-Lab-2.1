@@ -87,7 +87,7 @@ static class Render
             Check(d < 400f ? x > prev * 0.84f : x > prev, $"roar louder at {d} m than farther out"); prev = x;
         }
         Console.WriteLine(line);
-        Check(atMile > Dsp.Db(-24f), $"roar at a mile at least -24 dBFS RMS (strength 0.9): {Db(atMile)}");
+        Check(atMile > Dsp.Db(-30f), $"roar at a mile at least -30 dBFS RMS (strength 0.9): {Db(atMile)}");
         Check(Hot(o) < 0.02f, "roar never flattens against full scale for long (under 2 % of samples)");
         // a weak tornado: quieter, but still heard a mile out
         var w = new RoarSynth(Fs, 11);
@@ -96,7 +96,7 @@ static class Render
         float tm = 60f * (float)(Math.Log(1609f / 8000f) / Math.Log(40f / 8000f));
         float weakMile = Rms(ow, (int)(tm * Fs) * 2 - Fs * 2, (int)(tm * Fs) * 2);
         Console.WriteLine($"  strength 0.3 at a mile: {Db(weakMile)} dBFS; close: {Db(Rms(ow, ow.Length - Fs * 4, ow.Length))}");
-        Check(weakMile > Dsp.Db(-34f) && weakMile < atMile, "a weak tornado's roar is heard a mile out, below a violent one's");
+        Check(weakMile > Dsp.Db(-40f) && weakMile < atMile, "a weak tornado's roar is heard a mile out, below a violent one's");
     }
 
     static void Rain(string dir)

@@ -285,7 +285,7 @@ swelling rumble, a turbulent waterfall body and, for a violent one, tearing in g
 come round, by the tornado's peak wind and size (`RoarStrength`), at full level within 400 m (`roarFullLevelM`) and
 falling as 1 / distance beyond (-12 dB at a mile), the air taking its highs with distance, fading out over 4-8 km
 (`roarFadeKm`); close in the mix is driven harder into a soft clipper, so it gets denser rather than louder than full
-scale, and the master limiter holds the rest; rain and hail where the player is, read back
+scale, and the master limiter holds the rest (about -20 dBFS RMS at a mile and -12 close in for a violent tornado, after the user halved the first version); rain and hail where the player is, read back
 from the storm volume's precipitation (so it follows the shafts and curtains you see), from scattered drops ticking on the
 truck to a downpour's hiss and roar, with big hailstones thudding into the ground round the truck in the hail core; and
 thunder for every flash, through `LightningSystem.ThunderOverride`. `thunder` switches it on and off (on).

@@ -93,8 +93,10 @@ namespace StormLab.Audio
                 // level by strength and distance, then driven harder the nearer it is, into a soft clipper: denser, not
                 // louder (the output is pulled back a little close in, so it sits near -5 dBFS RMS, deafening but with
                 // headroom for the wind, the debris strikes and thunder; the master limiter catches what piles on top)
+                // (user, 2026-10-30: the first version was too loud, "split the difference": half the level, -6 dB, the
+                // same density close in)
                 float drive = s * pulsing * (1f + 1.0f * n) * 0.75f;
-                float post = 0.9f - 0.25f * n;
+                float post = (0.9f - 0.25f * n) * 0.5f;
                 Dsp.Pan(p * (1f - 0.75f * n) * 0.6f, out float pl, out float pr);
                 float L = Dsp.Tanh(mL * drive * pl * 1.41f) * post;
                 float R = Dsp.Tanh(mR * drive * pr * 1.41f) * post;
