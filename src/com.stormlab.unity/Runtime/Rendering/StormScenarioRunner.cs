@@ -145,7 +145,7 @@ namespace StormLab
             r.exposure = lookFrom.exposure; r.toneMap = lookFrom.toneMap; r.luminanceScale = lookFrom.luminanceScale;
             r.drawBackdrop = lookFrom.drawBackdrop; r.useSceneDepth = lookFrom.useSceneDepth; r.groundSink = lookFrom.groundSink;
             r.quality = lookFrom.quality; r.renderScale = lookFrom.renderScale; r.maxSteps = lookFrom.maxSteps; r.tornadoStep = lookFrom.tornadoStep;
-            r.temporalBlend = lookFrom.temporalBlend; r.checkerboard = lookFrom.checkerboard;
+            r.temporalBlend = lookFrom.temporalBlend; r.checkerboard = lookFrom.checkerboard; r.stepScale = lookFrom.stepScale; r.rainStride = lookFrom.rainStride; r.nearStride = lookFrom.nearStride; r.performance = lookFrom.performance;
         }
 
         // ---------------------------------------------------------------- queries for the game

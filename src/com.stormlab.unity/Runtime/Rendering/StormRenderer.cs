@@ -25,7 +25,14 @@ namespace StormLab
     /// <summary>Enhanced: finer billows on water cloud near the camera (DetailNoise) and a short self-shadow probe that shades
     /// them; Website: the web build's detail.</summary>
     public enum CloudDetail { Enhanced, Website }
-    public enum StormPerformance { Custom }
+    /// <summary>
+    /// What the storm costs the GPU (StormRenderer.performance; user, 2026-10-30: "spec is to my GPU", an RX 7900 XT at
+    /// 3440 x 1440). Custom: the quality fields as set. Ultra: the full look (half-resolution march, every pixel every frame).
+    /// High: the same march over two frames (checkerboard, the temporal resolve filling in). Balanced: and a smaller march and
+    /// longer steps. Performance: smaller and longer still, and the volume at the web build's low quality.
+    /// StormPerfCheck -slPerfQuality tier measures each.
+    /// </summary>
+    public enum StormPerformance { Custom, Ultra, High, Balanced, Performance }
 
     [ExecuteAlways, DefaultExecutionOrder(100)]
     public class StormRenderer : MonoBehaviour
@@ -88,12 +95,21 @@ namespace StormLab
         public bool playing = true;
 
         [Header("Quality")]
-        [Tooltip("Custom: the settings below as set")]
-        public StormPerformance performance = StormPerformance.Custom;
+        [Tooltip("what the storm costs the GPU. Custom: the settings below as set. Ultra: the full look. High: the same march " +
+                 "spread over two frames (checkerboard). Balanced: and a smaller march with longer steps. Performance: smaller and " +
+                 "longer still, and a coarser volume")]
+        public StormPerformance performance = StormPerformance.High;
         public StormQuality quality = StormQuality.High;
         [Tooltip("ray-march resolution relative to the camera")]
         [Range(0.25f, 1f)] public float renderScale = 0.5f;
         [Range(64, 1024)] public int maxSteps = 700;
+        [Tooltip("the march's step through cloud, near the ground features and in the tornado, as a multiple of its own (1: as designed)")]
+        [Range(1f, 2f)] public float stepScale = 1f;
+        [Tooltip("the step through rain where there is no cloud, km near the camera (lengthening with distance); 0: the cloud's 0.1 km")]
+        [Range(0f, 0.4f)] public float rainStride = 0.2f;
+        [Tooltip("below the base, where the wall cloud, tail and inflow band can be: the step where the last one found clear air, " +
+                 "as a multiple of the fine step there (1: no longer)")]
+        [Range(1f, 3f)] public float nearStride = 2f;
         [Tooltip("Enhanced: finer billows (about 10-100 m) on water cloud within a few km, faded by each pixel's footprint, and " +
                  "a self-shadow probe 60 m sunward so the small lobes shade themselves (user, 2026-10-27). Only the march's " +
                  "look changes: the volume, light grid, radar, sound and lightning are the same. Website: the web build's detail")]
@@ -507,6 +523,7 @@ namespace StormLab
         /// </summary>
         public bool StepTo(double tMin, float clock, bool rebuildNow = false)
         {
+            ApplyPerformance();
             EnsurePass();
             LoadAssets();
             if (!volCs || !marchCs) return false;
@@ -556,6 +573,18 @@ namespace StormLab
             // the light scale the storm's lightning shares with it: x luminance of a unit, y 1 to apply the camera's exposure
             Shader.SetGlobalVector(LightScaleId, toneMap ? new Vector4(1, 0, 0, 0) : new Vector4(Luminance, 1, 0, 0));
             return true;
+        }
+
+        /// <summary>Set the quality fields from the performance tier (none for Custom).</summary>
+        public void ApplyPerformance()
+        {
+            switch (performance)
+            {
+                case StormPerformance.Ultra: quality = StormQuality.High; renderScale = 0.5f; checkerboard = false; stepScale = 1f; break;
+                case StormPerformance.High: quality = StormQuality.High; renderScale = 0.5f; checkerboard = true; stepScale = 1f; break;
+                case StormPerformance.Balanced: quality = StormQuality.High; renderScale = 0.42f; checkerboard = true; stepScale = 1.25f; break;
+                case StormPerformance.Performance: quality = StormQuality.High; renderScale = 0.35f; checkerboard = true; stepScale = 1.5f; break;
+            }
         }
 
         /// <summary>Force a full repaint at the next StepTo.</summary>
@@ -684,6 +713,7 @@ namespace StormLab
             cmd.SetComputeTextureParam(marchCs, kM, "_Noise", noise);
             cmd.SetComputeTextureParam(marchCs, kM, "_DetailNoise", DetailNoise.Get());
             cmd.SetComputeVectorParam(marchCs, "_CD", new Vector4(cloudDetail == CloudDetail.Enhanced ? 1 : 0, 0, 0, 0));
+            cmd.SetComputeVectorParam(marchCs, "_Q", new Vector4(Mathf.Max(stepScale, 0.25f), Mathf.Max(rainStride, 0f), Mathf.Max(nearStride, 1f), 0));
             cmd.SetComputeTextureParam(marchCs, kM, "_Out", st.cur);
             cmd.SetComputeTextureParam(marchCs, kM, "_OutDist", st.dist);
             cmd.SetComputeTextureParam(marchCs, kM, "_OutHalf", st.half);

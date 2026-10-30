@@ -131,15 +131,26 @@ namespace StormLab
         /// <summary>The light grid, sky visibility and ground light for a key light (sun or moon), all at once.</summary>
         public void Relight(CommandBuffer cmd, Vector3 keyVol, float zbKm)
         {
+            LightSlab(cmd, keyVol, zbKm, 0, LZ);
+            SkyAndGround(cmd);
+        }
+
+        /// <summary>The light grid's levels z0 .. z0 + nz (z0 a multiple of 4)</summary>
+        void LightSlab(CommandBuffer cmd, Vector3 keyVol, float zbKm, int z0, int nz)
+        {
             cmd.SetComputeTextureParam(cs, kLight, "_Dens", dens);
             cmd.SetComputeTextureParam(cs, kLight, "_OutL", light);
             cmd.SetComputeTextureParam(cs, kLight, "_OutLW", lightWeb);
             cmd.SetComputeVectorParam(cs, "_LSun", keyVol);
             cmd.SetComputeVectorParam(cs, "_LDims", new Vector4(LN, LZ, L, ZT));
             cmd.SetComputeVectorParam(cs, "_LP", new Vector4(CloudMax, RainMax * rainScale, 0.8f, zbKm));
-            cmd.SetComputeVectorParam(cs, "_LSlab", Vector4.zero);
-            cmd.DispatchCompute(cs, kLight, G(LN, 4), G(LN, 4), G(LZ, 4));
+            cmd.SetComputeVectorParam(cs, "_LSlab", new Vector4(z0, 0, 0, 0));
+            cmd.DispatchCompute(cs, kLight, G(LN, 4), G(LN, 4), G(nz, 4));
+        }
 
+        /// <summary>The sky visibility and the ground light (from the light grid as it is)</summary>
+        void SkyAndGround(CommandBuffer cmd)
+        {
             cmd.SetComputeTextureParam(cs, kSky, "_Dens", dens);
             cmd.SetComputeTextureParam(cs, kSky, "_OutS", skyVis);
             cmd.SetComputeVectorParam(cs, "_LDims", new Vector4(SN, SZ, L, ZT));
@@ -174,15 +185,29 @@ namespace StormLab
         }
         readonly float[] pending = new float[StormSpin.NSLOT * 4];
 
-        /// <summary>This frame's share of a repaint in progress; true when it (and the relight) finished.</summary>
+        /// <summary>
+        /// This frame's share of a repaint in progress; true when it (and the relight) finished. The relight is spread too
+        /// (a game optimisation, 2026-10-30): the frame that finished the repaint also relit the whole volume, about 2 ms at
+        /// once on an RX 7900 XT (StormPerfCheck); now the lower and upper halves of the light grid, then the sky visibility
+        /// and ground light, each on a frame of its own. Meanwhile the march reads the light grid as it stands, as it
+        /// already read the volume part repainted.
+        /// </summary>
         public bool Step(CommandBuffer cmd)
         {
             if (slab < 0) return false;
-            int z0 = slab * slabZ;
-            Build(cmd, pending, z0, Mathf.Min(slabZ, NZ - z0), true);
+            int nBuild = (NZ + slabZ - 1) / slabZ, lzHalf = Mathf.CeilToInt(LZ / 8f) * 4;
+            if (slab < nBuild)
+            {
+                int z0 = slab * slabZ;
+                Build(cmd, pending, z0, Mathf.Min(slabZ, NZ - z0), true);
+                if (slab == nBuild - 1) TrimRain(cmd, false);
+            }
+            else if (slab == nBuild) LightSlab(cmd, pendingKey, pendingBase, 0, lzHalf);
+            else if (slab == nBuild + 1) LightSlab(cmd, pendingKey, pendingBase, lzHalf, LZ - lzHalf);
+            else SkyAndGround(cmd);
             slab++;
-            bool done = slab * slabZ >= NZ;
-            if (done) { TrimRain(cmd, false); Relight(cmd, pendingKey, pendingBase); slab = -1; }
+            bool done = slab > nBuild + 2;
+            if (done) slab = -1;
             return done;
         }
         public bool Rebuilding => slab >= 0;

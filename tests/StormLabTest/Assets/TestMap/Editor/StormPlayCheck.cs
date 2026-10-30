@@ -300,6 +300,7 @@ public static class StormPlayCheck
         foreach (var (w, h) in new[] { (1920, 1080), (2560, 1440) })
             foreach (var cb in new[] { false, true })
             {
+                storm.performance = StormPerformance.Custom;
                 storm.renderScale = 0.5f; storm.checkerboard = cb; storm.temporalBlend = 0.35f; storm.ResetHistory(cam);
                 // the march without the scene depth (rays end at the volume's ground, as over open plains)
                 double march = Timed(20, c => storm.RecordMarch(c, cam, null, w, h, false, out _));
@@ -332,13 +333,13 @@ public static class StormPlayCheck
             sl.Bridge.externalSources = null;
             rep.AppendLine($"March at 1920 x 1080 while a flash lights the cloud (local light field built, checkerboard and history bypassed): {flash:0.00} ms.").AppendLine();
         }
-        // the volume: a full repaint and relight at once (a jump in time), one of the four slabs a spread repaint does a
-        // frame, and the relight on its last
+        // the volume: a full repaint and relight at once (a jump in time), one of the slabs a spread repaint does a frame,
+        // and the relight, spread over the three frames after them (StormVolume.Step)
         var noiseTex = CloudNoise.Make();
         double full = Timed(4, c => storm.Volume.Update(c, storm.Frame.param, noiseTex, storm.Lighting.keyDir));
         double relight = Timed(4, c => storm.Volume.Relight(c, storm.Lighting.keyDir, storm.Frame.param[4]));
         double slab = (full - relight) / StormVolume.Slabs;
-        rep.AppendLine($"Volume: full repaint and relight {full:0.00} ms (a seek or the first frame); a spread repaint costs about {slab:0.00} ms on each of {StormVolume.Slabs} frames plus {relight:0.00} ms (relight, sky visibility, ground light) on the last, at most every {storm.rebuildEvery:0.0} s while storm time moves.").AppendLine();
+        rep.AppendLine($"Volume: full repaint and relight {full:0.00} ms (a seek or the first frame); a spread repaint costs about {slab:0.00} ms on each of {StormVolume.Slabs} frames, then {relight:0.00} ms (relight, sky visibility, ground light) over three more, at most every {storm.rebuildEvery:0.0} s while storm time moves.").AppendLine();
         Object.DestroyImmediate(noiseTex);
         Check(halfMs1080 > 0, $"march timing measured at 1080p half resolution ({halfMs1080:0.00} ms)");
         Check(halfMs1080 < 8f, "the march fits the 8 ms storm budget at 1080p on this GPU");

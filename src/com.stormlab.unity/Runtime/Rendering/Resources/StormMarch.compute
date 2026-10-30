@@ -107,6 +107,12 @@ float4 _TP;
 float4 _TorP;
 // x: 1 = the enhanced cloud detail (StormRenderer.cloudDetail; a game adaptation), 0 = the web build's
 float4 _CD;
+// y: the step through rain alone, km near the camera (0: as through cloud; StormRenderer.rainStride); z: the near field's
+// step where the last one found it clear, as a multiple of its fine step (StormRenderer.nearStride; 1: no longer)
+// x: the march's step as a multiple of its own (StormRenderer.stepScale, the performance tiers; 1 = as designed): its
+// steps through cloud, at surfaces, through the near field and the tornado's fine steps. The stride through empty air and
+// the bounds that keep a step from passing over a tornado are not scaled.
+float4 _Q;
 // The screen split between the variants (StormRenderer.DispatchMarch): Classify sorts the march's 8 x 8 tiles into those
 // with a ray that may meet a tornado (marched by the full kernel) and the rest (by the one without it, STORM_NO_TORNADO).
 // _TileP.x 1: this dispatch marches the tiles listed in _Tiles (x | y << 16, one group each); 0: the whole screen.
@@ -1047,6 +1053,7 @@ void March(uint3 gidT : SV_DispatchThreadID, uint3 grp : SV_GroupID, uint3 gt : 
     float3 col = 0.0; float T = 1.0; float dsum = 0.0, wsum = 0.0; float tHalf = 1e9;
     float3 colS = 0.0;   // the light shafts, when kept apart (_OtherP.y)
     int nSteps = 0, nTorSteps = 0; float lastBe = 0.0;
+    float4 nKind = 0.0;   // (timing checks, _TorP.w 4) steps through the near field, at cloud surfaces, through other cloud, through rain alone
     int maxSteps = (int)_DepthP.w;
     bool det = _TorP.x > 0.5;
     float pixA = 2.0 * _CamTan.y * _Res.w;   // radians per march pixel (the detailed tornado's filtered noise)
@@ -1056,6 +1063,8 @@ void March(uint3 gidT : SV_DispatchThreadID, uint3 grp : SV_GroupID, uint3 gt : 
         float t = ta + dt0 * hash(float2(id.xy) + fmod(_MP.w, 64.0) * 1.37);
         float ph = g_ph1;
         bool surf = false;
+        // (_Q.z) the near field's value at the last step was far below where anything draws (it draws from about 0.14)
+        bool nearClear = false;
         // The detailed tornado: where this ray may meet it, [trIn, trOut], found once per pixel by sphere-tracing
         // tornadoSkip in from both ends of its bounding cylinder (2.0)
         bool torOn = TORNADO_ON && det && (S_tor.z > 0.0 || S_anti.w > 0.0 || S_tor11.z > 0.0);
@@ -1077,7 +1086,7 @@ void March(uint3 gidT : SV_DispatchThreadID, uint3 grp : SV_GroupID, uint3 gt : 
                 if (S_tor4.y > 0.0) rmin = min(rmin, S_tor5.y);
                 if (S_tor4.z > 0.0) rmin = min(rmin, 0.1);
             }
-            torFine = clamp(_TorP.y * rmin, 0.006, 0.05);
+            torFine = clamp(_TorP.y * rmin, 0.006, 0.05) * _Q.x;
         }
         float2 satP = satelliteMid(); float satR = satelliteBound();
         for (int i = 0; i < maxSteps; i++)
@@ -1088,7 +1097,7 @@ void March(uint3 gidT : SV_DispatchThreadID, uint3 grp : SV_GroupID, uint3 gt : 
             g_fp = t * pixA;
             bool nearTor = TORNADO_ON && !det && S_tor.z > 0.0 && q.z < S_base.x + 0.2 && length(q.xy - torC) < torR + length(S_tor.xy - S_tor3.xy) * 0.5;
             bool nearAnti = TORNADO_ON && !det && S_anti.w > 0.0 && q.z < S_base.x + 0.2 && length(q.xy - S_anti.xy) < 0.75;
-            float dt = dt0 * (1.0 + t / 50.0);
+            float dt = dt0 * (1.0 + t / 50.0) * _Q.x;
             float3 tc = uvw(q);
             float4 s = _Dens.SampleLevel(sampler_LinearClamp, tc, 0);
             // near-ground features: fine steps where the coarse copy says they are
@@ -1097,10 +1106,17 @@ void March(uint3 gidT : SV_DispatchThreadID, uint3 grp : SV_GroupID, uint3 gt : 
             bool wallOn = S_wall.w > 0.0 && length(q.xy - S_wall.xy) < S_wall.z * 1.3 + 0.3
                 && q.z > S_base.x - S_wall2.x - 0.4 && q.z < S_base.x + 1.8;
             bool nearOn = (s.b > 0.05 && q.z < S_base.x + 2.2) || wallOn || inTailCloud(q) || beaverTailBand(q);
-            if (surf) dt = min(dt, 0.025 + t * 0.0015);
-            if (nearTor || nearAnti) dt = 0.02 + t * 0.0006;
-            else if (nearOn) dt = min(dt, 0.035 + t * 0.003);
+            if (surf) dt = min(dt, (0.025 + t * 0.0015) * _Q.x);
+            if (nearTor || nearAnti) dt = (0.02 + t * 0.0006) * _Q.x;
+            // the near field's fine steps, longer (_Q.z times) while the last one found it far below drawing: below the base
+            // the ray crosses kilometres of its region in clear air (StormPerfCheck under_3km: 44 of 75 steps a pixel)
+            else if (nearOn) dt = min(dt, (0.035 + t * 0.003) * _Q.x * (nearClear ? _Q.z : 1.0));
             else if (s.r <= 0.004 && s.g <= 0.004 && s.b <= 0.004) dt = max(dt, 0.45 * (1.0 + t / 40.0));   // empty air: stride
+            // rain alone (no cloud, no near-ground feature): the march adds no detail to it, and it varies over the volume's
+            // cells (~0.43 km across), so it takes longer steps (_Q.y km near the camera; 0: the cloud's)
+            else if (s.r <= 0.004 && s.b <= 0.004 && !surf) dt = max(dt, _Q.y * (1.0 + t / 40.0));
+            nearClear = false;
+            if (PROBE_TOR > 3.5) nKind += nearOn ? float4(1, 0, 0, 0) : surf ? float4(0, 1, 0, 0) : s.r > 0.004 ? float4(0, 0, 1, 0) : s.g > 0.004 ? float4(0, 0, 0, 1) : 0.0;
             // the detailed tornado: fine steps where the ray may meet it, and never step over it (2.0)
             float dtFree = dt;
             bool inTor = false, torSlender = false;
@@ -1280,6 +1296,7 @@ void March(uint3 gidT : SV_DispatchThreadID, uint3 grp : SV_GroupID, uint3 gt : 
             {
                 // the wall cloud and the funnel are one cloud: smooth union, then the same threshold and light
                 float nw = nearOn ? nearField(q, 1.0) : 0.0;
+                nearClear = nearOn && nw < 0.02;
                 float nv = smax(nw, tv.x, 0.15);
                 // The funnel keeps a soft edge, with enough extinction to avoid a bright sky showing through its core.
                 float fs = saturate((tv.x - nw) * 3.0 + 0.5) * step(0.001, tv.x);
@@ -1567,6 +1584,7 @@ void March(uint3 gidT : SV_DispatchThreadID, uint3 grp : SV_GroupID, uint3 gt : 
     _OutDist[id.xy] = lerp(min(tb, 60.0), dsum / max(wsum, 1e-6), ss(1e-3, 0.05, wsum));
     _OutHalf[id.xy] = tHalf < 1e8 ? tHalf : -1.0;
     // timing checks: the steps this pixel took, and how many of them evaluated the detailed tornado, per thousand
+    if (PROBE_TOR > 3.5) { _Out[id.xy] = nKind * 0.001; return; }
     if (PROBE_TOR > 2.5) { _Out[id.xy] = float4(nSteps, nTorSteps, 0.0, 1000.0) * 0.001; return; }
 
     if (_Opt.z > 0.5 && tScene > 1e8)

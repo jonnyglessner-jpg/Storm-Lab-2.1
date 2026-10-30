@@ -105,6 +105,7 @@ public static class CloudDetailCheck
         if (!world || !storm || !cam) { Check(false, $"scene objects: world {world}, storm {storm}, camera {cam}"); yield break; }
         var rig = cam.GetComponent<TestMapCamera>(); if (rig) rig.enabled = false;
         if (sl) sl.Flashes.enabled = false;
+        storm.performance = StormPerformance.Custom;
         storm.playing = false; storm.renderScale = 0.5f; storm.checkerboard = false;
 
         // the switch, if this build has it (a run from before it existed draws the views as they were)

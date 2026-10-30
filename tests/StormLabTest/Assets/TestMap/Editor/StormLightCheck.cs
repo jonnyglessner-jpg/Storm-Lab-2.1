@@ -127,6 +127,7 @@ public static class StormLightCheck
         if (!world || !storm || !cam) { Check(false, $"scene objects: world {world}, storm {storm}, camera {cam}"); yield break; }
         var rig = cam.GetComponent<TestMapCamera>(); if (rig) rig.enabled = false;
         if (sl) sl.Flashes.enabled = false;
+        storm.performance = StormPerformance.Custom;
         storm.playing = false; storm.renderScale = 0.5f; storm.checkerboard = false;
         string preset = SessionState.GetString(PresetKey, "");
         if (preset.Length > 0 && preset != storm.preset) { storm.preset = preset; storm.Replan(); world.PlaceStorm(); }

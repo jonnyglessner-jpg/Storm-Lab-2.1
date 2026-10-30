@@ -68,6 +68,7 @@ public static class StormLabTests
         var go = new GameObject("Storm");
         storm = go.AddComponent<StormRenderer>();
         storm.UseStandaloneLook();
+        storm.performance = StormPerformance.Custom;   // the quality fields below as set (the checks set their own)
         storm.playing = false; storm.renderScale = 1f; storm.temporalBlend = 1f; storm.checkerboard = false;
         storm.sunSource = SunSource.Fixed; storm.sunAzimuth = 272f; storm.sunElevation = 21f;
     }
