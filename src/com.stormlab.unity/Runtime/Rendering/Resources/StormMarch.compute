@@ -1343,10 +1343,17 @@ void March(uint3 gid : SV_DispatchThreadID)
                         // lowering's underside, sampled there, in the same model as the near field's union), with only a
                         // little shading on it (lighter toward the sun, darker at its edges as seen, its own soft tone) and
                         // the dirt it lofts low down.
-                        float3 qT = float3(q.xy, ztop);
+                        // Sampled at the lowering's underside at the funnel (nearField's bowl: zb - lowering under its middle),
+                        // not at the funnel's top: ztop is 0.6 of the lowering down, 0.4 of it inside the cloud, and the unified
+                        // light there is the cloud's dim interior, so the wedge was far darker than the wall cloud it hangs from
+                        // in any daylight (user, 2026-10-30). A stovepipe's top takes the wall cloud's light at 0.8 ztop,
+                        // about the bowl's bottom, which is why it matched and the wedge did not.
+                        float bowlT = 1.0 - pow(saturate(length(q.xy - S_wall.xy) / max(S_wall.z, 0.1)), 2.4);
+                        float zT = min(ztop, max(S_base.x - S_wall2.x * (0.15 + 0.85 * bowlT), 0.25));
+                        float3 qT = float3(q.xy, zT);
                         float3 tcT = uvw(qT);
                         float4 ltT = _Light.SampleLevel(sampler_LinearClamp, tcT, 0);
-                        float3 sunzT = sunAt(ztop);
+                        float3 sunzT = sunAt(zT);
                         float3 wallC;
                         if (uni) wallC = stormLight(qT, ltT, _SkyVis.SampleLevel(sampler_LinearClamp, tcT, 0), sunzT, sunc, g_phW, 1.0, 0.0, 0.0, 4);
                         else if (phys) wallC = (sunzT * (cloudSun(ltT.r, 0.0, 1.0) * (1.4 / 1.9)) + skyLight(_SkyVis.SampleLevel(sampler_LinearClamp, tcT, 0)) + groundLight(qT, sunc)) * 0.88;
