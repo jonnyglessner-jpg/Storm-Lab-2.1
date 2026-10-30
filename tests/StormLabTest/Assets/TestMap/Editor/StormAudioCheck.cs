@@ -221,12 +221,14 @@ public static class StormAudioCheck
         car.Teleport(Ground(tor + Vector3.right * 15000f), Quaternion.identity);
         foreach (var x in Wait(2f)) yield return x;
         Check(sa.TornadoAudio < 0.005f && !amb.BirdsSilenced, $"15 km off: no wind sound ({sa.WindSpeed:0.0} m/s, level {sa.TornadoAudio:0.000}); birds singing");
-        float prevLevel = -1f, maxWind = 0f; bool rising = true; line = "- walking in (distance: wind m/s, wind sound 0..1, output dBFS):";
+        Check(sa.RoarLevel < 0.005f, $"15 km off: no roar either (level {sa.RoarLevel:0.000})");
+        float prevLevel = -1f, maxWind = 0f, roarAtKm = 0f; bool rising = true; line = "- walking in (distance: wind m/s, wind sound 0..1, roar 0..1, output dBFS):";
         foreach (float m in new[] { 4000f, 2000f, 1000f, 500f, 250f, 120f, 60f, 35f })
         {
             car.Teleport(Ground(storm.TornadoGroundWorld + Vector3.right * m), Quaternion.identity);
             foreach (var x in Wait(2.5f)) yield return x;
-            line += $"  {m:0} m: {sa.WindSpeed:0} / {sa.TornadoAudio:0.00} / {OutputDb():0}";
+            if (m == 1000f) roarAtKm = sa.RoarLevel;
+            line += $"  {m:0} m: {sa.WindSpeed:0} / {sa.TornadoAudio:0.00} / {sa.RoarLevel:0.00} / {OutputDb():0}";
             // (inside the core the wind can drop again: compare with the wind, not the distance)
             if (sa.WindSpeed > maxWind) { if (sa.TornadoAudio < prevLevel - 0.02f) rising = false; maxWind = sa.WindSpeed; prevLevel = Mathf.Max(prevLevel, sa.TornadoAudio); }
         }
@@ -234,6 +236,7 @@ public static class StormAudioCheck
         float expect = WindSynth.Intensity(maxWind, sa.windRange.x, sa.windRange.y);
         Check(rising && prevLevel > 0.05f && Mathf.Abs(prevLevel - expect) < 0.1f,
               $"the wind sound grows with the wind as the truck nears the tornado (tornado amount {storm.TornadoAmount:0.00}; to {prevLevel:0.00} at {maxWind:0} m/s, {maxWind * 2.237f:0} mph)");
+        Check(roarAtKm > 0.1f, $"the roar is well heard a kilometre out (level {roarAtKm:0.00}, strength {sa.RoarStrength:0.00}; user 2026-10-30: loud a mile away)");
         Check(amb.BirdsSilenced, "the birds are silent once the tornado is heard");
         car.Teleport(Ground(storm.TornadoGroundWorld + Vector3.right * 15000f), Quaternion.identity);
         foreach (var x in Wait(2f)) yield return x;

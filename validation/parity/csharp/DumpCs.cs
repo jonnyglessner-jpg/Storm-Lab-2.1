@@ -13,7 +13,7 @@ static class DumpCs
         if (args.Length > 0 && args[0] == "--tornadoes") { Tornadoes(); return; }
         if (args.Length > 0 && args[0] == "--scenario") { Scenarios(); return; }
         if (args.Length > 0 && args[0] == "--life") { Life(); return; }
-        if (args.Length > 0 && args[0] == "--wedges") { Wedges(); return; }
+        if (args.Length > 0 && (args[0] == "--wedges" || args[0] == "--shapes")) { Shapes(); return; }
         if (args.Length > 0 && args[0] == "--runup") { RunUp(); return; }
         if (args.Length > 0 && args[0] == "--gameframes") { GameFrames(args[1], int.Parse(args[2]), int.Parse(args[3]), double.Parse(args[4], CultureInfo.InvariantCulture), double.Parse(args[5], CultureInfo.InvariantCulture)); return; }
         if (args.Length > 0 && args[0] == "--spin") { Spin(args.Length > 1 ? args[1] : "plains"); return; }
@@ -275,42 +275,62 @@ static class DumpCs
         }
     }
 
-    // Wedges: visible width at the ground (2 x ground radius) must be half a mile to two miles, free storms and rated games
-    static void Wedges()
+    // Shapes (--shapes, --wedges): every tornado within its shape's limits (StormTornadoes, user 2026-10-29), free storms
+    // and rated games: visible width at the ground (2 x ground radius) between MinWidthM and MaxWidthM at its rating, the
+    // rating between MinEf and MaxEf, an EF5 only a wedge at least WedgeEf5MinM wide or a drillbit, a wedge's phases at its
+    // width, every other phase within its own shape's width. Prints each shape's count, width range (yd) and ratings.
+    static void Shapes()
     {
-        const double mi = 1609.344;
+        const double yd = StormTornadoes.Yd;
+        bool ok = true;
+        var names = Enum.GetNames(typeof(FunnelShape));
         foreach (var pre in StormPreset.All)
         {
             var region = StormTornadoes.RegionOf(pre.key);
-            var widths = new System.Collections.Generic.List<double>(); var webR = new System.Collections.Generic.List<double>(); var efs = new int[6]; int bad = 0;
+            var widths = new System.Collections.Generic.Dictionary<FunnelShape, System.Collections.Generic.List<double>>();
+            var efs = new System.Collections.Generic.Dictionary<FunnelShape, int[]>();
+            int bad = 0, n = 0; var why = new System.Collections.Generic.List<string>();
+            void Check(TornadoCharacter t, string where)
+            {
+                if (t == null) return;
+                n++;
+                if (!widths.ContainsKey(t.shape)) { widths[t.shape] = new System.Collections.Generic.List<double>(); efs[t.shape] = new int[6]; }
+                double D = 2000 * t.groundKm; widths[t.shape].Add(D); efs[t.shape][t.ef]++;
+                string f = null;
+                double lo = t.shape == FunnelShape.Wedge && t.ef >= 5 ? StormTornadoes.WedgeEf5MinM : StormTornadoes.MinWidthM(t.shape);
+                if (D < lo - 1 || D > StormTornadoes.MaxWidthM(t.shape, t.ef) + 1) f = $"width {D / yd:0} yd";
+                else if (t.ef < StormTornadoes.MinEf(t.shape) || t.ef > StormTornadoes.MaxEf(t.shape)) f = $"EF{t.ef}";
+                else if (t.ef >= 5 && t.shape != FunnelShape.Wedge && t.shape != FunnelShape.Drillbit) f = "EF5 shape";
+                else if (t.phases != null)
+                    foreach (var ph in t.phases)
+                    {
+                        if (ph.shape == t.shape && (Math.Abs(ph.groundKm - t.groundKm) > 1e-9 || Math.Abs(ph.topKm - t.topKm) > 1e-9)) f = "own phase size";
+                        else if (ph.shape != t.shape && 2000 * ph.groundKm > StormTornadoes.MaxWidthM(ph.shape, t.ef) + 1) f = $"{ph.shape} phase {2000 * ph.groundKm / yd:0} yd";
+                    }
+                if (f != null) { bad++; if (why.Count < 6) why.Add($"{where}: EF{t.ef} {t.shape} {f}"); }
+            }
             for (int seed = 1; seed <= 800; seed++)
             {
                 var P = StormGame.Adapt(StormDesign.Plan(pre, seed));
                 var ch = StormTornadoes.Build(P, region); if (ch == null) continue;
-                foreach (var t in ch)
-                {
-                    if (t == null || t.shape != FunnelShape.Wedge) continue;
-                    double D = 2000 * t.groundKm; widths.Add(D); efs[t.ef]++; webR.Add(t.webGroundKm);
-                    if (D < StormTornadoes.WedgeMinM - 1 || D > StormTornadoes.WedgeMaxM + 1) bad++;
-                    if (t.phases != null) foreach (var ph in t.phases) if (ph.shape == FunnelShape.Wedge && Math.Abs(ph.groundKm - t.groundKm) > 1e-9) bad++;
-                }
+                foreach (var t in ch) Check(t, $"seed {seed}");
             }
-            int gWedges = 0, gBad = 0; double gMin = 1e9, gMax = 0;
+            int nFree = n;
             for (int seed = 1; seed <= 300; seed++)
             {
                 var sc = new StormScenario(pre, seed, 80467.2 / 2);
-                foreach (var st in sc.storms) foreach (var t in st.tornadoes ?? new TornadoCharacter[0])
-                {
-                    if (t == null || t.shape != FunnelShape.Wedge) continue;
-                    double D = 2000 * t.groundKm; gWedges++; gMin = Math.Min(gMin, D); gMax = Math.Max(gMax, D);
-                    if (D < StormTornadoes.WedgeMinM - 1 || D > StormTornadoes.WedgeMaxM + 1) gBad++;
-                }
+                foreach (var st in sc.storms) foreach (var t in st.tornadoes ?? new TornadoCharacter[0]) Check(t, $"game {seed} storm {st.index + 1}");
             }
-            widths.Sort(); webR.Sort(); if (webR.Count > 0) Console.WriteLine($"  web wedge radius km min/5/50/95/max {webR[0]:0.000} {webR[(int)(0.05 * (webR.Count - 1))]:0.000} {webR[webR.Count / 2]:0.000} {webR[(int)(0.95 * (webR.Count - 1))]:0.000} {webR[webR.Count - 1]:0.000}");
-            double Q(double q) => widths.Count == 0 ? double.NaN : widths[(int)(q * (widths.Count - 1))] / mi;
-            Console.WriteLine($"{pre.key,-7}: {widths.Count} wedges, width mi min/5/50/95/max {Q(0):0.00} {Q(0.05):0.00} {Q(0.5):0.00} {Q(0.95):0.00} {Q(1):0.00}; EF0-5 {string.Join("/", efs)}; out of range {bad}; " +
-                $"games: {gWedges} wedges, {gMin / mi:0.00}-{gMax / mi:0.00} mi, out of range {gBad}");
+            ok &= bad == 0;
+            Console.WriteLine($"{pre.key}: {nFree} tornadoes in 800 free storms, {n - nFree} in 300 games; out of limits {bad}");
+            foreach (var kv in widths.OrderBy(k => (int)k.Key))
+            {
+                var w = kv.Value; w.Sort();
+                Console.WriteLine($"  {names[(int)kv.Key],-13} {w.Count,5}: width yd min/50/max {w[0] / yd,5:0} {w[w.Count / 2] / yd,5:0} {w[w.Count - 1] / yd,5:0}; EF0-5 {string.Join("/", efs[kv.Key])}");
+            }
+            foreach (var w in why) Console.WriteLine("  " + w);
         }
+        Console.WriteLine(ok ? "PASS" : "FAIL");
     }
 
     // StormLife in games: every tornado on the ground must be over the map, and the storms die as they leave it

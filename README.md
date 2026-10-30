@@ -95,6 +95,15 @@ the truck; a 24 hour clock that drives the sun, the moon, HDRP's sky and the sto
 and a running clock); the lighting model and night settings; auto exposure that adapts as 2.0's night model does, or a
 manual EV; and the lightning (on/off, thunder, rate). **StormLab > Test Map > Day and Night Check** renders the chaser's
 view through the panel at eight times of day and night (`validation/reports/StormDayCheck.md`).
+Twilight (user, 2026-10-30: black ground under still-sunlit clouds): HDRP's sky is lit by the sun Light, which fades out
+at 1 degree down, while the storm and the exposure follow 2.0's twilight sky; the panel's sky fill (a shadowless light
+from high in the sky toward the sun's bearing) gives the ground that sky's light on level ground for the share HDRP has
+lost, dimmed by how much sky the storms hide. The check's twilight sweep measures the ground and the storm from 18:36 to
+21:00 with it and without it (`-slDayQuick`: only that and the truck's lights).
+The truck's lights (user, 2026-10-30): **L** cycles off, low beams, high beams with a roof light bar, at any time of day
+(`TestMapNightLights`; on low beams if the drive starts in the dark). Each beam's shape is a cookie made at Start: a sharp
+top edge, less light on the road nearer the truck, low beams lit to about 60 m, high beams to about 150 m, the bar a wide
+flood to about 80 m. They follow the exposure up to `headlightMaxEV` (11), so by day they are lamps, not floodlights.
 
 Useful properties for a game: `Frame.stage` / `Frame.caption`, `TornadoAmount`, `TornadoGroundWorld`,
 `TornadoWindAt(world)` (a Rankine-vortex presentation wind), `UpdraftWorld(minutes)`.
@@ -205,14 +214,34 @@ Tornado (`tornado`):
   changes over its life, skin (ragged, laminar, ghost), brightness, soil by region, suction vortices for big ones, a
   collar and a satellite. Drawn with 2.0's photo-matched funnel, debris, own sun test and horizon light; its flare is
   handed to the website's wall cloud where they meet.
-  Wedges are half a mile to two miles wide at the ground (`StormTornadoes.WedgeMinM/MaxM`; a bigger web-build cycle is
-  a wider wedge, and their wind and rating follow the width), with a smooth outline, and a wedge's (or multiple-vortex)
-  envelope takes the light of the wall cloud it hangs from, so it is that cloud's colour in any light (`-- --wedges`
-  checks the widths). Its sides slant evenly out to a top 1.5-2.1 times as wide as its foot (user, 2026-10-26). As it
+  Debris (user, 2026-10-30; the reference photos in 2.0's `data/reference/tornadoes/debris_soil`): a column round the
+  funnel's foot 100-450 m tall (`tornadoDustTop`; a wedge's to 300 m) and two to three funnel widths across, opaque and
+  darker than its soil in the dense core, its outline heaved into billows that rise with the lofted dust and ragged at
+  the top; a thin fan of dust along the ground to twice its radius; and curtains of dust lifted up the funnel in curled
+  bands following the rotation, to 0.4 of the base (close and low round a wedge's envelope). Check close with
+  `-slTornadoLife <preset> <seed> <cycle> sharp`.
+  Sizes and ratings by shape (user, 2026-10-29; `StormTornadoes.MinWidthM/MaxWidthM/MinEf/MaxEf`, visible width at
+  the ground): wedges 750 yd to 2 mi and EF3 or more (EF5 from 1000 yd); cones at most 500 yd and EF4; stovepipes 250 yd
+  and EF4; ropes (and sidewinders) 100 yd and EF2; elephant trunks 200 yd and EF2; drillbits 300 yd, the one other shape
+  that reaches EF5 (up to 750 yd then); dust whirls as drillbits in width, EF2 at most. A free storm's tornado is held to
+  them after its proportions are drawn (its wind and rating follow the held width, then the rating is held to the shape's
+  range); a game's `Rate` changes the shape first when its own cannot carry the rating (a wedge capped at EF2 becomes a
+  stovepipe, a rope raised to EF3-4 a cone, anything raised to EF5 a wedge on a low base or a drillbit on a high one),
+  then sizes it. `validation/parity/csharp -- --shapes` checks every tornado of 800 free storms and 300 games per setup.
+  Wedges (a bigger web-build cycle is a wider wedge) have a smooth outline, and a wedge's (or multiple-vortex)
+  envelope takes the light of the wall cloud it hangs from, so it is that cloud's colour in any light. Its sides slant
+  evenly out to a top 1.5-2.1 times as wide as its foot (user, 2026-10-26). As it
   ropes out it first narrows to 60 % of its width over 2 storm min, then its envelope breaks up into a scuddy collar from the ground up, whose ragged bottom lifts and rises into the
   base over the rope-out while the central vortex inside narrows to a rope.
-  Stovepipes are one laminar vortex, a quarter thinner than the website's. Cones and stovepipes come down as a thin
-  tube and widen once on the ground, each its own way (how fast, top or foot first, how thin, how much it snakes).
+  Stovepipes are one laminar vortex, a quarter thinner than the website's, their top at least 1.3 times their foot, and
+  their straight column curves out into the wall cloud from half way up (`TopFlare`, S_tor7.w: the march's trumpet
+  collar begins lower and more gently than the top-quarter crown every funnel has; a cone's half as far, its top 15 %
+  wider than the website's; user, 2026-10-29). Every tornado starts as a rope and grows through stages (user,
+  2026-10-30; `DrawFormation`): it comes down as a rope funnel 8-40 m in radius, each its own (how much it snakes,
+  whether its condensation reaches the ground or hangs over its dust whirl, how long it stays one: a quarter to half of
+  its formation), then fills out through a cone-like middle stage into its own shape, top first or foot first, over
+  12-30 % of its life in all; a wedge's rope is its central vortex, round which the envelope and suction vortices grow
+  in the middle stage. The caption names the stage (rope, cone, then the shape).
   `StormLabTests -slTornadoLife <preset> <seed> <cycle> [tag]` renders one tornado through its life (a tag with
   "early" shows its formation, "rope" its rope-out, "sharp" one unblended full-resolution frame from closer).
   Cost (user, 2026-10-27: frames dropped near tornadoes, more the bigger they were): the march steps through it at a
@@ -250,7 +279,13 @@ Cloud detail (`cloudDetail`, also on the panel; user, 2026-10-27):
 
 **Sound** (`Runtime/Audio`). `StormAudio` (one per scene) hears every storm at the `player`: the tornado wind
 (`TornadoWindAt`), silent below 3 m/s, then a gusty rush, moaning and whistling round the truck, the low roar, debris
-strikes and buffeting as it rises to full intensity at 80 m/s (`windRange`); rain and hail where the player is, read back
+strikes and buffeting as it rises to full intensity at 80 m/s (`windRange`); the tornado's roar heard from afar
+(`RoarSynth`, user 2026-10-30: loud a mile away, deafening close in, never clipping): the vortex's own sound, a deep
+swelling rumble, a turbulent waterfall body and, for a violent one, tearing in gusts, pulsing as the suction vortices
+come round, by the tornado's peak wind and size (`RoarStrength`), at full level within 400 m (`roarFullLevelM`) and
+falling as 1 / distance beyond (-12 dB at a mile), the air taking its highs with distance, fading out over 4-8 km
+(`roarFadeKm`); close in the mix is driven harder into a soft clipper, so it gets denser rather than louder than full
+scale, and the master limiter holds the rest; rain and hail where the player is, read back
 from the storm volume's precipitation (so it follows the shafts and curtains you see), from scattered drops ticking on the
 truck to a downpour's hiss and roar, with big hailstones thudding into the ground round the truck in the hail core; and
 thunder for every flash, through `LightningSystem.ThunderOverride`. `thunder` switches it on and off (on).
@@ -367,7 +402,7 @@ Output: by default the storm's light is in HDRP's physical units under the game'
   clips: tiers, levels, import settings, credits; a preview by distance). `-executeMethod StormAudioCheck.RunFromCommandLine` (about
   3 min, `-slAudioWiring` for the first part only) in Play on the test map: the truck's gears and squeal, dry upwind and
   pouring under the core, the wind sound walking in to a tornado and the birds falling silent, thunder heard and nearer
-  thunder louder. Report: `validation/reports/StormAudioCheck.md`. Last run: PASS.
+  thunder louder. Report: `validation/reports/StormAudioCheck.md`. Last run (2026-10-30, with the roar): wind, roar, birds, truck and thunder pass; the "under the forward-flank core it pours" check fails because the forward-flank rework (2026-10-28) moved the rain from the spot it reads: a stale check, not a sound bug.
 - **Map and radar**: **StormLab > Test Map > Map and Radar Check** (`TestMapMinimapCheck.RunFromCommandLine`): the road
   network in one piece, 300 random trips routed (continuous, ending where asked, not much longer than by the section
   grid), then in Play the radar through a plains storm's life and a Dixie storm (the inflow notch, the hook, the debris

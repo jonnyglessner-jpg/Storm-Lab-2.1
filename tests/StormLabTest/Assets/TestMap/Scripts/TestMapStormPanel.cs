@@ -9,6 +9,14 @@
 // so the terrain, HDRP's sky and the storm share one sun and moon. The storm's unit of light is held at the full sun's
 // (StormRenderer.luminanceScale), so its night is the night the storm's own lighting model computes rather than the
 // dimmed sun Light. The panel works on a copy of the scene's volume profile; nothing it changes is saved.
+//
+// Twilight (user, 2026-10-30: "the ground is totally black as if it were midnight, while the clouds still have some
+// sunlight"): HDRP's physically based sky takes its light from the sun Light, so when that faded out at 1 degree down
+// the ground lost its sky light too, while the storm kept its own model's twilight sky (SkyLighting: about a tenth of
+// the sunset sky at 6 degrees down) and the exposure followed that model. The sky fill gives the ground the same sky:
+// a shadowless light from high in the sky leaning toward the sun's bearing, as bright as the storm model's sky dome on
+// level ground (SkyLighting.Bands, cosine weighted) for the share HDRP's sky has lost as the sun sets, dimmed by
+// how much of the sky the storms hide from the camera (StormSceneAmbient). It does not light the sky or make highlights.
 using System;
 using System.Linq;
 using StormLab.Lightning;
@@ -48,11 +56,20 @@ namespace StormLab.TestMap
         [Tooltip("adapt to the scene's light level as 2.0's night model does (day 13.5 EV; a moonlit night shown at 8 % of day, about 0.5 EV); off: manualEV")]
         public bool autoExposure = true;
         [Range(-4f, 3f)] public float compensation = 0f;
+        [Tooltip("auto exposure: stops it opens beyond the night model through sunset and twilight (none by day or on a moonlit night)")]
+        [Range(0f, 3f)] public float twilightLift = 1f;
         [Range(-6f, 16f)] public float manualEV = 13.5f;
         [Tooltip("the sun's illuminance with it well up, lux (HDRP's daylight)")]
         public float sunLux = 100000f;
         [Tooltip("a full moon's illuminance, lux")]
         public float fullMoonLux = 0.25f;
+        [Tooltip("light the ground with the storm model's twilight and night sky where HDRP's sky goes dark with the sun Light")]
+        public bool skyFill = true;
+        [Tooltip("degrees the sky fill leans from straight up toward the sun's bearing (the twilight sky is brightest there)")]
+        [Range(0f, 60f)] public float skyFillLean = 35f;
+
+        /// <summary>the sky fill's illuminance on level ground now, lux</summary>
+        public float SkyFillLux { get; private set; }
 
         /// <summary>the exposure in use, EV100</summary>
         public float ExposureEV { get; private set; }
@@ -60,6 +77,7 @@ namespace StormLab.TestMap
         public Vector2 MoonAzEl { get; private set; }
 
         Exposure exposure;
+        Light fill;
         Rect win = new Rect(16, 300, 470, 10);
         Vector2 scroll;
         GUIStyle head, small, wrap;
@@ -85,6 +103,13 @@ namespace StormLab.TestMap
                 moon = go.AddComponent<Light>(); moon.type = LightType.Directional;
                 go.AddComponent<HDAdditionalLightData>();
                 moon.lightUnit = LightUnit.Lux; moon.color = new Color(0.82f, 0.86f, 1f); moon.shadows = LightShadows.None;
+            }
+            {
+                var go = new GameObject("Sky fill") { hideFlags = HideFlags.DontSave };
+                fill = go.AddComponent<Light>(); fill.type = LightType.Directional;
+                var hd = go.AddComponent<HDAdditionalLightData>();
+                fill.lightUnit = LightUnit.Lux; fill.shadows = LightShadows.None; fill.enabled = false;
+                hd.interactsWithSky = false; hd.affectSpecular = false; hd.volumetricDimmer = 0f;
             }
             // the scene's exposure, on a copy of its profile (the asset is left alone)
             foreach (var v in FindObjectsByType<Volume>(FindObjectsSortMode.None))
@@ -147,10 +172,60 @@ namespace StormLab.TestMap
             // the exposure: 13.5 EV by day, opened by the night model's adaptation gain after sunset (its eye: unchanged above
             // sunset levels, then darker as a power of the real level, a moonlit night at nightBrightness of day)
             var night = storm.Night; night.adapt = true;
-            float gain = storm.PhysicalSky ? SkyLighting.Evaluate(storm.SunDirVol, storm.MoonDirVol, night).gain : 1f;
-            ExposureEV = autoExposure ? Mathf.Clamp(13.5f - Mathf.Log(Mathf.Max(gain, 1e-6f), 2f), -6f, 16f) - compensation : manualEV;
+            var sky = storm.PhysicalSky ? SkyLighting.Evaluate(storm.SunDirVol, storm.MoonDirVol, night) : default;
+            float gain = storm.PhysicalSky ? sky.gain : 1f;
+            float lift = storm.PhysicalSky ? TwilightLift(sky.level) : 0f;
+            ExposureEV = autoExposure ? Mathf.Clamp(13.5f - Mathf.Log(Mathf.Max(gain, 1e-6f), 2f) - lift, -6f, 16f) - compensation : manualEV;
             if (exposure) { exposure.mode.Override(ExposureMode.Fixed); exposure.fixedExposure.Override(ExposureEV); }
+            ApplySkyFill(s);
         }
+
+        /// <summary>
+        /// Stops the exposure opens beyond the night model through sunset and twilight (user, 2026-10-30): the model leaves
+        /// the day exposure alone until the scene is at a tenth of the evening sun's light, so the sunset and early twilight
+        /// were shown as a day camera would. From level 0.6 (sun about 6 degrees up) to 0.12 it opens by twilightLift, holds
+        /// to 0.01 (sun about 8 degrees down) and closes again by 1e-4, so moonlit nights keep their look. The scene shown
+        /// still darkens all the way.
+        /// </summary>
+        float TwilightLift(float level)
+        {
+            float l = Mathf.Log10(Mathf.Max(level, 1e-9f));
+            float open = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(Mathf.Log10(0.6f), Mathf.Log10(0.12f), l));
+            float close = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(-4f, -2f, l));
+            return twilightLift * open * close;
+        }
+
+        /// <summary>The sky fill for the sun at azimuth / elevation s (degrees).</summary>
+        void ApplySkyFill(Vector2 s)
+        {
+            if (!fill) return;
+            SkyFillLux = 0f;
+            // the share of the sky's light HDRP no longer gives: its sky is lit by the sun Light, faded as above, and gives
+            // the ground much less than the model's sky already as the sun nears the horizon (measured: the ground fell
+            // to about a third between 6 and 3 degrees up), so the fill comes in from 8 degrees up
+            float lost = 1f - Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(-1f, 8f, s.y));
+            if (skyFill && storm.PhysicalSky && lost > 1e-4f)
+            {
+                // the storm model's sky on level ground: its radiance (storm units, StormRenderer.Luminance nits each) over
+                // the cap, ring and horizon bands by their cosine-weighted shares of the dome (0-37.5, 37.5-66, 66-90
+                // degrees from the zenith), times pi
+                SkyLighting.Bands(storm.Lighting, out var zen, out var mid, out var hor, out _);
+                var e = (0.37f * (Vector3)zen + 0.465f * (Vector3)mid + 0.165f * (Vector3)hor) * (Mathf.PI * storm.Luminance);
+                var amb = StormSceneAmbient.Current;
+                float peak = Mathf.Max(e.x, Mathf.Max(e.y, e.z));
+                SkyFillLux = (0.2126f * e.x + 0.7152f * e.y + 0.0722f * e.z) * lost * (amb ? amb.Ambient : 1f);
+                if (peak > 0f)
+                {
+                    // from the sky leaning toward the sun's bearing; brighter by 1 / cos(lean) so level ground takes SkyFillLux
+                    fill.transform.rotation = Quaternion.LookRotation(-StormRenderer.StormToWorldDir(StormRenderer.SunVol(s.x, 90f - skyFillLean)));
+                    fill.color = new Color(e.x / peak, e.y / peak, e.z / peak);
+                    fill.intensity = peak * lost * (amb ? amb.Ambient : 1f) / Mathf.Cos(skyFillLean * Mathf.Deg2Rad);
+                }
+            }
+            fill.enabled = SkyFillLux > 1e-4f;
+        }
+
+        void OnDestroy() { if (fill) Destroy(fill.gameObject); }
 
         // ------------------------------------------------------------------ the window
         void OnGUI()
@@ -282,6 +357,7 @@ namespace StormLab.TestMap
                 storm.lightPollution = Slider("town light", storm.lightPollution, 0f, 1f);
                 storm.nightFill = Slider("night fill under the base", storm.nightFill, 0f, 1f);
                 storm.purkinje = Slider("night blue shift", storm.purkinje, 0f, 1f);
+                skyFill = GUILayout.Toggle(skyFill, $"twilight sky light on the ground ({SkyFillLux:0.##} lux)");
                 storm.dropletDiameter = Slider("droplet diameter (um)", storm.dropletDiameter, 5f, 50f);
                 if (storm.lighting == StormLighting.Unified)
                 {
@@ -296,6 +372,7 @@ namespace StormLab.TestMap
             GUILayout.Label($"EV100 {ExposureEV:0.0}", small);
             GUILayout.EndHorizontal();
             if (autoExposure) compensation = Slider("compensation (stops brighter)", compensation, -4f, 3f);
+            if (autoExposure) twilightLift = Slider("twilight adaptation (stops)", twilightLift, 0f, 3f);
             else manualEV = Slider("EV100", manualEV, -6f, 16f);
 
             // ---- lightning

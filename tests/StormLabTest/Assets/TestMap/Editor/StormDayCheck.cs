@@ -87,6 +87,8 @@ public static class StormDayCheck
     }
 
     static IEnumerable<object> Frames(int n) { for (int i = 0; i < n; i++) yield return null; }
+    /// <summary>n player frames (in batch the editor's update ticks far more often than the player's frames)</summary>
+    static IEnumerable<object> PlayerFrames(int n) { int f0 = Time.frameCount; while (Time.frameCount < f0 + n) yield return null; }
 
     static IEnumerable<object> Run()
     {
@@ -112,6 +114,13 @@ public static class StormDayCheck
         from.y = Physics.Raycast(from + Vector3.up * 3000f, Vector3.down, out var hit, 6000f) ? hit.point.y + 2f : 2f;
         cam.transform.SetPositionAndRotation(from, Quaternion.LookRotation(new Vector3(target.x, from.y + 1100f, target.z) - from, Vector3.up));
         rep.AppendLine($"Storm: {storm.preset} seed {storm.seed} at {t:0.0} min ({storm.Frame.stage}); camera 9 km off; day {panel.dayOfYear}, latitude {panel.latitude:0.00}; physical lighting, auto exposure.").AppendLine();
+        // -slDayQuick: only the twilight sweep and the truck's lights
+        if (System.Environment.GetCommandLineArgs().Contains("-slDayQuick"))
+        {
+            foreach (var x in Twilight(panel, storm, cam, t, from, target)) yield return x;
+            foreach (var x in TruckLights(world, panel, storm, cam, t)) yield return x;
+            yield break;
+        }
         rep.AppendLine("| view | solar time | sun az / el | moon el, phase | key light | scene level | EV100 | mean brightness |").AppendLine("| --- | --- | --- | --- | --- | --- | --- | --- |");
         var views = new (string name, float hour, float phase)[]
         {
@@ -158,6 +167,7 @@ public static class StormDayCheck
         File.WriteAllBytes(Path.Combine(ShotDir, "day_sheet.jpg"), sheet.EncodeToJPG(88));
         Object.DestroyImmediate(sheet);
         rep.AppendLine().AppendLine("Images: `Screenshots/day_*.png`; contact sheet `Screenshots/day_sheet.jpg` (left to right, top to bottom: " + string.Join(", ", views.Select(v => v.name)) + ").");
+        foreach (var x in Twilight(panel, storm, cam, t, from, target)) yield return x;
 
         // Night: what lights the storm. Both nights with the storm's town light off, then its night fill off too; the
         // storm (the frame's upper 55 %) and the ground (its lower 30 %) measured apart, mean brightness 0..100 %
@@ -239,17 +249,11 @@ public static class StormDayCheck
         }
         bool barnOk = !barn.isActiveAndEnabled;   // off by day (the last view)
         panel.hour = 23f; panel.Apply();
-        nlights.headlightMode = TestMapNightLights.Headlights.Auto;
         foreach (var x in Frames(40)) yield return x;   // (the near lights are switched twice a second)
-        barnOk &= barn.isActiveAndEnabled && nlights.HeadlightsOn;
-        var behind = carT.position - carT.forward * 12f + Vector3.up * 6f;
-        cam.transform.SetPositionAndRotation(behind, Quaternion.LookRotation(carT.position + carT.forward * 30f - behind, Vector3.up));
-        storm.StepTo(t, storm.Clock, true); storm.ResetHistory(cam);
-        foreach (var x in Frames(6)) yield return x;
-        StormLabTestKit.Render(cam, Path.Combine(ShotDir, "lights_truck_night.png"), 1200, 675, 6);
-        rep.AppendLine("- `Screenshots/lights_truck_night.png`: the truck from behind at night, headlights on (auto)");
-        rep.AppendLine($"- {(barnOk ? "PASS" : "FAIL")}: yard lights off by day, on at night, and the headlights on at night ({yard.Length} yard lights)");
+        barnOk &= barn.isActiveAndEnabled;
+        rep.AppendLine($"- {(barnOk ? "PASS" : "FAIL")}: yard lights off by day, on at night ({yard.Length} yard lights)");
         ok &= barnOk;
+        foreach (var x in TruckLights(world, panel, storm, cam, t)) yield return x;
 
         // Lightning at night (user, 2026-10-26: blinding, now and then glitching): flashes at real time under a full moon
         // for 25 s from the chaser's spot, with the night scaling (StormRenderer.LightningScale) and without it. Frames
@@ -305,6 +309,154 @@ public static class StormDayCheck
         storm.exposureAdaptsAtNight = true; storm.lightningAtNight = atNight0; storm.playing = false;
         rep.AppendLine().AppendLine($"- {(flashOk ? "PASS" : "FAIL")}: with the night scaling no broken pixels and no frame washed out (brightest frame's mean under 90 %); images `Screenshots/lightning_night_*.png`");
         ok &= flashOk;
+    }
+
+    /// <summary>Mean brightness 0..1 of a picture's upper 55 % (the storm, in the chaser's view) and lower 30 % (the ground).</summary>
+    static (float up, float low) UpLow(string path)
+    {
+        var tex = new Texture2D(2, 2); tex.LoadImage(File.ReadAllBytes(path));
+        var px = tex.GetPixels32(); int w = tex.width, hh = tex.height;
+        double up = 0, lo = 0; int nu = 0, nlo = 0;
+        for (int y = 0; y < hh; y++) for (int x = 0; x < w; x++)
+        {
+            var c = px[y * w + x]; float v = (c.r + c.g + c.b) / 765f;
+            if (y > hh * 0.45f) { up += v; nu++; } else if (y < hh * 0.3f) { lo += v; nlo++; }
+        }
+        Object.DestroyImmediate(tex);
+        return ((float)(up / nu), (float)(lo / nlo));
+    }
+
+    /// <summary>
+    /// Twilight (user, 2026-10-30: the ground black as at midnight while the clouds still had sunlight): the chaser's view
+    /// from sunset into night, with the panel's sky fill and without it; the storm and the ground measured apart. With it,
+    /// the ground must fade steadily (no step where HDRP's sun Light goes out) and keep about the share of the storm's
+    /// brightness it has at sunset until the twilight sky is gone.
+    /// </summary>
+    static IEnumerable<object> Twilight(TestMapStormPanel panel, StormRenderer storm, Camera cam, float t, Vector3 from, Vector3 target)
+    {
+        rep.AppendLine().AppendLine("## Twilight: the ground and the storm").AppendLine();
+        rep.AppendLine("Chaser's view, full moon; mean brightness of the storm (upper 55 %) and the ground (lower 30 %), with the panel's sky fill and without it.").AppendLine();
+        rep.AppendLine("| solar time | sun el | EV100 | sky fill, lux | storm | ground | ground / storm | ground, no fill |").AppendLine("| --- | --- | --- | --- | --- | --- | --- | --- |");
+        cam.transform.SetPositionAndRotation(from, Quaternion.LookRotation(new Vector3(target.x, from.y + 1100f, target.z) - from, Vector3.up));
+        float[] hours = { 18.6f, 18.9f, 19.1f, 19.25f, 19.4f, 19.55f, 19.7f, 19.85f, 20.0f, 20.2f, 20.5f, 21f };
+        var ground = new List<float>(); var stormB = new List<float>(); var ratio = new List<float>(); var grounds0 = new List<float>(); var els = new List<float>();
+        bool fill0 = panel.skyFill;
+        foreach (var h in hours)
+        {
+            var row = new float[2, 2]; float lux = 0f, ev = 0f;
+            foreach (bool f in new[] { true, false })
+            {
+                panel.skyFill = f; panel.hour = h; panel.moonPhase = 0.5f; panel.clockRuns = false; panel.Apply();
+                storm.StepTo(t, storm.Clock, true); storm.ResetHistory(cam);
+                // (the storms' hiding of the sky, StormSceneAmbient, settles over about 1.5 s)
+                float w0 = Time.realtimeSinceStartup;
+                while (Time.realtimeSinceStartup - w0 < 3f) yield return null;
+                panel.Apply();
+                if (f) { lux = panel.SkyFillLux; ev = panel.ExposureEV; }
+                string path = Path.Combine(ShotDir, $"twilight_{h:00.00}_{(f ? "fill" : "nofill")}.png");
+                StormLabTestKit.Render(cam, path, 800, 450, 6);
+                var (u, l) = UpLow(path);
+                row[f ? 0 : 1, 0] = u; row[f ? 0 : 1, 1] = l;
+            }
+            ground.Add(row[0, 1]); stormB.Add(row[0, 0]); ratio.Add(row[0, 1] / Mathf.Max(row[0, 0], 1e-4f)); grounds0.Add(row[1, 1]); els.Add(panel.SunAzEl.y);
+            rep.AppendLine($"| {Mathf.FloorToInt(h):00}:{Mathf.FloorToInt(h * 60 % 60):00} | {panel.SunAzEl.y:0.0} | {ev:0.0} | {lux:0.###} | {row[0, 0] * 100:0.0} % | {row[0, 1] * 100:0.0} % | {ratio[ratio.Count - 1]:0.00} | {row[1, 1] * 100:0.0} % |");
+        }
+        panel.skyFill = fill0;
+        // no step up: the ground at each later time no brighter than the one before, beyond the storm's own change (the
+        // exposure opens through twilight) and half a percent of the frame
+        bool steady = true;
+        for (int i = 1; i < ground.Count; i++) steady &= ground[i] <= ground[i - 1] * Mathf.Max(1f, stormB[i] / Mathf.Max(stormB[i - 1], 1e-4f)) + 0.005f;
+        // the ground keeps a fair share of its sunset look while the sun is 0-6 degrees down
+        float r0 = ratio[0];
+        bool kept = true;
+        for (int i = 0; i < ground.Count; i++) if (els[i] < 0f && els[i] > -6f) kept &= ratio[i] > 0.3f * r0;
+        rep.AppendLine().AppendLine($"- {(steady ? "PASS" : "FAIL")}: the ground darkens steadily from sunset into night (no step brighter than the storm's)");
+        rep.AppendLine($"- {(kept ? "PASS" : "FAIL")}: with the sun 0-6 degrees down the ground keeps over 30 % of its share of the storm's brightness at {hours[0]:0.0} h");
+        rep.AppendLine("- Images: `Screenshots/twilight_<hour>_fill.png` and `_nofill.png`");
+        ok &= steady && kept;
+    }
+
+    /// <summary>
+    /// The truck's lights (user, 2026-10-30: on at any time, covering more ground; L cycles off, low, high with the light
+    /// bar): from behind the truck and from 120 m above the road ahead, each mode at night under a full moon and at dusk;
+    /// the ground ahead measured in the view from above, near (10-30 m ahead) and far (60-150 m).
+    /// </summary>
+    static IEnumerable<object> TruckLights(TestMapWorld world, TestMapStormPanel panel, StormRenderer storm, Camera cam, float t)
+    {
+        rep.AppendLine().AppendLine("## The truck's lights").AppendLine();
+        var nl = Object.FindAnyObjectByType<TestMapNightLights>();
+        var carT = world.car ? world.car.transform : null;
+        if (!nl || !carT) { ok = false; rep.AppendLine($"- FAIL: night lights {nl}, truck {carT}"); yield break; }
+        rep.AppendLine("| time | mode | near road (10-30 m) | far road (60-150 m) | lights on | EV100 | boost | low beam, cd | high beam, cd |").AppendLine("| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
+        var fwd = Vector3.ProjectOnPlane(carT.forward, Vector3.up).normalized;
+        var mode0 = nl.headlightMode;
+        var means = new Dictionary<(string, TestMapNightLights.Headlights), (float near, float far)>();
+        bool lightsOk = true;
+        foreach (var (name, hour) in new[] { ("night", 23f), ("dusk", 19.8f) })
+            foreach (var mode in new[] { TestMapNightLights.Headlights.Off, TestMapNightLights.Headlights.Low, TestMapNightLights.Headlights.High })
+            {
+                panel.hour = hour; panel.moonPhase = 0.5f; panel.clockRuns = false; panel.Apply();
+                nl.headlightMode = mode;
+                storm.StepTo(t, storm.Clock, true);
+                foreach (var x in PlayerFrames(3)) yield return x;
+                var lights = carT.GetComponentsInChildren<Light>().Where(l => l.isActiveAndEnabled).ToArray();
+                bool want = mode == TestMapNightLights.Headlights.Off ? lights.Length == 0 : mode == TestMapNightLights.Headlights.Low ? lights.Length == 2 : lights.Length == 5;
+                lightsOk &= want;
+                // from behind
+                var behind = carT.position - fwd * 12f + Vector3.up * 6f;
+                cam.transform.SetPositionAndRotation(behind, Quaternion.LookRotation(carT.position + fwd * 40f - behind, Vector3.up));
+                storm.ResetHistory(cam);
+                foreach (var x in PlayerFrames(3)) yield return x;
+                StormLabTestKit.Render(cam, Path.Combine(ShotDir, $"lights_truck_{name}_{mode.ToString().ToLowerInvariant()}.png"), 1200, 675, 6);
+                // from above: the road ahead, the truck at the bottom edge, ahead up the picture
+                var mid = carT.position + fwd * 75f;
+                cam.transform.SetPositionAndRotation(mid + Vector3.up * 130f, Quaternion.LookRotation(Vector3.down, fwd));
+                storm.ResetHistory(cam);
+                foreach (var x in PlayerFrames(3)) yield return x;
+                string above = Path.Combine(ShotDir, $"lights_above_{name}_{mode.ToString().ToLowerInvariant()}.png");
+                StormLabTestKit.Render(cam, above, 900, 900, 6);
+                var (near, far) = Strip(above, cam, carT.position, fwd);
+                means[(name, mode)] = (near, far);
+                rep.AppendLine($"| {name} | {mode} | {near * 100:0.0} % | {far * 100:0.0} % | {lights.Length} | {panel.ExposureEV:0.0} | {nl.Boost:0.##} | {(nl.headlights.Length > 0 && nl.headlights[0] ? nl.headlights[0].intensity : 0f):0.###E+0} | {carT.GetComponentsInChildren<Light>(true).Where(l => l.name.StartsWith("High")).Select(l => l.intensity).DefaultIfEmpty(0f).First():0.###E+0} |");
+            }
+        nl.headlightMode = mode0;
+        // each step lights more of the road, at dusk as at night
+        bool more = true;
+        foreach (var name in new[] { "night", "dusk" })
+        {
+            var o = means[(name, TestMapNightLights.Headlights.Off)]; var lo = means[(name, TestMapNightLights.Headlights.Low)]; var hi = means[(name, TestMapNightLights.Headlights.High)];
+            more &= lo.near > o.near + 0.03f && lo.far > o.far + 0.01f && hi.far > lo.far + 0.01f;
+        }
+        rep.AppendLine().AppendLine($"- {(lightsOk ? "PASS" : "FAIL")}: off has no lights on, low beams two, high beams five (low, high, light bar)");
+        rep.AppendLine($"- {(more ? "PASS" : "FAIL")}: low beams light the road near and far, high beams light the far road more");
+        rep.AppendLine("- Images: `Screenshots/lights_truck_<time>_<mode>.png` (from behind) and `lights_above_<time>_<mode>.png` (from above, the truck at the bottom)");
+        ok &= lightsOk && more;
+    }
+
+    /// <summary>Mean brightness of a 12 m wide strip of the road ahead in a view from above, 10-30 m and 60-150 m ahead.</summary>
+    static (float near, float far) Strip(string path, Camera cam, Vector3 carPos, Vector3 fwd)
+    {
+        var tex = new Texture2D(2, 2); tex.LoadImage(File.ReadAllBytes(path));
+        var px = tex.GetPixels32(); int w = tex.width, h = tex.height;
+        var right = Vector3.Cross(Vector3.up, fwd);
+        float Mean(float d0, float d1)
+        {
+            double s = 0; int n = 0;
+            for (float d = d0; d <= d1; d += 1f)
+                for (float a = -6f; a <= 6f; a += 1f)
+                {
+                    var p = carPos + fwd * d + right * a;
+                    if (Physics.Raycast(p + Vector3.up * 50f, Vector3.down, out var hit, 100f)) p = hit.point;
+                    var v = cam.WorldToViewportPoint(p);
+                    if (v.z <= 0f || v.x < 0f || v.x > 1f || v.y < 0f || v.y > 1f) continue;
+                    var c = px[Mathf.Clamp((int)(v.y * h), 0, h - 1) * w + Mathf.Clamp((int)(v.x * w), 0, w - 1)];
+                    s += (c.r + c.g + c.b) / 765f; n++;
+                }
+            return n > 0 ? (float)(s / n) : 0f;
+        }
+        var o = (Mean(10f, 30f), Mean(60f, 150f));
+        Object.DestroyImmediate(tex);
+        return o;
     }
 
     /// <summary>One frame of the camera, read back in half float (what HDRP wrote, values past 1 and broken ones kept).</summary>

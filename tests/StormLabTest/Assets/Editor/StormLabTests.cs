@@ -330,7 +330,7 @@ public static class StormLabTests
 
     /// <summary>
     /// One tornado through its life (-slTornadoLife preset seed cycle [tag]): the detailed tornado of that cycle at six
-    /// points of its life, from a chaser 140 degrees round from it (as the sheets), the game's half-resolution blended march
+    /// points of its life (a tag with "spin": six frames 3 s apart at 0.45 of its life instead, to see it turn), from a chaser 140 degrees round from it (as the sheets), the game's half-resolution blended march
     /// and a 15 degree evening sun. Sheet: Screenshots/storm_life_{preset}_{seed}_{cycle}{_tag}.png; the stage and funnel size
     /// of each shot go to the log. A tag containing "early" shows the first 30 % of its life instead, "rope" the last 40 %.
     /// </summary>
@@ -349,12 +349,15 @@ public static class StormLabTests
         // a tag with "early" in it shows its formation instead (the first 30 % of its life)
         // ("rope": a wedge narrowing before its rope-out, then the rope-out)
         float r0 = (float)StormTornadoes.RopeStart(tg), rs = (float)StormTornadoes.ShrinkSpan(tg), rf = (float)tg.ropeFrac;
+        // ("spin": six frames 3 s of storm time apart at 0.45 of its life, to see it turn)
+        bool spin = tag.Contains("spin");
         var fracs = tag.Contains("early") ? new[] { 0.005f, 0.03f, 0.07f, 0.12f, 0.19f, 0.3f }
             : tag.Contains("rope") ? new[] { r0 - rs - 0.01f, r0 - 0.5f * rs, r0, r0 + 0.25f * rf, r0 + 0.5f * rf, r0 + 0.8f * rf }
+            : spin ? new[] { 0.45f, 0.45f, 0.45f, 0.45f, 0.45f, 0.45f }
             : new[] { 0.05f, 0.15f, 0.3f, 0.45f, 0.6f, 0.8f };
         foreach (float f in fracs)
         {
-            float T = (float)(tg.formMin + f * tg.LifeMin);
+            float T = (float)(tg.formMin + f * tg.LifeMin) + (spin ? tiles.Count * 3f / 60f : 0f);
             storm.StepTo(T, 100f, true); StormLabTestKit.Sync();
             var g = storm.TornadoGroundWorld; g.y = storm.origin.y;
             float zb = (float)(storm.Plan.zb - StormDesign.CLOUD_BASE_LIFT_KM);

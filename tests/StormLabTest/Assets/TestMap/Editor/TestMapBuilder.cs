@@ -730,7 +730,8 @@ public static class TestMapBuilder
         return l;
     }
 
-    /// <summary>The truck's headlights, at its lamps (replacing any it has), aimed a little down the road.</summary>
+    /// <summary>The truck's headlights, at its lamps (replacing any it has); TestMapNightLights reshapes them into its low
+    /// beams at Start and adds the high beams and the light bar.</summary>
     static Light[] AddHeadlights(TestMapCar car)
     {
         var body = car.transform.Find("Body");

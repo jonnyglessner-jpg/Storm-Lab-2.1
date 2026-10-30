@@ -249,6 +249,15 @@ float smax(float a, float b, float k) { float h = max(k - abs(a - b), 0.0) / k; 
 // debris, extinction 1/km; z: the funnel's tone (striations and mottling on its skin, about 1). Everything turns at the
 // real rates in the block: S_tor6.x is the angular speed at the funnel's edge (rad/s), and S_spin / S_spin2 the angles
 // those rates have turned so far (StormSpin), so a rate that changes changes only the speed.
+// The collar, 0 .. 1: where the funnel flares, like a trumpet, into the lowering under the wall cloud (tornadoField, and the
+// tube that bounds it). For most funnels it is the top quarter or so, as in the photos (squared: a sudden crown). A
+// stovepipe's (S_tor7.w 1; a cone's, 0.5, half as far) begins half way up and curves out more gently, so its straight
+// column widens into the wall cloud (user, 2026-10-29: wider at the top, curving outward into the wall cloud).
+float tornadoCollar(float z, float ztop)
+{
+    float c = ss(lerp(0.72, 0.5, S_tor7.w) * ztop, ztop + 0.1, z);
+    return pow(c, lerp(2.0, 1.5, S_tor7.w));
+}
 float tornadoAxisAmp(float ztop) { return min((0.03 + 0.1 * S_tor2.w + 0.3 * S_tor5.w) * (0.4 + 0.6 * ztop), 0.22 * ztop + 0.02); }
 float tornadoBound() { return max(S_tor2.y * 1.6, S_tor2.x * max(S_tor6.w, 1.0) * 1.3) + tornadoAxisAmp(S_base.x) + S_tor10.z * 1.35 + 0.35; }
 
@@ -268,9 +277,9 @@ float tornadoTube(float z0, float z1)
     float f;
     {
         float zh = min(z1, zb + 0.15);
-        float collar = ss(0.72 * ztop, ztop + 0.1, zh);
+        float collar = tornadoCollar(zh, ztop);
         float flare = min(0.25 * S_wall.z + 0.3 * S_tor2.y, 1.6 * S_tor2.y + 0.1);
-        float rad = lerp(S_tor2.x, S_tor2.y, pow(saturate(zh / ztop), lerp(3.0, 0.7, S_tor.w))) + collar * collar * flare * (1.0 - 0.4 * S_tor2.w);
+        float rad = lerp(S_tor2.x, S_tor2.y, pow(saturate(zh / ztop), lerp(3.0, 0.7, S_tor.w))) + collar * flare * (1.0 - 0.4 * S_tor2.w);
         // (a wedge breaking up into scud as it ropes out tears its edge up to 0.3 radii further out)
         f = rad * ((S_tor4.w > 0.5 ? 1.35 + 0.3 * ss(0.0, 0.3, S_tor4.z) : 1.25) + rr);
         if (S_tor4.w > 0.5)
@@ -287,9 +296,18 @@ float tornadoTube(float z0, float z1)
     }
     return f;
 }
-// the dust whirl: its height, and how far it reaches from the axis' foot (tornadoAxis at the ground)
-float tornadoWhirlTop() { return 1.15 * (0.1 + 0.36 * S_tor.w * (1.0 - S_tor2.w) + 0.12 * (1.0 - S_tor2.z)); }
-float tornadoWhirlR() { return 1.475 * max(S_tor2.x * S_tor6.w + 0.06, 0.08); }
+// the debris column's top, km (tornadoField's dh): taller for a wider, stronger tornado (a wedge's lower for its
+// width) and where the funnel does not reach down, lower as it ropes out; dust: 1 - 0.7 x the wedge's breakdown
+float tornadoDustTop(float dust)
+{
+    float wedgeD = S_tor6.w < 2.0 ? 1.0 : 0.0;
+    // (a wedge's column at most 0.3 km: at 0.45 it wrapped half the envelope in brown haze)
+    return clamp(0.1 + 2.0 * S_tor2.x * dust * lerp(1.0, 0.4, wedgeD) + 0.03 * S_tor7.z, 0.15, lerp(0.45, 0.3, wedgeD)) * (1.0 - 0.5 * S_tor2.w) + 0.12 * (1.0 - S_tor2.z);
+}
+// the dust: its height, and how far it reaches from the axis' foot (tornadoAxis at the ground): the column's billows to
+// 1.5 radii, the fan to 2
+float tornadoWhirlTop() { return 1.2 * tornadoDustTop(1.0); }
+float tornadoWhirlR() { return 2.1 * max(S_tor2.x * S_tor6.w + 0.06, 0.08); }
 float tornadoReach(float z0, float z1)
 {
     float zb = S_base.x;
@@ -382,11 +400,11 @@ float3 tornadoField(float3 q)
     float rad = lerp(S_tor2.x, S_tor2.y, pow(h, lerp(3.0, 0.7, S_tor.w)));
     // collar: the funnel flares smoothly, like a trumpet, into the lowering under the wall cloud, so the two are one cloud.
     // In the photos the flare is the top quarter or so and a few funnel widths across, leaving the funnel exposed below.
-    float collar = ss(0.72 * ztop, ztop + 0.1, q.z);
+    float collar = tornadoCollar(q.z, ztop);
     // A wedge's envelope (S_tor4.w) already slants out to a top much wider than its foot: it takes a third of the flare,
     // which on top of its own width turned its crown into a sudden trumpet (user, 2026-10-26)
     float flare = min(0.25 * S_wall.z + 0.3 * S_tor2.y, 1.6 * S_tor2.y + 0.1) * (S_tor4.w > 0.5 ? 0.35 : 1.0);
-    rad += collar * collar * flare * (1.0 - 0.4 * S_tor2.w);
+    rad += collar * flare * (1.0 - 0.4 * S_tor2.w);
     g_torN = safeNorm(dv, float2(1.0, 0.0));
     // The skin, from the reference photos (data/reference/tornadoes/NOTES.md): smooth at the funnel's scale and never
     // grooved. Texture is sampled in a frame turning with the vortex, in units of the funnel's mean radius both round it
@@ -409,14 +427,24 @@ float3 tornadoField(float3 q)
     // (a wedge's envelope: 0.3-0.6, from 0.45-0.85, which broke the outline of a mile-wide wedge into jagged lumps)
     // (and its crown no rougher than its sides: 0.3-0.6 heaped it into lumps where it meets the cloud)
     float rough = ((n1 - 0.5) * 0.3 + (n2 - 0.5) * 0.12) * roughK * (S_tor4.w > 0.5 ? lerp(0.3, 0.36, collar) : lerp(0.35, 0.6, collar));
-    // Striations: fine, nearly level rings (one slow helix, a third of the mean radius between rings, a few degrees off
-    // level), wavering and broken into patches, faint. Four coarse arms wound at 30 degrees read as a barber pole
-    // (user, 2026-10-26). Faded out before the rings are finer than a pixel, so a distant funnel does not shimmer.
-    float ringK = 18.0;
-    float ringFade = 1.0 - ss(0.15, 0.4, texFootprint * ringK / (6.2832 * rm));
-    float band = sin(zz * ringK + atan2(pr.y, pr.x) + (n2 - 0.5) * 2.5) * ss(0.4, 0.7, n1) * ringFade;
-    rough += S_tor8.w * 0.012 * band;
-    float tone = 1.0 + S_tor8.w * 0.05 * band + (n1 - 0.5) * 0.1 * saturate(roughK - 0.4);
+    // Striations (a laminar skin, S_tor8.w): faint, irregular streaks running up the funnel with the flow, about a dozen
+    // round it and many radii tall, turning with the vortex; no periodic pattern. Four coarse arms wound at 30 degrees
+    // read as a barber pole (user, 2026-10-26), and the level rings that replaced them (a sine, a third of a radius
+    // apart, +-5 % in tone) read as a ribbed, striped pipe (user, 2026-10-30): any regular band does. Faded out before
+    // the streaks are finer than a pixel, so a distant funnel does not shimmer.
+    float streakK = 14.0;
+    float streakFade = 1.0 - ss(0.15, 0.4, texFootprint * streakK / (6.2832 * rm));
+    float streak = (n3k(float3(pr * 2.2, zz * 0.12), 1.0, float3(0.53, 0.21, 0.67)) - 0.5) * streakFade;
+    rough += S_tor8.w * 0.006 * streak;
+    float tone = 1.0 + S_tor8.w * 0.03 * streak + (n1 - 0.5) * 0.16 * saturate(roughK - 0.4);
+    // Tags (user, 2026-10-30: the rotation was barely visible): torn lumps of condensation standing off the funnel's edge
+    // by up to a third of its radius, five or six round it and a radius or two tall, turning with the skin, so the
+    // silhouette changes as they come round and the eye reads the spin; a little darker in tone. A laminar skin has a
+    // quarter of them, a wedge's envelope a third (its outline stays smooth, user 2026-10-26).
+    float tagN = n3k(float3(pr * 0.9, zz * 0.45), 1.0, float3(0.77, 0.29, 0.58));
+    float tag = ss(0.52, 0.8, tagN) * lerp(0.25, 1.0, saturate((roughK - 0.3) / 0.6)) * (S_tor4.w > 0.5 ? 0.35 : 1.0);
+    rough -= 0.3 * tag;
+    tone *= 1.0 - 0.12 * tag;
     // condensation reaches down to condBottom; below it only a faint sheath (a high base leaves a gap, filled by dust)
     float condBottom = zb * (1.0 - S_tor2.z);
     float down = ss(condBottom - 0.06, condBottom + 0.12, q.z);
@@ -478,34 +506,54 @@ float3 tornadoField(float3 q)
             funnel = max(funnel, vis * S_tor4.y * 0.55 * mv * lerp(0.4, 1.0, down) * lerp(0.75, 1.0, ss(0.0, 0.3, h)));
         }
     }
-    // dust and debris: a low whirl wider than the funnel, rising as a sheath round its lower part. A wide envelope's
-    // cloud hugs it (S_tor6.w 1.35) and is torn into wisps spiralling in with the inflow; a narrow funnel's is a broader
-    // skirt (2.4), less broken up. It shrinks back toward the central vortex as a wedge breaks down.
+    // Dust and debris (the reference photos, data/reference/tornadoes/NOTES.md; user, 2026-10-30: more realistic. It was
+    // a smooth, pale dome): a debris column round the funnel's foot, 100-450 m tall and two to three funnel widths
+    // across, opaque and dense in its core, its outline heaved into billows that rise with the lofted dust (not a smooth
+    // dome), ragged at its top; a thin fan of dust spreading along the ground round it to twice its radius; and curtains
+    // of dust lifted up the funnel in curled bands that follow the rotation, hugging the funnel and thinning out by 0.4
+    // of the base. A wide envelope's column hugs it (S_tor6.w 1.35), a narrow funnel's is broader (2.4). It shrinks back
+    // toward the central vortex as a wedge breaks down.
     float dust = 1.0 - 0.7 * breakdown;
     float wedgeD = S_tor6.w < 2.0 ? 1.0 : 0.0;
     float dr = max(S_tor2.x * S_tor6.w * dust + 0.06, 0.08);
-    float dh = 0.1 + lerp(0.36, 0.26, wedgeD) * S_tor.w * (1.0 - S_tor2.w) + 0.12 * (1.0 - S_tor2.z);   // taller where the funnel does not reach down
+    float dh = tornadoDustTop(dust);
     float2 dustDv = q.xy - tornadoAxis(0.0, ztop, clock);
     float dustD = length(dustDv);
-    float3 dustQ = float3(rot2(dustDv, -S_spin2.y), q.z - clock * 0.008);
-    float dn = n3k(dustQ, 0.7 / dr, float3(0.3, 0.1, 0.7));
-    float fine = n3k(dustQ * float3(1.0, 1.0, 1.6), 2.0 / dr, float3(0.62, 0.18, 0.41));
-    // A dense, rounded inner cloud survives between the irregular outer streamers.
-    // Noise modulates the rim and lofted dust, rather than punching holes through it.
+    // noise in a frame turning with the dust and rising with it (about 15 m/s). The dust turns differentially (user,
+    // 2026-10-30: the rotation was barely visible): inside the radius of maximum wind at the core's angle (S_spin.z,
+    // solid-body, seconds per turn), three radii out at the whirl's (S_spin2.y, the slow 1 / r^2 flow), sheared between
+    // (both integrated angles, StormSpin). One frame at the whirl's rate turned a cone's whole column once in minutes.
+    float rcD = max(S_tor6.z, 0.02);
+    float turn = lerp(S_spin.z, S_spin2.y, ss(rcD, 3.0 * rcD, dustD));
+    float3 dustQ = float3(rot2(dustDv, -turn), q.z - clock * 0.015);
+    float dn = n3k(dustQ, 0.7 / dr, float3(0.3, 0.1, 0.7));                                  // broad unevenness
+    float fine = n3k(dustQ * float3(1.0, 1.0, 1.6), 2.0 / dr, float3(0.62, 0.18, 0.41));    // fine texture
+    float lumps = n3k(dustQ * float3(1.0, 1.0, 0.7), 1.3 / dr, float3(0.11, 0.83, 0.49));   // the billows, taller than wide
     float hd = saturate(q.z / max(dh, 0.05));
-    float edge = dr * (1.0 - 0.45 * hd * hd) * (1.0 + (dn - 0.5) * 0.5);
+    // the column: a little wider at its foot, its outline heaved by the billows (about +-30 %), its top ragged
+    float edge = dr * (1.0 - 0.3 * hd * hd) * (1.0 + (dn - 0.5) * 0.5 + (lumps - 0.5) * 0.6);
     float radial = dustD / max(edge, 0.02);
-    float whirl = ss(1.18, 0.45, radial) * ss(dh * (0.85 + 0.3 * dn), dh * 0.15, q.z);
+    float column = ss(1.15, 0.5, radial) * ss(dh * (0.8 + 0.4 * lumps), dh * 0.2, q.z);
+    // dense and opaque inside; toward its rim and top it is billows with gaps between them
+    float inner = ss(0.9, 0.35, radial) * ss(0.9, 0.3, hd);
+    float billow = ss(0.25, 0.7, 0.55 * lumps + 0.45 * fine);
+    float colD = column * lerp(billow, 1.0, inner);
+    // the fan: a thin sheet of dust along the ground to twice the column's radius, thinning outward, textured
+    float fan = ss(2.0, 0.9, dustD / dr) * ss(0.12 * dh + 0.03, 0.0, q.z) * (0.25 + 0.75 * fine) * 0.35;
+    // the curtains: dust lifted up the funnel in curled bands following the rotation (a slow helix round the funnel,
+    // broken by the fine noise so no band is regular), hugging the funnel and thinning upward
     float rsh = max(rad * dust, 0.02);
-    float sheath = ss(rsh * lerp(1.9, 1.3, wedgeD), rsh * 0.65, d + (dn - 0.5) * rsh * 0.4) * ss(0.4 * zb, 0.0, q.z) * 0.45;
     float ang = atan2(dustQ.y, dustQ.x);
-    float arms = 0.5 + 0.5 * sin(ang * 4.0 + log(max(dustD, 0.01) / dr) * 6.0 + q.z / dr * 3.0);
-    float wisps = ss(0.3, 0.8, 0.4 * arms + 0.6 * fine);
-    float clumps = lerp(1.0, 0.4 + 0.6 * wisps, ss(0.35, 1.1, radial));
-    // big and opaque (data/reference/tornadoes/NOTES.md): the inner whirl and the sheath round the funnel's foot hide what
-    // is behind them; only the streamers at the rim stay thin
-    float debris = S_tor3.z * (whirl * clumps * 30.0 + sheath * (0.7 + 0.3 * fine) * 20.0);
-    return float3(funnel, debris, tone);
+    float helix = 0.5 + 0.5 * sin(ang * 3.0 - q.z / max(rsh, 0.03) * 1.2 + log(max(dustD, 0.01) / rsh) * 2.5);
+    float bands = ss(0.35, 0.75, 0.5 * helix + 0.5 * fine);
+    // (a wedge's envelope is itself the dust-laden mass: its curtains stay close to it and low, or they draped the whole
+    // lower half of a mile-wide envelope in brown haze)
+    float sheath = ss(rsh * lerp(2.2, 1.3, wedgeD), rsh * lerp(0.7, 0.85, wedgeD), d + (dn - 0.5) * rsh * 0.5) * ss(lerp(0.4, 0.22, wedgeD) * zb, 0.05 * zb, q.z) * bands * 0.5 * (1.0 - 0.4 * wedgeD);
+    // big and opaque (NOTES.md): the column and the curtains at the funnel's foot hide what is behind them; the fan and
+    // the billows at the rim stay thin
+    float debris = S_tor3.z * (colD * 30.0 + fan * 20.0 + sheath * 20.0);
+    // the dust's tone churns with its texture (+-25 %), so its turning shows in the shading; the funnel's tone where it draws
+    return float3(funnel, debris, lerp(0.75 + 0.5 * fine, tone, saturate(funnel * 4.0)));
 }
 
 // Sunlight on the tornado. The light grid is coarse and puts everything under the base in the base's shadow, but with the
@@ -1334,10 +1382,17 @@ void March(uint3 gid : SV_DispatchThreadID)
                         // lowering's underside, sampled there, in the same model as the near field's union), with only a
                         // little shading on it (lighter toward the sun, darker at its edges as seen, its own soft tone) and
                         // the dirt it lofts low down.
-                        float3 qT = float3(q.xy, ztop);
+                        // Sampled at the lowering's underside at the funnel (nearField's bowl: zb - lowering under its middle),
+                        // not at the funnel's top: ztop is 0.6 of the lowering down, 0.4 of it inside the cloud, and the unified
+                        // light there is the cloud's dim interior, so the wedge was far darker than the wall cloud it hangs from
+                        // in any daylight (user, 2026-10-30). A stovepipe's top takes the wall cloud's light at 0.8 ztop,
+                        // about the bowl's bottom, which is why it matched and the wedge did not.
+                        float bowlT = 1.0 - pow(saturate(length(q.xy - S_wall.xy) / max(S_wall.z, 0.1)), 2.4);
+                        float zT = min(ztop, max(S_base.x - S_wall2.x * (0.15 + 0.85 * bowlT), 0.25));
+                        float3 qT = float3(q.xy, zT);
                         float3 tcT = uvw(qT);
                         float4 ltT = _Light.SampleLevel(sampler_LinearClamp, tcT, 0);
-                        float3 sunzT = sunAt(ztop);
+                        float3 sunzT = sunAt(zT);
                         float3 wallC;
                         if (uni) wallC = stormLight(qT, ltT, _SkyVis.SampleLevel(sampler_LinearClamp, tcT, 0), sunzT, sunc, g_phW, 1.0, 0.0, 0.0, 4);
                         else if (phys) wallC = (sunzT * (cloudSun(ltT.r, 0.0, 1.0) * (1.4 / 1.9)) + skyLight(_SkyVis.SampleLevel(sampler_LinearClamp, tcT, 0)) + groundLight(qT, sunc)) * 0.88;
@@ -1367,7 +1422,10 @@ void March(uint3 gid : SV_DispatchThreadID)
                         float4 ltD = lt; ltD.r = _TorP.w > 0.5 ? lt.r : funnelSunDepth(q);
                         tl = stormLight(q, ltD, sv, sunz, sunc, phD, 1.0, od * (0.15 + 0.65 * (1.0 - lit)) / 0.38, 0.0, 1, phAD) * (0.65 + 0.35 * shade);
                     }
-                    be += tv.y; Lc += tl * soil * tv.y;
+                    // dense dust is darker than its soil (light lost to scattering in the thick core; the reference photos'
+                    // columns are mid-brown, their thin rims tan)
+                    float3 dustAlb = soil * lerp(0.9, 0.6, saturate(tv.y / 20.0)) * (tf.x < 0.01 ? tf.z : 1.0);
+                    be += tv.y; Lc += tl * dustAlb * tv.y;
                 }
             }
             lastBe = be;
