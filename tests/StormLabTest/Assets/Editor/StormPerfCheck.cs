@@ -297,6 +297,41 @@ public static class StormPerfCheck
         rep.AppendLine($"Volume ({storm.quality}, {vol.NV} x {vol.NV} x {vol.NZ}, {vol.VramBytes / 1048576.0:0} MB): full repaint and relight {full:0.00} ms; relight alone {relight:0.00} ms; " +
                        $"a repaint spread over frames, each frame: {string.Join(", ", steps.Select(s => $"{s:0.00}"))} ms (every {storm.rebuildEvery:0.0} s at most, when storm time has moved 0.05 min or the sun has).").AppendLine();
 
+        // ------------------------------------------------------------------ the repaint the game does
+        // A repaint spread over frames (BeginUpdate + Step, the game's path) must end where a full one ends (Update, the
+        // path every view above takes). Under the base, where the sky visibility and the ground light matter most.
+        {
+            Chaser(mature, 3f, 90f, 1.6f, 75f);
+            var p1 = (float[])storm.Frame.param.Clone(); var k1 = storm.Lighting.keyDir;
+            RenderTexture Image()
+            {
+                storm.ResetHistory(cam); RenderTexture rt = null;
+                for (int f = 0; f < 16; f++)
+                    using (var cmd = new UnityEngine.Rendering.CommandBuffer()) { rt = storm.RecordMarch(cmd, cam, null, W, H, false, out _); Graphics.ExecuteCommandBuffer(cmd); }
+                return rt;
+            }
+            string full1 = Path.Combine(ShotDir, "perf_repaint_full.png"), spread1 = Path.Combine(ShotDir, "perf_repaint_spread.png");
+            Save(Image(), full1);
+            // somewhere else first, then back by spread repaints only (twice: a repaint trims its rain by the one before)
+            At(mature - 20f);
+            Array.Copy(p1, storm.Frame.param, p1.Length); storm.StormTime = mature;   // (the storm frame travels with the clock)
+            storm.Volume.precipParams = storm.ClearParams;
+            for (int r = 0; r < 2; r++)
+            {
+                storm.Volume.BeginUpdate(p1, noiseTex, k1);
+                int frames = 0;
+                while (storm.Volume.Rebuilding && frames++ < 32)
+                    using (var cmd = new UnityEngine.Rendering.CommandBuffer()) { storm.Volume.Step(cmd); Graphics.ExecuteCommandBuffer(cmd); }
+            }
+            StormLabTestKit.Sync();
+            Save(Image(), spread1);
+            var (rm, rp) = Diff(full1, spread1);
+            bool same = rm < 0.05 && rp <= 1;
+            ok &= same;
+            rep.AppendLine($"Spread repaint against a full one (under the base): {rm:0.00} / {rp} {(same ? "PASS" : "FAIL")} (`Screenshots/perf_repaint_full.png`, `perf_repaint_spread.png`).").AppendLine();
+            Debug.Log($"[StormPerf] spread repaint vs full: {rm:0.00} / {rp} {(same ? "PASS" : "FAIL")}");
+        }
+
         // ------------------------------------------------------------------ the CPU
         storm.playing = false;
         var swc = Stopwatch.StartNew(); long gc0 = GC.GetAllocatedBytesForCurrentThread(); int n = 200;

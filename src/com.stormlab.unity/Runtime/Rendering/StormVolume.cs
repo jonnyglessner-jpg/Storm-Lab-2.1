@@ -154,6 +154,9 @@ namespace StormLab
             cmd.SetComputeTextureParam(cs, kSky, "_Dens", dens);
             cmd.SetComputeTextureParam(cs, kSky, "_OutS", skyVis);
             cmd.SetComputeVectorParam(cs, "_LDims", new Vector4(SN, SZ, L, ZT));
+            // all its levels: SkyVis takes its first level from _LSlab too, which the light grid's upper half left set
+            // (2026-10-30: the sky visibility's lower half stopped updating in the game, every base lit as open sky)
+            cmd.SetComputeVectorParam(cs, "_LSlab", Vector4.zero);
             cmd.DispatchCompute(cs, kSky, G(SN, 4), G(SN, 4), G(SZ, 4));
 
             cmd.SetComputeTextureParam(cs, kGround, "_LightIn", light);
