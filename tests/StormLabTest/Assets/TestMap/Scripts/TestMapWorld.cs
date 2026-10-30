@@ -351,7 +351,7 @@ namespace StormLab.TestMap
             }
 
             if (!showHelp) return;
-            string help = "W/S or arrows  throttle / brake / reverse    A/D  steer\nSpace  handbrake    R  reset car    L  headlights (auto / on / off)    C  camera (chase / roof; hold right mouse to look)    F  free flight (V: truck here)\n" +
+            string help = "W/S or arrows  throttle / brake / reverse    A/D  steer\nSpace  handbrake    R  reset car    L  lights (off / low / high + light bar)    C  camera (chase / roof; hold right mouse to look)    F  free flight (V: truck here)\n" +
                           "T  storm clock speed    P  pause    [ ]  -/+ 5 min    N  new storm    H  hide help (F1: all HUD)    M  sound on / off\n" +
                           "Tab  storm and lighting panel (24 hour clock)    G  game mode (two storms, one hour)\n" +
                           "Map (bottom right): click to open, click a road to get directions, Esc closes\n";
