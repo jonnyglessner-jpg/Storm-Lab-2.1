@@ -74,7 +74,7 @@ static class Render
         Console.WriteLine("roar: strength 0.9, 8 km -> 40 m over 60 s (RMS dBFS by distance)");
         var r = new RoarSynth(Fs, 5);
         float DistAt(float t) => 8000f * (float)Math.Pow(40f / 8000f, Math.Min(t / 60f, 1f));
-        var o = Run(r, 60f, t => { r.strength = 0.9f; r.distanceM = DistAt(t); r.pan = 0.3f; });
+        var o = Run(r, 60f, t => { r.strength = 0.9f; r.size = 0.8f; r.distanceM = DistAt(t); r.pan = 0.3f; });
         Sane(o, "roar"); Console.WriteLine($"  flattened samples {Hot(o):P3}, peak {Db(Peak(o))}"); Wav(Path.Combine(dir, "roar_approach_strength0.9.wav"), o, 2, Fs);
         float prev = -1; var line = ""; float atMile = 0f;
         foreach (var d in new[] { 6400f, 3200f, 1609f, 800f, 400f, 200f, 100f, 50f })
@@ -91,12 +91,29 @@ static class Render
         Check(Hot(o) < 0.02f, "roar never flattens against full scale for long (under 2 % of samples)");
         // a weak tornado: quieter, but still heard a mile out
         var w = new RoarSynth(Fs, 11);
-        var ow = Run(w, 60f, t => { w.strength = 0.3f; w.distanceM = DistAt(t); w.pan = -0.5f; });
+        var ow = Run(w, 60f, t => { w.strength = 0.3f; w.size = 0.1f; w.distanceM = DistAt(t); w.pan = -0.5f; });
         Sane(ow, "weak roar"); Wav(Path.Combine(dir, "roar_approach_strength0.3.wav"), ow, 2, Fs);
         float tm = 60f * (float)(Math.Log(1609f / 8000f) / Math.Log(40f / 8000f));
         float weakMile = Rms(ow, (int)(tm * Fs) * 2 - Fs * 2, (int)(tm * Fs) * 2);
         Console.WriteLine($"  strength 0.3 at a mile: {Db(weakMile)} dBFS; close: {Db(Rms(ow, ow.Length - Fs * 4, ow.Length))}");
         Check(weakMile > Dsp.Db(-40f) && weakMile < atMile, "a weak tornado's roar is heard a mile out, below a violent one's");
+
+        // character by size and strength (user, 2026-10-30): a rope is a waterfall (hiss over a thin rumble), a violent wedge
+        // a jet engine with the low frequencies; measured 300 m out: energy below 90 Hz against above 700 Hz
+        float LowShare(float st, float sz, uint seed)
+        {
+            var c = new RoarSynth(Fs, seed);
+            var oc = Run(c, 12f, t => { c.strength = st; c.size = sz; c.distanceM = 300f; });
+            Wav(Path.Combine(dir, $"roar_300m_strength{st:0.0}_size{sz:0.0}.wav"), oc, 2, Fs);
+            OnePole lp = default, hp = default; lp.Set(90f, Fs); hp.Set(700f, Fs);
+            double lo = 0, hi = 0;
+            for (int i = 2 * Fs; i < 12 * Fs; i++) { float x = 0.5f * (oc[i * 2] + oc[i * 2 + 1]); float l = lp.Low(x), h = hp.High(x); lo += l * l; hi += h * h; }
+            return (float)(10 * Math.Log10(lo / Math.Max(hi, 1e-12)));
+        }
+        float rope = LowShare(0.25f, 0.05f, 21), cone = LowShare(0.6f, 0.45f, 22), wedge = LowShare(0.95f, 1f, 23);
+        Console.WriteLine($"  low (<90 Hz) over high (>700 Hz) at 300 m: rope {rope:0.0} dB, cone {cone:0.0} dB, wedge {wedge:0.0} dB");
+        Check(wedge > cone && cone > rope, "the bigger and stronger the tornado, the more of its roar is low");
+        Check(wedge - rope > 12f, $"a wedge's roar carries at least 12 dB more low over high than a rope's ({wedge - rope:0.0} dB)");
     }
 
     static void Rain(string dir)

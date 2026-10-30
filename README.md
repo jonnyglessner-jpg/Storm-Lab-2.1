@@ -282,7 +282,10 @@ Cloud detail (`cloudDetail`, also on the panel; user, 2026-10-27):
 strikes and buffeting as it rises to full intensity at 80 m/s (`windRange`); the tornado's roar heard from afar
 (`RoarSynth`, user 2026-10-30: loud a mile away, deafening close in, never clipping): the vortex's own sound, a deep
 swelling rumble, a turbulent waterfall body and, for a violent one, tearing in gusts, pulsing as the suction vortices
-come round, by the tornado's peak wind and size (`RoarStrength`), at full level within 400 m (`roarFullLevelM`) and
+come round, by the tornado's peak wind (`RoarStrength`) and its size (`RoarSize`, the foot's width 15-600 m in log:
+a rope is a waterfall, hiss over a thin rumble near 65 Hz; a violent one a jet engine, a dense low-mid roar with
+tearing and a wavering whine; a wide wedge carries the low frequencies, its rumble down near 30 Hz and its body at
+80-200 Hz), at full level within 400 m (`roarFullLevelM`) and
 falling as 1 / distance beyond (-12 dB at a mile), the air taking its highs with distance, fading out over 4-8 km
 (`roarFadeKm`); close in the mix is driven harder into a soft clipper, so it gets denser rather than louder than full
 scale, and the master limiter holds the rest (about -20 dBFS RMS at a mile and -12 close in for a violent tornado, after the user halved the first version); rain and hail where the player is, read back

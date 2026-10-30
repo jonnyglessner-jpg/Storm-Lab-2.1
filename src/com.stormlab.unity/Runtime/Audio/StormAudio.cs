@@ -55,8 +55,9 @@ namespace StormLab.Audio
         public float TornadoAudio => wind != null ? wind.Amount : 0f;
         /// <summary>how loud the tornado's roar is now, 0..1 (0 silent): its strength and distance together (RoarSynth)</summary>
         public float RoarLevel => roar != null ? roar.Amount : 0f;
-        /// <summary>the nearest roaring tornado's strength (0..1) and distance (m), for the HUD and checks</summary>
+        /// <summary>the nearest roaring tornado's strength (0..1), size (0 a rope .. 1 a wide wedge) and distance (m), for the HUD and checks</summary>
         public float RoarStrength { get; private set; }
+        public float RoarSize { get; private set; }
         public float RoarDistanceM { get; private set; } = float.PositiveInfinity;
         /// <summary>whether a tornado is heard at all, wind or roar: the ambience's birds stop when it is</summary>
         public float TornadoHeard => Mathf.Max(TornadoAudio, RoarLevel);
@@ -131,6 +132,13 @@ namespace StormLab.Audio
             float bySize = Mathf.Lerp(0.7f, 1f, Mathf.Clamp01(rc / 150f));
             return byWind * bySize * Mathf.Sqrt(amt);
         }
+        /// <summary>A storm's tornado's size for its roar's character, 0 a rope .. 1 a wide wedge: the funnel's foot
+        /// (S_tor2.x, its visible radius), 15 m to 600 m across in log (user, 2026-10-30: the bigger, the lower).</summary>
+        static float RoarSizeOf(StormRenderer s)
+        {
+            float footM = Mathf.Max(s.Frame.param[14 * 4] * 2000f, 1f);
+            return Mathf.Clamp01(Mathf.Log(footM / 15f) / Mathf.Log(600f / 15f));
+        }
 
         Transform Ears()
         {
@@ -159,17 +167,17 @@ namespace StormLab.Audio
             windOut.Source.volume = windVolume;
 
             // ---- roar: the loudest tornado's, by its strength and distance (user, 2026-10-30: loud a mile away)
-            float bestLevel = 0f, bestStrength = 0f, bestDist = float.PositiveInfinity; var bestDir = Vector3.zero;
+            float bestLevel = 0f, bestStrength = 0f, bestSize = 0f, bestDist = float.PositiveInfinity; var bestDir = Vector3.zero;
             foreach (var s in storms)
             {
                 float st = RoarStrengthOf(s);
                 if (st <= 0f) continue;
                 var g = s.TornadoGroundWorld; var d = new Vector3(g.x - at.x, 0f, g.z - at.z); float dist = d.magnitude;
                 float level = RoarSynth.Loudness(st) * RoarSynth.DistanceGain(dist, roarFullLevelM, roarFadeKm.x * 1000f, roarFadeKm.y * 1000f);
-                if (level > bestLevel) { bestLevel = level; bestStrength = st; bestDist = dist; bestDir = d; }
+                if (level > bestLevel) { bestLevel = level; bestStrength = st; bestSize = RoarSizeOf(s); bestDist = dist; bestDir = d; }
             }
-            RoarStrength = bestStrength; RoarDistanceM = bestDist;
-            roar.strength = bestStrength; roar.distanceM = bestDist;
+            RoarStrength = bestStrength; RoarSize = bestSize; RoarDistanceM = bestDist;
+            roar.strength = bestStrength; roar.size = bestSize; roar.distanceM = bestDist;
             roar.fullLevelM = roarFullLevelM; roar.fadeStartM = roarFadeKm.x * 1000f; roar.fadeEndM = Mathf.Max(roarFadeKm.y, roarFadeKm.x + 0.1f) * 1000f;
             roar.pan = bestDist > 1f && bestDist < float.PositiveInfinity ? Vector3.Dot(ears.right, bestDir / bestDist) : 0f;
             roarOut.Source.volume = roarVolume;
