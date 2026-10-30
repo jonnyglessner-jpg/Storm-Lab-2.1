@@ -34,6 +34,8 @@ public static class StormPerfCheck
         if (int.TryParse(Arg("-slPerfW"), out var w)) W = w;
         if (int.TryParse(Arg("-slPerfH"), out var h)) H = h;
         diag = a.Contains("-slPerfDiag");
+        only = Arg("-slPerfOnly");
+        StormRenderer.FullKernelOnly = a.Contains("-slPerfFull");
         bool ok;
         try { ok = Run(a.Contains("-slPerfBaseline"), Arg("-slPerfQuality")); }
         catch (Exception e) { Debug.LogException(e); ok = false; }
@@ -43,6 +45,8 @@ public static class StormPerfCheck
     static StormRenderer storm, storm2; static Camera cam;
     /// <summary>-slPerfDiag: where each view's time goes (steps a pixel, without the tornado's light tests, without its fields)</summary>
     static bool diag;
+    /// <summary>-slPerfOnly a,b: only these views (experiments); -slPerfFull: the full kernel everywhere</summary>
+    static string only;
 
     static void Setup()
     {
@@ -177,6 +181,7 @@ public static class StormPerfCheck
         var diffs = new List<(string, double, int)>();
         foreach (var v in views)
         {
+            if (only != null && !only.Split(',').Contains(v.name)) continue;
             storm.Tornadoes = natural ?? storm.Tornadoes;
             if (!v.place()) { rep.AppendLine($"| {v.name} | {v.what} | FAIL: could not place | |"); ok = false; continue; }
             if (v.two)
@@ -232,7 +237,7 @@ public static class StormPerfCheck
             Debug.Log($"[StormPerf] {v.name}: {ms:0.00} ms {cmp}");
         }
         storm.Tornadoes = natural ?? storm.Tornadoes;
-        rep.AppendLine().AppendLine($"Mean over the views {total.Average():0.00} ms; worst {worst:0.00} ms ({worstName}).").AppendLine();
+        if (total.Count > 0) rep.AppendLine().AppendLine($"Mean over the views {total.Average():0.00} ms; worst {worst:0.00} ms ({worstName}).").AppendLine();
 
         // ------------------------------------------------------------------ the volume
         At(mature);

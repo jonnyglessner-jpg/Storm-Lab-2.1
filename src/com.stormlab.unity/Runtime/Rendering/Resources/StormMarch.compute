@@ -8,6 +8,8 @@
 //   - a temporal resolve that reprojects the previous frame, and an optional checkerboard march
 #pragma kernel March
 #pragma kernel Resolve
+#pragma kernel Classify
+#pragma use_dxc
 // Compiled variants (a game optimisation, 2026-10-30: "spec is to my GPU"). The march is one large kernel, and the GPU
 // reserves registers for the heaviest path it holds whether a frame takes that path or not, which leaves fewer rays in
 // flight to hide its texture reads. The renderer picks the variant (StormRenderer.RecordMarch); each draws exactly what the
@@ -105,10 +107,12 @@ float4 _TP;
 float4 _TorP;
 // x: 1 = the enhanced cloud detail (StormRenderer.cloudDetail; a game adaptation), 0 = the web build's
 float4 _CD;
-// The screen split between the variants (StormRenderer.DispatchMarch): the pixels x0, y0 .. x1, y1 (exclusive) whose rays may
-// meet a tornado. The full kernel marches only those, the one without the tornado (STORM_NO_TORNADO) only the rest (all of
-// the screen where the rectangle is empty). _TileP.xy: the first thread of this dispatch (a dispatch over the rectangle).
-float4 _TorRect, _TileP;
+// The screen split between the variants (StormRenderer.DispatchMarch): Classify sorts the march's 8 x 8 tiles into those
+// with a ray that may meet a tornado (marched by the full kernel) and the rest (by the one without it, STORM_NO_TORNADO).
+// _TileP.x 1: this dispatch marches the tiles listed in _Tiles (x | y << 16, one group each); 0: the whole screen.
+float4 _TileP;
+StructuredBuffer<uint> _Tiles;
+AppendStructuredBuffer<uint> _TilesTorOut, _TilesPlainOut;
 Texture3D<float> _DetailNoise;
 
 float3 uvw(float3 p) { float L = S_grid.z; return float3((p.x + L) / (2.0 * L), (p.y + L) / (2.0 * L), p.z / S_grid.w); }
@@ -896,19 +900,34 @@ float2 hemiPhase(float a, float g)
 // the web build's display curve, then to linear for HDRP's colour buffer
 float3 toneMap(float3 c) { float3 cc = 1.0 - exp(-_MP.z * c); cc = pow(max(cc, 0.0), 1.0 / 1.1); return pow(cc, 2.2); }
 
-[numthreads(8, 8, 1)]
-void March(uint3 gid : SV_DispatchThreadID)
+// The detailed tornado: where a ray may meet it, [trIn, trOut] (1e9, -1e9: nowhere), found by sphere-tracing tornadoSkip
+// in from both ends of its bounding cylinder (2.0), between ta and tb along the ray
+float2 tornadoSpan(float3 cp, float3 rd, float ta, float tb)
 {
-    // checkerboard: dispatched at half width, each thread marches the pixel of this frame's parity in its row
-    uint3 id = gid + uint3((uint2)_TileP.xy, 0u);
-    if (_TP.y > 0.5) id.x = id.x * 2u + ((id.y + (uint)_MP.w) & 1u);
-    if (id.x >= (uint)_Res.x || id.y >= (uint)_Res.y) return;
-    bool inRect = (float)id.x >= _TorRect.x && (float)id.x < _TorRect.z && (float)id.y >= _TorRect.y && (float)id.y < _TorRect.w;
-#if defined(STORM_NO_TORNADO)
-    if (inRect) return;
-#else
-    if (!inRect) return;
-#endif
+    float trIn = 1e9, trOut = -1e9;
+    float torTop = S_base.x + 0.2;
+    float2 o = cp.xy - 0.5 * (S_tor.xy + S_tor3.xy); float torRb = tornadoBound();
+    float qa = dot(rd.xy, rd.xy), qb = dot(o, rd.xy), qc = dot(o, o) - torRb * torRb, disc = qb * qb - qa * qc;
+    float c0 = ta, c1 = tb;
+    if (qa > 1e-8) { float sq = sqrt(max(disc, 0.0)); c0 = max(c0, (-qb - sq) / qa); c1 = disc > 0.0 ? min(c1, (-qb + sq) / qa) : -1.0; }
+    else if (qc > 0.0) c1 = -1.0;
+    if (rd.z > 1e-6) c1 = min(c1, (torTop - cp.z) / rd.z);
+    else if (rd.z < -1e-6) c0 = max(c0, (torTop - cp.z) / rd.z);
+    else if (cp.z >= torTop) c1 = -1.0;
+    float tt = c0;
+    for (int k = 0; k < 32 && tt <= c1; k++) { float sk = tornadoSkip(cp + rd * tt, rd); if (sk <= 0.0) break; tt += sk; }
+    if (tt <= c1)
+    {
+        trIn = tt; tt = c1;
+        for (int k2 = 0; k2 < 32; k2++) { float sk = tornadoSkip(cp + rd * tt, -rd); if (sk <= 0.0 || tt - sk < trIn) break; tt -= sk; }
+        trOut = tt;
+    }
+    return float2(trIn, trOut);
+}
+
+// A pixel's ray (the march's camera) and where it is in the volume, [ta, tb], before scene depth
+float3 pixelRay(uint2 id, out float ta, out float tb)
+{
     float2 uv = (float2(id.xy) + 0.5) * _Res.zw;
     float2 ndc = uv * 2.0 - 1.0;
     float3 rd = normalize(_CamFwd.xyz + ndc.x * _CamTan.x * _CamRight.xyz + ndc.y * _CamTan.y * _CamUp.xyz);
@@ -918,8 +937,80 @@ void March(uint3 gid : SV_DispatchThreadID)
     float zG = -_GroundP.x;
     float3 b0 = float3(-L, -L, zG); float3 b1 = float3(L, L, ZT);
     float3 t0 = (b0 - cp) * inv; float3 t1 = (b1 - cp) * inv; float3 tmn = min(t0, t1); float3 tmx = max(t0, t1);
-    float ta = max(max(tmn.x, tmn.y), max(tmn.z, 0.0)); float tb = min(min(tmx.x, tmx.y), tmx.z);
+    ta = max(max(tmn.x, tmn.y), max(tmn.z, 0.0)); tb = min(min(tmx.x, tmx.y), tmx.z);
     if (rd.z < 0.0) tb = min(tb, (zG - cp.z) / rd.z);
+    return rd;
+}
+// the march's pixel for a thread: checkerboard dispatches are half width, each thread the pixel of this frame's parity
+uint2 marchPixel(uint2 g)
+{
+    if (_TP.y > 0.5) g.x = g.x * 2u + ((g.y + (uint)_MP.w) & 1u);
+    return g;
+}
+
+// Whether the full kernel's march along this pixel's ray can differ from the kernel without the tornado: it meets the main
+// tornado's span (tornadoSpan, without scene depth, so never later than the march finds it), or passes within a stride of
+// the anticyclonic or satellite tornado's cylinder below its top (where the march's steps slow toward it), or (the web
+// build's tornado) passes through its cylinders
+float closestXY(float3 cp, float3 rd, float t0, float t1, float2 c)
+{
+    float qa = dot(rd.xy, rd.xy);
+    float t = qa > 1e-8 ? clamp(dot(c - cp.xy, rd.xy) / qa, t0, t1) : t0;
+    return length(cp.xy + rd.xy * t - c);
+}
+bool reachesTornado(uint2 id)
+{
+    float ta, tb; float3 rd = pixelRay(id, ta, tb); float3 cp = _CamPos.xyz;
+    if (tb <= ta) return false;
+    float torTop = S_base.x + 0.2;
+    // the part of the ray below the tornadoes' top
+    float b0 = ta, b1 = tb;
+    if (rd.z > 1e-6) b1 = min(b1, (torTop - cp.z) / rd.z);
+    else if (rd.z < -1e-6) b0 = max(b0, (torTop - cp.z) / rd.z);
+    else if (cp.z >= torTop) b1 = -1.0;
+    bool det = _TorP.x > 0.5;
+    if (det)
+    {
+        if (S_tor.z > 0.0 && tornadoSpan(cp, rd, ta, tb).x < 1e8) return true;
+        if (b1 < b0) return false;
+        if (S_anti.w > 0.0 && closestXY(cp, rd, b0, b1, S_anti.xy) < 0.4 + 2.0) return true;
+        if (S_tor11.z > 0.0 && closestXY(cp, rd, b0, b1, satelliteMid()) < satelliteBound() + 2.0) return true;
+        return false;
+    }
+    if (b1 < b0) return false;
+    float torR = max(S_tor2.y * 1.3 + 0.25 * S_wall.z, S_tor2.x * 2.4 + 0.06) * 1.2 + 0.4;
+    if (S_tor.z > 0.0 && closestXY(cp, rd, b0, b1, 0.5 * (S_tor.xy + S_tor3.xy)) < torR + length(S_tor.xy - S_tor3.xy) * 0.5 + 0.1) return true;
+    if (S_anti.w > 0.0 && closestXY(cp, rd, b0, b1, S_anti.xy) < 0.85) return true;
+    return false;
+}
+
+groupshared uint gs_tor;
+[numthreads(8, 8, 1)]
+void Classify(uint3 grp : SV_GroupID, uint3 gt : SV_GroupThreadID, uint gi : SV_GroupIndex)
+{
+    if (gi == 0) gs_tor = 0u;
+    GroupMemoryBarrierWithGroupSync();
+    uint2 id = marchPixel(grp.xy * 8u + gt.xy);
+    if (id.x < (uint)_Res.x && id.y < (uint)_Res.y && reachesTornado(id)) InterlockedOr(gs_tor, 1u);
+    GroupMemoryBarrierWithGroupSync();
+    if (gi == 0)
+    {
+        uint tile = grp.x | (grp.y << 16);
+        if (gs_tor != 0u) _TilesTorOut.Append(tile); else _TilesPlainOut.Append(tile);
+    }
+}
+
+[numthreads(8, 8, 1)]
+void March(uint3 gidT : SV_DispatchThreadID, uint3 grp : SV_GroupID, uint3 gt : SV_GroupThreadID)
+{
+    uint2 g = gidT.xy;
+    if (_TileP.x > 0.5) { uint tile = _Tiles[grp.x]; g = uint2(tile & 0xFFFFu, tile >> 16) * 8u + gt.xy; }
+    uint3 id = uint3(marchPixel(g), 0u);
+    if (id.x >= (uint)_Res.x || id.y >= (uint)_Res.y) return;
+    float2 uv = (float2(id.xy) + 0.5) * _Res.zw;
+    float ta, tb;
+    float3 rd = pixelRay(id.xy, ta, tb);
+    float3 cp = _CamPos.xyz; float L = S_grid.z; float ZT = S_grid.w;
     // scene geometry: stop at it
     float tScene = 1e9;
     if (_DepthP.x > 0.5)
@@ -970,25 +1061,7 @@ void March(uint3 gid : SV_DispatchThreadID)
         bool torOn = TORNADO_ON && det && (S_tor.z > 0.0 || S_anti.w > 0.0 || S_tor11.z > 0.0);
         float2 antiP = S_anti.xy; float torTop = S_base.x + 0.2;
         float trIn = 1e9, trOut = -1e9;
-        if (torOn && S_tor.z > 0.0)
-        {
-            float2 o = cp.xy - 0.5 * (S_tor.xy + S_tor3.xy); float torRb = tornadoBound();
-            float qa = dot(rd.xy, rd.xy), qb = dot(o, rd.xy), qc = dot(o, o) - torRb * torRb, disc = qb * qb - qa * qc;
-            float c0 = ta, c1 = tb;
-            if (qa > 1e-8) { float sq = sqrt(max(disc, 0.0)); c0 = max(c0, (-qb - sq) / qa); c1 = disc > 0.0 ? min(c1, (-qb + sq) / qa) : -1.0; }
-            else if (qc > 0.0) c1 = -1.0;
-            if (rd.z > 1e-6) c1 = min(c1, (torTop - cp.z) / rd.z);
-            else if (rd.z < -1e-6) c0 = max(c0, (torTop - cp.z) / rd.z);
-            else if (cp.z >= torTop) c1 = -1.0;
-            float tt = c0;
-            for (int k = 0; k < 32 && tt <= c1; k++) { float sk = tornadoSkip(cp + rd * tt, rd); if (sk <= 0.0) break; tt += sk; }
-            if (tt <= c1)
-            {
-                trIn = tt; tt = c1;
-                for (int k2 = 0; k2 < 32; k2++) { float sk = tornadoSkip(cp + rd * tt, -rd); if (sk <= 0.0 || tt - sk < trIn) break; tt -= sk; }
-                trOut = tt;
-            }
-        }
+        if (torOn && S_tor.z > 0.0) { float2 span = tornadoSpan(cp, rd, ta, tb); trIn = span.x; trOut = span.y; }
         // The fine step through it, km. 2.0's 6 m suits ropes tens of metres across, but a mile-wide wedge took the same
         // steps through hundreds of metres of clear air and soft rim inside its reach, so a close view's cost grew with the
         // tornado's width (user, 2026-10-27). A share of the radius of its narrowest drawn part (the funnel's foot, a
