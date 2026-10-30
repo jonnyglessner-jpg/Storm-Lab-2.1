@@ -22,7 +22,11 @@ namespace StormLab.Audio
         /// <summary>the side it is on, seen from the listener: -1 left .. 1 right</summary>
         public float pan;
         /// <summary>full level this near, m; the roar fades out between fadeStartM and fadeEndM</summary>
-        public float fullLevelM = 400f, fadeStartM = 4000f, fadeEndM = 8000f;
+        public float fullLevelM = 500f, fadeStartM = 4000f, fadeEndM = 8000f;
+        /// <summary>how the roar falls off beyond fullLevelM, as (fullLevelM / distance)^falloff: 1 is inverse distance; less
+        /// carries farther (a source hundreds of metres across, its low frequencies hugging the ground, falls off slower
+        /// than a point near it)</summary>
+        public float falloff = 0.8f;
 
         readonly float fs;
         Rng rng;
@@ -43,18 +47,24 @@ namespace StormLab.Audio
 
         /// <summary>0..1: how loud the roar is now (0 silent): strength and distance together</summary>
         public float Amount => amount.value;
+        /// <summary>the share of the last block's samples that drove the soft clipper past 1 (diagnostics: distortion)</summary>
+        public float Saturation { get; private set; }
+        /// <summary>the RMS of the soft clipper's input over the last block (diagnostics)</summary>
+        public float InputRms { get; private set; }
+        int hot; double inE;
 
-        /// <summary>the roar's gain by distance: full inside fullM, 1 / distance beyond, gone by fadeEndM</summary>
-        public static float DistanceGain(float d, float fullM, float fadeStartM, float fadeEndM)
-            => Math.Min(1f, fullM / Math.Max(d, 1f)) * (1f - Dsp.SmoothStep(fadeStartM, fadeEndM, d));
+        /// <summary>the roar's gain by distance: full inside fullM, (fullM / distance)^falloff beyond, gone by fadeEndM</summary>
+        public static float DistanceGain(float d, float fullM, float fadeStartM, float fadeEndM, float falloff = 0.8f)
+            => (float)Math.Pow(Math.Min(1f, fullM / Math.Max(d, 1f)), falloff) * (1f - Dsp.SmoothStep(fadeStartM, fadeEndM, d));
         /// <summary>the roar's loudness for a tornado's strength (a weak one is already well heard)</summary>
         public static float Loudness(float strength) => (float)Math.Pow(Dsp.Clamp01(strength), 0.6);
 
         public void Render(float[] data, int frames, int channels)
         {
-            float target = Loudness(strength) * DistanceGain(distanceM, fullLevelM, fadeStartM, fadeEndM);
+            float target = Loudness(strength) * DistanceGain(distanceM, fullLevelM, fadeStartM, fadeEndM, falloff);
             float nearT = Dsp.Clamp01(fullLevelM / Math.Max(distanceM, 1f));
             float st = Dsp.Clamp01(strength), sz = Dsp.Clamp01(size);
+            hot = 0; inE = 0;
             for (int i = 0; i < frames; i++)
             {
                 float s = amount.Toward(target);
@@ -106,19 +116,22 @@ namespace StormLab.Audio
                 float bodyK = 0.85f + 0.3f * st;
                 float mL = airL.Low(Dsp.Lerp(body, bodyL, width) * bodyK + 0.7f * tear + hiss + jet) + 1.2f * rumble;
                 float mR = airR.Low(Dsp.Lerp(body, bodyR, width) * bodyK + 0.7f * tear + hiss + jet) + 1.2f * rumble;
-                // level by strength and distance, then driven harder the nearer it is, into a soft clipper: denser, not
-                // louder (the output is pulled back a little close in, so it sits near -5 dBFS RMS, deafening but with
-                // headroom for the wind, the debris strikes and thunder; the master limiter catches what piles on top)
-                // (user, 2026-10-30: the first version was too loud, "split the difference": half the level, -6 dB, the
-                // same density close in)
-                float drive = s * pulsing * (1f + 1.0f * n) * 0.75f;
-                float post = (0.9f - 0.25f * n) * 0.5f;
+                // level by strength and distance, a little denser the nearer it is, through a soft clipper that only
+                // rounds the peaks: the first version drove it far into the clipper close in for density, and within half
+                // a mile that was heard as clipping (user, 2026-10-30); now the clipper's input stays mostly under 1 (see
+                // Saturation), the level sits near -11 dBFS RMS close in, and the master limiter catches what piles on top
+                float drive = s * pulsing * (1f + 0.35f * n) * 0.15f;
+                float post = (1f - 0.1f * n) * 0.95f;
                 Dsp.Pan(p * (1f - 0.75f * n) * 0.6f, out float pl, out float pr);
-                float L = Dsp.Tanh(mL * drive * pl * 1.41f) * post;
-                float R = Dsp.Tanh(mR * drive * pr * 1.41f) * post;
+                float xL = mL * drive * pl * 1.41f, xR = mR * drive * pr * 1.41f;
+                if (Math.Abs(xL) > 1f || Math.Abs(xR) > 1f) hot++;
+                inE += 0.5 * (xL * xL + xR * xR);
+                float L = Dsp.Tanh(xL) * post;
+                float R = Dsp.Tanh(xR) * post;
                 if (channels == 1) data[i] = 0.5f * (L + R);
                 else { data[i * channels] = L; data[i * channels + 1] = R; for (int c = 2; c < channels; c++) data[i * channels + c] = 0.5f * (L + R); }
             }
+            Saturation = hot / (float)Math.Max(frames, 1); InputRms = (float)Math.Sqrt(inE / Math.Max(frames, 1));
         }
     }
 }

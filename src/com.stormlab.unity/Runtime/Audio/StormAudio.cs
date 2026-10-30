@@ -25,8 +25,10 @@ namespace StormLab.Audio
         [Range(0f, 1f)] public float windVolume = 1f;
         [Tooltip("the tornado's roar heard from afar (RoarSynth): the vortex's own sound, 1 / distance beyond roarFullLevelM")]
         [Range(0f, 1f)] public float roarVolume = 1f;
-        [Tooltip("the roar is at full level this near the tornado, m, falls off as 1 / distance beyond, and fades out over roarFadeKm")]
-        public float roarFullLevelM = 400f;
+        [Tooltip("the roar is at full level this near the tornado, m, falls off as (this / distance)^roarFalloff beyond, and fades out over roarFadeKm")]
+        public float roarFullLevelM = 500f;
+        [Tooltip("how the roar falls off with distance beyond roarFullLevelM: 1 inverse distance, less carries farther")]
+        [Range(0.5f, 1.2f)] public float roarFalloff = 0.8f;
         [Tooltip("the roar fades out between these distances, km")]
         public Vector2 roarFadeKm = new Vector2(4f, 8f);
         [Range(0f, 1f)] public float rainVolume = 0.8f;
@@ -173,12 +175,12 @@ namespace StormLab.Audio
                 float st = RoarStrengthOf(s);
                 if (st <= 0f) continue;
                 var g = s.TornadoGroundWorld; var d = new Vector3(g.x - at.x, 0f, g.z - at.z); float dist = d.magnitude;
-                float level = RoarSynth.Loudness(st) * RoarSynth.DistanceGain(dist, roarFullLevelM, roarFadeKm.x * 1000f, roarFadeKm.y * 1000f);
+                float level = RoarSynth.Loudness(st) * RoarSynth.DistanceGain(dist, roarFullLevelM, roarFadeKm.x * 1000f, roarFadeKm.y * 1000f, roarFalloff);
                 if (level > bestLevel) { bestLevel = level; bestStrength = st; bestSize = RoarSizeOf(s); bestDist = dist; bestDir = d; }
             }
             RoarStrength = bestStrength; RoarSize = bestSize; RoarDistanceM = bestDist;
             roar.strength = bestStrength; roar.size = bestSize; roar.distanceM = bestDist;
-            roar.fullLevelM = roarFullLevelM; roar.fadeStartM = roarFadeKm.x * 1000f; roar.fadeEndM = Mathf.Max(roarFadeKm.y, roarFadeKm.x + 0.1f) * 1000f;
+            roar.fullLevelM = roarFullLevelM; roar.falloff = roarFalloff; roar.fadeStartM = roarFadeKm.x * 1000f; roar.fadeEndM = Mathf.Max(roarFadeKm.y, roarFadeKm.x + 0.1f) * 1000f;
             roar.pan = bestDist > 1f && bestDist < float.PositiveInfinity ? Vector3.Dot(ears.right, bestDir / bestDist) : 0f;
             roarOut.Source.volume = roarVolume;
 
