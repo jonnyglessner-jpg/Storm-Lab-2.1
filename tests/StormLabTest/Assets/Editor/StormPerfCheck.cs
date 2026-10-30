@@ -42,6 +42,14 @@ public static class StormPerfCheck
         EditorApplication.Exit(ok ? 0 : 1);
     }
 
+    /// <summary>Open the plains test map and enter Play (for looking at the frame time and the quality panel by hand:
+    /// -executeMethod StormPerfCheck.PlayTestMap in a windowed editor)</summary>
+    public static void PlayTestMap()
+    {
+        EditorSceneManager.OpenScene("Assets/Scenes/TestMap.unity", OpenSceneMode.Single);
+        EditorApplication.EnterPlaymode();
+    }
+
     static StormRenderer storm, storm2; static Camera cam;
     /// <summary>-slPerfDiag: where each view's time goes (steps a pixel, without the tornado's light tests, without its fields)</summary>
     static bool diag;

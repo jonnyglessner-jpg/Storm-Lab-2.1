@@ -1,5 +1,7 @@
 // The test map's storm and lighting panel (Tab shows or hides it; drag it by its title). Map: the plains, Dixie or
 // Midwest map (loads that scene, keeping the storm setup and the clock). Storm: setup, seed, storm clock and speed, jumps to the next wall cloud or tornado, bringing the storm to the truck, lighting model, lightning.
+// Quality (user, 2026-10-30): the storms' performance tier (StormRenderer.performance; F2 cycles it), remembered between
+// sessions, with the frame time beside it.
 // Lighting: a 24 hour clock that drives the sun and the moon from the local solar time, the day of the year, the
 // latitude and the moon's phase, with an optional running clock, and the camera's exposure: Auto adapts to the scene's
 // light level as StormLab 2.0's night model does (SkyLighting: unchanged by day, a moonlit night shown at the storm's
@@ -90,6 +92,11 @@ namespace StormLab.TestMap
             { ("plains", "Assets/Scenes/TestMap.unity"), ("dixie", "Assets/Scenes/DixieMap.unity"), ("midwest", "Assets/Scenes/MidwestMap.unity") };
         // what the next map takes over from this one (set just before its scene loads)
         static string carryPreset; static float carryHour = -1f;
+        const string PerfPref = "StormLab.TestMap.Performance";
+        static readonly StormPerformance[] Tiers = { StormPerformance.Ultra, StormPerformance.High, StormPerformance.Balanced, StormPerformance.Performance };
+        // the frame time, smoothed: the whole frame on the CPU's clock, and the GPU's when the driver reports it (FrameTimingManager)
+        float frameMs, gpuMs;
+        readonly FrameTiming[] timings = new FrameTiming[1];
         string loadingMap; int loadingFrame;
 
         void Start()
@@ -122,6 +129,9 @@ namespace StormLab.TestMap
                 storm.luminanceScale = sunLux * StormRenderer.SunToLuminance / Mathf.PI;
                 storm.nightAdaptation = false;
                 if (carryPreset != null && storm.preset != carryPreset) { storm.preset = carryPreset; storm.Replan(); }
+                int saved = PlayerPrefs.GetInt(PerfPref, -1);
+                if (Array.IndexOf(Tiers, (StormPerformance)saved) >= 0) storm.performance = (StormPerformance)saved;
+                storm.ApplyPerformance();
                 seedText = storm.seed.ToString();
             }
             if (carryHour >= 0f) hour = carryHour;
@@ -140,11 +150,26 @@ namespace StormLab.TestMap
         {
             var kb = Keyboard.current;
             if (kb != null && kb.tabKey.wasPressedThisFrame) show = !show;
+            if (kb != null && kb.f2Key.wasPressedThisFrame && storm)
+                SetPerformance(Tiers[(Array.IndexOf(Tiers, storm.performance) + 1) % Tiers.Length]);
+            float dt = Time.unscaledDeltaTime * 1000f;
+            frameMs = frameMs <= 0f ? dt : Mathf.Lerp(frameMs, dt, 0.05f);
+            FrameTimingManager.CaptureFrameTimings();
+            if (FrameTimingManager.GetLatestTimings(1, timings) > 0 && timings[0].gpuFrameTime > 0)
+                gpuMs = gpuMs <= 0f ? (float)timings[0].gpuFrameTime : Mathf.Lerp(gpuMs, (float)timings[0].gpuFrameTime, 0.05f);
             if (switchGame && world) { switchGame = false; world.SetGameMode(!world.gameMode); }
             // loaded a frame after the click, so the window can say so first (a map takes some seconds)
             if (loadingMap != null && Time.frameCount > loadingFrame + 2) { var m = loadingMap; loadingMap = null; SwitchMap(m); }
             if (clockRuns) hour = Mathf.Repeat(hour + Time.deltaTime / 60f * hoursPerMinute, 24f);
             Apply();
+        }
+
+        /// <summary>The storms' performance tier (the game's storms take it from this one each frame), remembered.</summary>
+        public void SetPerformance(StormPerformance p)
+        {
+            if (!storm) return;
+            storm.performance = p; storm.ApplyPerformance();
+            PlayerPrefs.SetInt(PerfPref, (int)p); PlayerPrefs.Save();
         }
 
         /// <summary>Put the sun, moon, storm and exposure at the panel's clock (also called by tests).</summary>
@@ -308,6 +333,20 @@ namespace StormLab.TestMap
                 GUILayout.Label(storm.Frame.caption, wrap);
             }
 
+            // ---- quality
+            GUILayout.Space(6);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Quality (F2)", head, GUILayout.Width(110));
+            foreach (var p in Tiers)
+                if (GUILayout.Toggle(storm.performance == p, p.ToString().ToLowerInvariant(), "Button") && storm.performance != p) SetPerformance(p);
+            GUILayout.EndHorizontal();
+            // (in a game the scene's storm is not drawn: its storms take the tier from it each frame)
+            int n = InGame ? world.game.Storms.Count(r => r && r.isActiveAndEnabled) : 1;
+            var q = InGame ? world.game.Storms.FirstOrDefault(r => r && r.isActiveAndEnabled) ?? storm : storm;
+            GUILayout.Label($"{TierText(q.performance)}   ·   march {Mathf.RoundToInt(Screen.width * q.renderScale)} x {Mathf.RoundToInt(Screen.height * q.renderScale)}" +
+                            $"{(q.checkerboard ? ", half a frame each" : "")}, {n} storm{(n == 1 ? "" : "s")} drawn", wrap);
+            GUILayout.Label($"Frame {frameMs:0.0} ms ({1000f / Mathf.Max(frameMs, 0.01f):0} fps){(gpuMs > 0f ? $"   ·   GPU {gpuMs:0.0} ms" : "")}", small);
+
             // ---- lighting
             GUILayout.Space(6);
             GUILayout.Label("Lighting", head);
@@ -402,6 +441,15 @@ namespace StormLab.TestMap
         }
 
         bool InGame => world && world.gameMode && world.game && world.game.Scenario != null;
+
+        static string TierText(StormPerformance p) => p switch
+        {
+            StormPerformance.Ultra => "the full look",
+            StormPerformance.High => "the full look over two frames",
+            StormPerformance.Balanced => "a smaller march, longer steps",
+            StormPerformance.Performance => "smallest march, longest steps",
+            _ => "custom (the storm's own settings)",
+        };
 
         /// <summary>The game (StormScenario): environment, game seed, precipitation, the game clock and its speed, and each
         /// storm's track and tornadoes. Any change to the setup lays out a new game from its start.</summary>

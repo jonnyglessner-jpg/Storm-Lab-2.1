@@ -378,6 +378,9 @@ tier; every tier keeps every feature (both storms, the detailed tornadoes, the u
 | Performance | and a 0.35 march, steps 1.5 x | 0.7-1.6 ms | 2.7 ms | 3.9 ms | 2.0 ms |
 | Custom | the quality fields as set (the checks use it) | | | | |
 
+On the test map the storm panel (Tab) has a Quality row: the four tiers (F2 cycles them; the choice is remembered between
+sessions), the march's size, and the frame time with the GPU's share. In game mode both storms follow it.
+
 March and temporal resolve, GPU, from `StormPerfCheck` (`validation/reports/StormPerf_<tier>.md`). Before this work the
 same views cost 4.4-10 ms, 25 ms under the base, 60 ms beside a cone and 14.7 ms for two storms. What changed, with the
 image unchanged unless said:
