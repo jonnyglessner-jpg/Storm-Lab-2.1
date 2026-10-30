@@ -25,6 +25,7 @@ namespace StormLab
     /// <summary>Enhanced: finer billows on water cloud near the camera (DetailNoise) and a short self-shadow probe that shades
     /// them; Website: the web build's detail.</summary>
     public enum CloudDetail { Enhanced, Website }
+    public enum StormPerformance { Custom }
 
     [ExecuteAlways, DefaultExecutionOrder(100)]
     public class StormRenderer : MonoBehaviour
@@ -87,6 +88,8 @@ namespace StormLab
         public bool playing = true;
 
         [Header("Quality")]
+        [Tooltip("Custom: the settings below as set")]
+        public StormPerformance performance = StormPerformance.Custom;
         public StormQuality quality = StormQuality.High;
         [Tooltip("ray-march resolution relative to the camera")]
         [Range(0.25f, 1f)] public float renderScale = 0.5f;
@@ -588,7 +591,7 @@ namespace StormLab
         }
         readonly Dictionary<Camera, CamState> cams = new Dictionary<Camera, CamState>();
         /// <summary>Discard a camera's temporal history (after a cut).</summary>
-        public void ResetHistory(Camera cam) { if (cams.TryGetValue(cam, out var s)) s.valid = false; }
+        public void ResetHistory(Camera cam) { if (cams.TryGetValue(cam, out var s)) { s.valid = false; s.frame = 0; } }
 
         static Texture2DArray noDepth;
         static Texture2DArray NoDepth
@@ -631,6 +634,7 @@ namespace StormLab
             float tanY = Mathf.Tan(cam.fieldOfView * 0.5f * Mathf.Deg2Rad), tanX = tanY * fullW / (float)fullH;
             int kM = marchCs.FindKernel("March"), kR = marchCs.FindKernel("Resolve");
             cmd.BeginSample(MarchSampler);
+            SetVariant(cmd);
             cmd.SetComputeVectorArrayParam(marchCs, "_SP", GpuParams());
             cmd.SetComputeVectorParam(marchCs, "_CamPos", pos); cmd.SetComputeVectorParam(marchCs, "_CamFwd", fwd);
             cmd.SetComputeVectorParam(marchCs, "_CamRight", right); cmd.SetComputeVectorParam(marchCs, "_CamUp", up);
@@ -690,7 +694,7 @@ namespace StormLab
             bool fresh = transient || st.wasTransient;
             bool useCheckerboard = checkerboard && !fresh;
             cmd.SetComputeVectorParam(marchCs, "_TP", new Vector4(st.valid && !fresh ? temporalBlend : 1f, useCheckerboard ? 1 : 0, 0, 0));
-            cmd.DispatchCompute(marchCs, kM, useCheckerboard ? ((w + 1) / 2 + 7) / 8 : (w + 7) / 8, (h + 7) / 8, 1);
+            DispatchMarch(cmd, kM, w, h, useCheckerboard, pos, fwd, right, up, tanX, tanY);
             st.wasTransient = transient;
             var src = st.hist[st.h]; var dst = st.hist[1 - st.h];
             cmd.SetComputeTextureParam(marchCs, kR, "_Cur", st.cur);
@@ -706,6 +710,106 @@ namespace StormLab
             cmd.EndSample(MarchSampler);
             dist = st.half;
             return dst;
+        }
+
+        // The march's compiled variants (StormMarch.compute): only the paths this frame can take, so the GPU keeps fewer
+        // registers a ray and more rays in flight. Set in the command buffer, as two storms may want different ones.
+        LocalKeyword kwUnified, kwNoTornado, kwProbes; ComputeShader kwFor;
+        void SetVariant(CommandBuffer cmd)
+        {
+            if (kwFor != marchCs)
+            {
+                kwUnified = new LocalKeyword(marchCs, "STORM_UNIFIED"); kwNoTornado = new LocalKeyword(marchCs, "STORM_NO_TORNADO");
+                kwProbes = new LocalKeyword(marchCs, "STORM_PROBES"); kwFor = marchCs;
+            }
+            cmd.SetKeyword(marchCs, kwUnified, lighting == StormLighting.Unified);
+            cmd.SetKeyword(marchCs, kwProbes, tornadoCostProbe != 0 || lightDebug != 0 || tornadoLightAll);
+        }
+        static readonly int TorRectId = Shader.PropertyToID("_TorRect"), TileId = Shader.PropertyToID("_TileP");
+
+        /// <summary>
+        /// Dispatch the march (w x h, the march's resolution). The tornado's code alone made every ray's kernel about three
+        /// times slower (a young storm from 8 km: 9.0 ms at 3440 x 1440 with it compiled in, 3.0 without: StormPerfCheck,
+        /// 2026-10-30), whether the ray came near a tornado or not. So the screen is split: the rectangle where a ray may meet a
+        /// tornado (TornadoRect) is marched by the full kernel, the rest by the one without the tornado. Same image.
+        /// </summary>
+        void DispatchMarch(CommandBuffer cmd, int kM, int w, int h, bool checker, Vector3 pos, Vector3 fwd, Vector3 right, Vector3 up, float tanX, float tanY)
+        {
+            int gx = checker ? ((w + 1) / 2 + 7) / 8 : (w + 7) / 8, gy = (h + 7) / 8;
+            var r = TornadoRect(pos, fwd, right, up, tanX, tanY, w, h);
+            bool split = r.width > 0 && r.height > 0 && (float)r.width * r.height < 0.6f * w * h;
+            if (r.width <= 0 || r.height <= 0 || split)
+            {
+                // everything outside the rectangle (all of it when no tornado is in view) without the tornado
+                cmd.SetKeyword(marchCs, kwNoTornado, true);
+                cmd.SetComputeVectorParam(marchCs, TorRectId, split ? new Vector4(r.xMin, r.yMin, r.xMax, r.yMax) : Vector4.zero);
+                cmd.SetComputeVectorParam(marchCs, TileId, Vector4.zero);
+                cmd.DispatchCompute(marchCs, kM, gx, gy, 1);
+                if (!split) return;
+            }
+            else r = new RectInt(0, 0, w, h);
+            // the rectangle with it: thread offsets in the dispatch's own columns (half the pixels' with the checkerboard)
+            cmd.SetKeyword(marchCs, kwNoTornado, false);
+            cmd.SetComputeVectorParam(marchCs, TorRectId, new Vector4(r.xMin, r.yMin, r.xMax, r.yMax));
+            int x0 = (checker ? r.xMin / 2 : r.xMin) / 8 * 8, y0 = r.yMin / 8 * 8;
+            int x1 = checker ? (r.xMax + 1) / 2 : r.xMax;
+            cmd.SetComputeVectorParam(marchCs, TileId, new Vector4(x0, y0, 0, 0));
+            cmd.DispatchCompute(marchCs, kM, Mathf.Max(1, (x1 - x0 + 7) / 8), Mathf.Max(1, (r.yMax - y0 + 7) / 8), 1);
+        }
+
+        /// <summary>
+        /// The march pixels whose rays may meet a tornado (main, satellite or anticyclonic, either model): the screen
+        /// rectangle round the vertical cylinders the march bounds them by (StormMarch.compute: tornadoBound round the main
+        /// one, satelliteBound, the anticyclonic one's 0.4 km), from the ground under the scene's sink to their top. Empty when
+        /// there is no tornado or none is in view; the whole screen when the camera is in or beside one.
+        /// </summary>
+        RectInt TornadoRect(Vector3 cp, Vector3 fwd, Vector3 right, Vector3 up, float tanX, float tanY, int w, int h)
+        {
+            var p = Frame.param;
+            float P(int slot, int c) => p[slot * 4 + c];
+            float zb = P(1, 0), z0 = -Mathf.Max(groundSink, 0f) / 1000f - 0.05f, z1 = zb + 0.25f;
+            bool det = tornado == TornadoModel.Detailed;
+            float xmin = float.MaxValue, ymin = float.MaxValue, xmax = float.MinValue, ymax = float.MinValue;
+            bool any = false, full = false;
+            void Cyl(float cx, float cy, float rad)
+            {
+                // the circle as a 16-gon drawn round it (1 / cos(pi / 16)), top and bottom, and a little margin
+                rad = rad * 1.02f + 0.05f;
+                for (int k = 0; k < 16 && !full; k++)
+                {
+                    float a = k * Mathf.PI / 8f;
+                    for (int e = 0; e < 2; e++)
+                    {
+                        var d = new Vector3(cx + rad * Mathf.Cos(a), cy + rad * Mathf.Sin(a), e == 0 ? z0 : z1) - cp;
+                        float z = Vector3.Dot(d, fwd);
+                        if (z < 0.01f) { full = true; break; }
+                        float u = (Vector3.Dot(d, right) / (z * tanX) * 0.5f + 0.5f) * w, v = (Vector3.Dot(d, up) / (z * tanY) * 0.5f + 0.5f) * h;
+                        xmin = Mathf.Min(xmin, u); xmax = Mathf.Max(xmax, u); ymin = Mathf.Min(ymin, v); ymax = Mathf.Max(ymax, v);
+                    }
+                }
+                any = true;
+            }
+            float AxisAmp(float zt) => Mathf.Min((0.03f + 0.1f * P(14, 3) + 0.3f * P(22, 3)) * (0.4f + 0.6f * zt), 0.22f * zt + 0.02f);
+            float lean = new Vector2(P(13, 0) - P(15, 0), P(13, 1) - P(15, 1)).magnitude;
+            if (P(13, 2) > 0f)
+            {
+                float rad = det ? Mathf.Max(P(14, 1) * 1.6f, P(14, 0) * Mathf.Max(P(23, 3), 1f) * 1.3f) + AxisAmp(zb) + P(27, 2) * 1.35f + 0.35f
+                                : Mathf.Max(P(14, 1) * 1.3f + 0.25f * P(6, 2), P(14, 0) * 2.4f + 0.06f) * 1.2f + 0.4f + lean * 0.5f;
+                Cyl(0.5f * (P(13, 0) + P(15, 0)), 0.5f * (P(13, 1) + P(15, 1)), rad);
+            }
+            // the anticyclonic tornado: the march's fine steps start 0.4 km from it (0.75 in the web build's) and it slows
+            // the steps of rays passing nearer than a stride; a kilometre round it covers those
+            if (P(19, 3) > 0f) Cyl(P(19, 0), P(19, 1), det ? 1.4f : 1.75f);
+            if (det && P(28, 2) > 0f)
+            {
+                float sx = Mathf.Lerp(P(28, 0), P(15, 0), 0.15f), sy = Mathf.Lerp(P(28, 1), P(15, 1), 0.15f);
+                Cyl(sx, sy, 0.3f * new Vector2(P(28, 0) - P(15, 0), P(28, 1) - P(15, 1)).magnitude + P(28, 3) * 3.5f + 0.2f + 1f);
+            }
+            if (!any) return new RectInt(0, 0, 0, 0);
+            if (full) return new RectInt(0, 0, w, h);
+            int ix0 = Mathf.Clamp(Mathf.FloorToInt(xmin) - 2, 0, w), ix1 = Mathf.Clamp(Mathf.CeilToInt(xmax) + 2, 0, w);
+            int iy0 = Mathf.Clamp(Mathf.FloorToInt(ymin) - 2, 0, h), iy1 = Mathf.Clamp(Mathf.CeilToInt(ymax) + 2, 0, h);
+            return new RectInt(ix0, iy0, Mathf.Max(0, ix1 - ix0), Mathf.Max(0, iy1 - iy0));
         }
 
         /// <summary>where this storm's cloud hides half of what is behind it for a camera, from its last march (km along

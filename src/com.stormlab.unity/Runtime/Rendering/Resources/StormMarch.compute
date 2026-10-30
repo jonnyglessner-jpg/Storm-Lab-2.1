@@ -8,6 +8,34 @@
 //   - a temporal resolve that reprojects the previous frame, and an optional checkerboard march
 #pragma kernel March
 #pragma kernel Resolve
+// Compiled variants (a game optimisation, 2026-10-30: "spec is to my GPU"). The march is one large kernel, and the GPU
+// reserves registers for the heaviest path it holds whether a frame takes that path or not, which leaves fewer rays in
+// flight to hide its texture reads. The renderer picks the variant (StormRenderer.RecordMarch); each draws exactly what the
+// full kernel draws for that frame. STORM_UNIFIED: the unified lighting only (the physical and website lightings compiled
+// out); STORM_NO_TORNADO: no tornado of any kind in the block (main, satellite, anticyclonic); STORM_PROBES: the timing
+// and lighting checks' probes (_TorP.zw, _PL3.w), compiled out of the game's march.
+#pragma multi_compile_local _ STORM_UNIFIED
+#pragma multi_compile_local _ STORM_NO_TORNADO
+#pragma multi_compile_local _ STORM_PROBES
+#if defined(STORM_UNIFIED)
+#define LIGHT_MODEL 2.0
+#else
+#define LIGHT_MODEL _PL.x
+#endif
+#if defined(STORM_PROBES)
+#define PROBE_TOR _TorP.w
+#define PROBE_LIGHTALL _TorP.z
+#define PROBE_LIGHT _PL3.w
+#else
+#define PROBE_TOR 0.0
+#define PROBE_LIGHTALL 0.0
+#define PROBE_LIGHT 0.0
+#endif
+#if defined(STORM_NO_TORNADO)
+#define TORNADO_ON false
+#else
+#define TORNADO_ON true
+#endif
 
 #include "Packages/com.stormlab.unity/Runtime/Rendering/Shaders/StormCommon.hlsl"
 
@@ -77,6 +105,10 @@ float4 _TP;
 float4 _TorP;
 // x: 1 = the enhanced cloud detail (StormRenderer.cloudDetail; a game adaptation), 0 = the web build's
 float4 _CD;
+// The screen split between the variants (StormRenderer.DispatchMarch): the pixels x0, y0 .. x1, y1 (exclusive) whose rays may
+// meet a tornado. The full kernel marches only those, the one without the tornado (STORM_NO_TORNADO) only the rest (all of
+// the screen where the rectangle is empty). _TileP.xy: the first thread of this dispatch (a dispatch over the rectangle).
+float4 _TorRect, _TileP;
 Texture3D<float> _DetailNoise;
 
 float3 uvw(float3 p) { float L = S_grid.z; return float3((p.x + L) / (2.0 * L), (p.y + L) / (2.0 * L), p.z / S_grid.w); }
@@ -290,7 +322,7 @@ float tornadoTube(float z0, float z1)
             // (2.0 also took 1.35 x the top's radius at every height, though nothing here is drawn that wide below the
             // top: round a wedge's narrower foot that was a kilometre of fine steps through clear air. Kept for 2.0's
             // march in the timing check, so its comparison is with 2.0's)
-            if (_TorP.z > 0.5) f = max(f, (S_tor2.y * 1.2 + 0.1) * (1.2 + 0.8 * rr));
+            if (PROBE_LIGHTALL > 0.5) f = max(f, (S_tor2.y * 1.2 + 0.1) * (1.2 + 0.8 * rr));
         }
         if (z0 < 0.4 * zb) f = max(f, (S_tor6.w < 2.0 ? 1.5 : 2.1) * max(rad, 0.02));   // the sheath (a wide envelope's hugs it)
     }
@@ -695,7 +727,7 @@ float octaves(float tau, float p0, float selfSh, int n)
 }
 float cloudSun(float tau, float ice, float selfSh)
 {
-    if (_PL.x < 0.5) return g_sunW * g_ph1 * 1.9 * selfSh;
+    if (LIGHT_MODEL < 0.5) return g_sunW * g_ph1 * 1.9 * selfSh;
     return octaves(tau, lerp(g_phW, g_phI, ice), selfSh, (int)_PL.w) * _PL.z;
 }
 // The key light at height z km: a sun below the horizon still lights cloud high enough to see over the earth's curve
@@ -800,10 +832,10 @@ float3 stormLight(float3 q, float4 lt, float4 sv, float3 sunz, float3 sunc0, flo
     float3 gnd = groundLight(q, sunc0) * lerp(1.0, 0.3, ss(S_base.x - 0.4, S_base.x + 1.5, q.z));
     // checks only (StormRenderer.lightDebug): 1 the sun's optical depth / 60, the depth overhead / 60, 0;
     // 2-4 the sun's, the sky's, the ground's light alone
-    if (_PL3.w > 0.5 && _PL3.w < 4.5)
+    if (PROBE_LIGHT > 0.5 && PROBE_LIGHT < 4.5)
     {
-        if (_PL3.w < 1.5) return float3(tau / 60.0, upDepth(lt) / 60.0, 0.0);
-        return _PL3.w < 2.5 ? sunz * sun : (_PL3.w < 3.5 ? sky : gnd);
+        if (PROBE_LIGHT < 1.5) return float3(tau / 60.0, upDepth(lt) / 60.0, 0.0);
+        return PROBE_LIGHT < 2.5 ? sunz * sun : (PROBE_LIGHT < 3.5 ? sky : gnd);
     }
     return sunz * sun + sky + gnd;
 }
@@ -868,9 +900,15 @@ float3 toneMap(float3 c) { float3 cc = 1.0 - exp(-_MP.z * c); cc = pow(max(cc, 0
 void March(uint3 gid : SV_DispatchThreadID)
 {
     // checkerboard: dispatched at half width, each thread marches the pixel of this frame's parity in its row
-    uint3 id = gid;
-    if (_TP.y > 0.5) id.x = gid.x * 2u + ((gid.y + (uint)_MP.w) & 1u);
+    uint3 id = gid + uint3((uint2)_TileP.xy, 0u);
+    if (_TP.y > 0.5) id.x = id.x * 2u + ((id.y + (uint)_MP.w) & 1u);
     if (id.x >= (uint)_Res.x || id.y >= (uint)_Res.y) return;
+    bool inRect = (float)id.x >= _TorRect.x && (float)id.x < _TorRect.z && (float)id.y >= _TorRect.y && (float)id.y < _TorRect.w;
+#if defined(STORM_NO_TORNADO)
+    if (inRect) return;
+#else
+    if (!inRect) return;
+#endif
     float2 uv = (float2(id.xy) + 0.5) * _Res.zw;
     float2 ndc = uv * 2.0 - 1.0;
     float3 rd = normalize(_CamFwd.xyz + ndc.x * _CamTan.x * _CamRight.xyz + ndc.y * _CamTan.y * _CamUp.xyz);
@@ -902,8 +940,8 @@ void March(uint3 gid : SV_DispatchThreadID)
     hazec = lerp(hazec, sunc * 0.75, 0.5 * saturate(1.0 - skyK) * pow(max(cosg, 0.0), 3.0));
     float3 warm = float3(0.95, 0.82, 0.66) * (_SunC.rgb / max(_SunC.r, 1e-20)) / float3(1.0, 0.82, 0.6);
     float glowK = ss(-6.0, 1.5, _SunC.w) * _SkyP.x;
-    bool phys = _PL.x > 0.5;
-    bool uni = _PL.x > 1.5;
+    bool phys = LIGHT_MODEL > 0.5;
+    bool uni = LIGHT_MODEL > 1.5;
     float3 bounceC = float3(0.27, 0.29, 0.3) * skyK;
     g_ph1 = 0.45 + 1.2 * pow(max(cosg, 0.0), 8.0); g_phW = miePhase(cosg, clamp(_PL.y, 5.0, 50.0)); g_phI = hg4(0.75, cosg);
     float phR = rainPhase(cosg), phD = dustPhase(cosg);
@@ -929,7 +967,7 @@ void March(uint3 gid : SV_DispatchThreadID)
         bool surf = false;
         // The detailed tornado: where this ray may meet it, [trIn, trOut], found once per pixel by sphere-tracing
         // tornadoSkip in from both ends of its bounding cylinder (2.0)
-        bool torOn = det && (S_tor.z > 0.0 || S_anti.w > 0.0 || S_tor11.z > 0.0);
+        bool torOn = TORNADO_ON && det && (S_tor.z > 0.0 || S_anti.w > 0.0 || S_tor11.z > 0.0);
         float2 antiP = S_anti.xy; float torTop = S_base.x + 0.2;
         float trIn = 1e9, trOut = -1e9;
         if (torOn && S_tor.z > 0.0)
@@ -975,8 +1013,8 @@ void March(uint3 gid : SV_DispatchThreadID)
             nSteps++;
             float3 q = cp + rd * t;
             g_fp = t * pixA;
-            bool nearTor = !det && S_tor.z > 0.0 && q.z < S_base.x + 0.2 && length(q.xy - torC) < torR + length(S_tor.xy - S_tor3.xy) * 0.5;
-            bool nearAnti = !det && S_anti.w > 0.0 && q.z < S_base.x + 0.2 && length(q.xy - S_anti.xy) < 0.75;
+            bool nearTor = TORNADO_ON && !det && S_tor.z > 0.0 && q.z < S_base.x + 0.2 && length(q.xy - torC) < torR + length(S_tor.xy - S_tor3.xy) * 0.5;
+            bool nearAnti = TORNADO_ON && !det && S_anti.w > 0.0 && q.z < S_base.x + 0.2 && length(q.xy - S_anti.xy) < 0.75;
             float dt = dt0 * (1.0 + t / 50.0);
             float3 tc = uvw(q);
             float4 s = _Dens.SampleLevel(sampler_LinearClamp, tc, 0);
@@ -1152,7 +1190,7 @@ void March(uint3 gid : SV_DispatchThreadID)
             // cloud is drawn analytically and softer, so the flare (from 0.7 of the way up to where it meets the lowering)
             // is handed to the wall cloud's union below, as the web build's own funnel is, and the funnel fades out there
             float3 tfD = 0.0; float2 avD = 0.0, satD = 0.0; float jw = 0.0;
-            if (inTor && abs(_TorP.w - 2.0) > 0.5)
+            if (inTor && abs(PROBE_TOR - 2.0) > 0.5)
             {
                 tfD = tornadoField(q); avD = antiTornadoField(q); satD = satelliteField(q);
                 nTorSteps++;
@@ -1190,7 +1228,7 @@ void March(uint3 gid : SV_DispatchThreadID)
                         float occ = 0.0;
                         if (nearOn && _WallP.w > 0.5)
                             occ = 0.4 * ss(0.3, 1.0, beaverTail(q, 1.0) / max(nw, 1e-4));
-                        if (_PL3.w > 4.5) occ = 0.0;   // (checks only: lightDebug 5, the near field without this)
+                        if (PROBE_LIGHT > 4.5) occ = 0.0;   // (checks only: lightDebug 5, the near field without this)
                         c = stormLight(q, lt, sv * (1.0 - occ), sunz, sunc, g_phW, 1.0, 0.0, 0.0, 4);
                     }
                     else if (phys)
@@ -1279,10 +1317,10 @@ void March(uint3 gid : SV_DispatchThreadID)
                 if (tf.x >= max(av.x, sat.x)) bf *= 1.0 - jw;   // the flare is drawn with the wall cloud (above)
                 // lit only where it draws: its soft field reaches about a quarter of a radius past the threshold, and on a
                 // wide funnel lighting that rim (the sun and horizon tests, 45 lookups) was most of a close view's cost
-                bool funnelLit = bf > 0.0 || (_TorP.z > 0.5 && tv.x > 0.0);
+                bool funnelLit = bf > 0.0 || (PROBE_LIGHTALL > 0.5 && tv.x > 0.0);
                 // its own sun test, and the bright horizon it sees all round from under the base (the light grid's sky
                 // term is the sky overhead, which the base hides)
-                float tsun = (funnelLit || tv.y > 0.0) ? (_TorP.w > 0.5 ? sunL : max(sunL, tornadoSun(q))) : 0.0;
+                float tsun = (funnelLit || tv.y > 0.0) ? (PROBE_TOR > 0.5 ? sunL : max(sunL, tornadoSun(q))) : 0.0;
                 float3 hzLight = skyc * 0.2 + hazec * 0.08;
                 // the funnel's vertical sides see the horizon under the base, which the base's underside does not (the
                 // painted path's version; the physical path takes it from the sky bands below)
@@ -1326,7 +1364,7 @@ void March(uint3 gid : SV_DispatchThreadID)
                         float capV = svT.r, sideV = 1.0;
                         float visN = saturate(svT.b + (svT.a - svT.b) * cs);
                         float3 horL = max(g_hor + (g_horK - g_hor) * cs, 0.6 * g_hor);
-                        float3 horN = horL * (0.07 * visN * sideV + 0.14 * (_TorP.w > 0.5 ? 0.5 : tornadoHorizon(q, g_torN)));
+                        float3 horN = horL * (0.07 * visN * sideV + 0.14 * (PROBE_TOR > 0.5 ? 0.5 : tornadoHorizon(q, g_torN)));
                         amb = (0.045 * g_zen * capV + (0.24 * g_mid * svT.g * sideV + horN) * wedgeK) * _PL2.x + skyFill() + groundLight(q, sunc);
                         // It is the same cloud as the lowering it hangs from, so in shadow it is never darker than that
                         // cloud's sky light (1.25 undoes the albedo tint below; a wedge may go a little darker)
@@ -1365,8 +1403,8 @@ void March(uint3 gid : SV_DispatchThreadID)
                         // wall cloud hands it over, so it met the wall cloud in a step of shade. They now fade in down the
                         // funnel: at 0.8 of the way up it takes the wall cloud's light exactly, at the ground its own.)
                         float kTop = S_wall.w * ss(0.0, 0.8 * ztop, q.z);
-                        float4 ltF = lt; ltF.r = _TorP.w > 0.5 ? lt.r : lerp(funnelSunDepth(q), lt.r, kTop);
-                        float horF = _TorP.w > 0.5 ? sv.b : tornadoHorizon(q, g_torN) * horizonFar(q, g_torN);
+                        float4 ltF = lt; ltF.r = PROBE_TOR > 0.5 ? lt.r : lerp(funnelSunDepth(q), lt.r, kTop);
+                        float horF = PROBE_TOR > 0.5 ? sv.b : tornadoHorizon(q, g_torN) * horizonFar(q, g_torN);
                         float4 svF = sv; svF.b = lerp(0.5 * (saturate(sv.b + (sv.a - sv.b) * cs) + horF), sv.b, kTop);
                         float stain = S_tor9.w * pow(saturate(1.0 - hz / 0.45), 2.0);
                         float3 albF = lerp(lerp(min(alb, 1.0), 1.0, kTop).xxx, soil * 0.85, stain) * tone;
@@ -1419,7 +1457,7 @@ void March(uint3 gid : SV_DispatchThreadID)
                     if (uni)
                     {
                         // as the funnel: its sun test, and the sun crossing its own cloud to reach the far side
-                        float4 ltD = lt; ltD.r = _TorP.w > 0.5 ? lt.r : funnelSunDepth(q);
+                        float4 ltD = lt; ltD.r = PROBE_TOR > 0.5 ? lt.r : funnelSunDepth(q);
                         tl = stormLight(q, ltD, sv, sunz, sunc, phD, 1.0, od * (0.15 + 0.65 * (1.0 - lit)) / 0.38, 0.0, 1, phAD) * (0.65 + 0.35 * shade);
                     }
                     // dense dust is darker than its soil (light lost to scattering in the thick core; the reference photos'
@@ -1456,7 +1494,7 @@ void March(uint3 gid : SV_DispatchThreadID)
     _OutDist[id.xy] = lerp(min(tb, 60.0), dsum / max(wsum, 1e-6), ss(1e-3, 0.05, wsum));
     _OutHalf[id.xy] = tHalf < 1e8 ? tHalf : -1.0;
     // timing checks: the steps this pixel took, and how many of them evaluated the detailed tornado, per thousand
-    if (_TorP.w > 2.5) { _Out[id.xy] = float4(nSteps, nTorSteps, 0.0, 1000.0) * 0.001; return; }
+    if (PROBE_TOR > 2.5) { _Out[id.xy] = float4(nSteps, nTorSteps, 0.0, 1000.0) * 0.001; return; }
 
     if (_Opt.z > 0.5 && tScene > 1e8)
     {
