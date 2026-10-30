@@ -205,6 +205,12 @@ Tornado (`tornado`):
   changes over its life, skin (ragged, laminar, ghost), brightness, soil by region, suction vortices for big ones, a
   collar and a satellite. Drawn with 2.0's photo-matched funnel, debris, own sun test and horizon light; its flare is
   handed to the website's wall cloud where they meet.
+  Debris (user, 2026-10-30; the reference photos in 2.0's `data/reference/tornadoes/debris_soil`): a column round the
+  funnel's foot 100-450 m tall (`tornadoDustTop`; a wedge's to 300 m) and two to three funnel widths across, opaque and
+  darker than its soil in the dense core, its outline heaved into billows that rise with the lofted dust and ragged at
+  the top; a thin fan of dust along the ground to twice its radius; and curtains of dust lifted up the funnel in curled
+  bands following the rotation, to 0.4 of the base (close and low round a wedge's envelope). Check close with
+  `-slTornadoLife <preset> <seed> <cycle> sharp`.
   Sizes and ratings by shape (user, 2026-10-29; `StormTornadoes.MinWidthM/MaxWidthM/MinEf/MaxEf`, visible width at
   the ground): wedges 750 yd to 2 mi and EF3 or more (EF5 from 1000 yd); cones at most 500 yd and EF4; stovepipes 250 yd
   and EF4; ropes (and sidewinders) 100 yd and EF2; elephant trunks 200 yd and EF2; drillbits 300 yd, the one other shape
