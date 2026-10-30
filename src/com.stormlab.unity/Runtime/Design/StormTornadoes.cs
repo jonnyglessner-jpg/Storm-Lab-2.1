@@ -79,10 +79,12 @@ namespace StormLab
         public FunnelSkin skin; public double albedo, roughness, striation, ghost;
         public double soilR, soilG, soilB, dirt; public string soilName;
         public bool satellite; public double satFrac, satLifeS, satOrbitKm, satRadKm, satVmax, satAngle;
-        /// <summary>a cone's or stovepipe's formation: the share of its life it takes to widen from a thin vortex, how much
-        /// sooner (+) or later (-) its top widens than its foot, how thin it starts (a share of its foot's full width), and
-        /// how much it snakes while thin</summary>
-        public double formFrac, formTopLead, formThin, formSinu;
+        /// <summary>how it forms (DrawFormation; user, 2026-10-30: every tornado starts as a rope and grows through stages):
+        /// formFrac the share of its life from touchdown to its full shape; ropeStage the share of that it stays a rope;
+        /// ropeKm the rope's radius; ropeSinu how much it snakes as a rope; ropeCond how far down its condensation reaches
+        /// as a rope (1: to the ground, less: a funnel aloft over its dust whirl); formTopLead how much sooner (+) or later
+        /// (-) its top widens than its foot as it grows</summary>
+        public double formFrac, formTopLead, ropeStage, ropeKm, ropeSinu, ropeCond;
         public const double MorphFrac = 0.1;
         public double LifeMin => goneMin - formMin;
         /// <summary>wind at radius r km, m/s (Rankine vortex, peak at rc)</summary>
@@ -444,18 +446,21 @@ namespace StormLab
         }
 
         /// <summary>
-        /// How a cone or stovepipe forms (user, 2026-10-26): it comes down as a thin vortex, as a wedge's central vortex does,
-        /// and widens into its shape, each its own way: quickly or slowly (12-30 % of its life), top first or foot first,
-        /// a fifth to nearly half its foot's width at first, snaking more or less while thin. Its own stream, so the other draws are unchanged.
+        /// How a tornado forms (user, 2026-10-26: cones and stovepipes come down thin and widen; 2026-10-30: every tornado
+        /// starts as a rope, each a different one, and grows through stages). It comes down as a rope funnel 8-40 m in radius,
+        /// snaking more or less, its condensation to the ground or hanging short of it over the dust it raises, and stays one
+        /// for a quarter to half of its formation; then it fills out through a cone-like middle stage into its own shape, top
+        /// first or foot first, quickly or slowly (12-30 % of its life in all). A wedge's rope is its central vortex, and its
+        /// envelope grows round it in the middle stage. Its own stream, so the other draws are unchanged (the first two draws
+        /// are the ones made before 2026-10-30, so the cones and stovepipes the user saw keep their pace and lead).
         /// </summary>
         static void DrawFormation(TornadoCharacter t, StormRng r)
         {
             t.formFrac = r.Range(0.12, 0.3); t.formTopLead = r.Range(-0.3, 0.5);
-            t.formThin = r.Range(0.2, 0.45); t.formSinu = r.Range(0.15, 0.45);
+            t.ropeKm = 0.008 * Math.Pow(5, r.U()); t.ropeSinu = r.Range(0.3, 0.9);
+            t.ropeStage = r.Range(0.25, 0.55); t.ropeCond = r.U() < 0.5 ? 1 : r.Range(0.5, 0.9);
         }
 
-        /// <summary>a big tornado's central vortex at touchdown, as a share of its full width</summary>
-        const double CoreStart = 0.15;
         /// <summary>a wedge's narrowing before its rope-out: how far, and over how many storm minutes</summary>
         public const double WedgeShrink = 0.6, WedgeShrinkMin = 2;
         /// <summary>the share of its life at which a tornado's rope-out begins (the web build's rope milestone)</summary>
@@ -466,7 +471,8 @@ namespace StormLab
         const double RopeCore = 0.05;
         /// <summary>share of its life a forming funnel takes to come down, before it widens</summary>
         const double FormDown = 0.06;
-        static bool FormsThin(FunnelShape s) => s == FunnelShape.Cone || s == FunnelShape.Stovepipe;
+        /// <summary>the middle stage's foot, as a share of the full one: a cone-like funnel between the rope and the shape</summary>
+        const double MidStage = 0.5;
 
         static FunnelPhase PhaseOf(TornadoCharacter t, FunnelShape shape, double startFrac, double gS, double tS, double pJ, double u)
         {
@@ -655,18 +661,27 @@ namespace StormLab
             else
             {
                 bool big = tg.shape == FunnelShape.Wedge || tg.shape == FunnelShape.MultiVortex || tg.subVortices > 0;
-                double takeover = tg.shape == FunnelShape.MultiVortex ? 0.35 : Ramp(lifeFrac, 0.12, Math.Max(0.45, tg.multiFrac + 0.15));
-                double multi = tg.subVortices > 0 ? Ramp(lifeFrac, 0.02, 0.06) * (1 - Ramp(lifeFrac, tg.multiFrac * 0.75, tg.multiFrac)) : 0;
+                // Formation (DrawFormation; user, 2026-10-30): down as a rope by FormDown, a rope until F1, filling out through
+                // the middle stage to its full shape by F2; its top leads or lags its foot by formTopLead of the middle stage
+                double F0 = FormDown, F2 = F0 + tg.formFrac, F1 = F0 + tg.formFrac * tg.ropeStage, span = F2 - F1;
+                double lead = tg.formTopLead * 0.3 * span;
+                double gMid = Ramp(lifeFrac, F1, F1 + 0.6 * span), gFull = Ramp(lifeFrac, F1 + 0.3 * span, F2);
+                double gMidT = Ramp(lifeFrac, F1 - lead, F1 + 0.6 * span - lead), gFullT = Ramp(lifeFrac, F1 + 0.3 * span - lead, F2 - lead);
+                double ropeStartR = Math.Max(Math.Min(tg.ropeKm, 0.8 * pg), 0.008);
+                double takeover = tg.shape == FunnelShape.MultiVortex ? 0.35 : Ramp(lifeFrac, F1 + 0.3 * span, Math.Max(F2, tg.multiFrac + 0.15));
+                // suction vortices come with the envelope, once the rope stage is over (a rope with suction vortices is no rope)
+                double multi = tg.subVortices > 0 ? Ramp(lifeFrac, F1, F1 + 0.04) * (1 - Ramp(lifeFrac, Math.Max(tg.multiFrac * 0.75, F1 + 0.06), Math.Max(tg.multiFrac, F1 + 0.1))) : 0;
                 double breakdown = 0;
                 envelope = big ? (tg.shape == FunnelShape.MultiVortex ? 0.35 + 0.25 * takeover : takeover) : 0;
-                // the central vortex comes down thin (CoreStart of its full width, at least 25 m) and widens in proportion
-                // to its full width by a fifth of the life. It is drawn from touchdown: it used to grow unseen from nothing
-                // while the funnel was drawn plain, and appear at once, hundreds of metres wide, when the envelope began
-                // (user, 2026-10-26: the wedge jumped in size)
-                double coreFull = Math.Max(tg.rcKm * 1.6, 0.04), coreStart = Math.Max(coreFull * CoreStart, 0.025);
-                double core = big ? coreStart * Math.Pow(coreFull / coreStart, Ramp(lifeFrac, 0.03, 0.2)) : 0;
-                ground = gWeb * gScale * (big ? 0.3 + 0.7 * takeover : 1);
-                top = tWeb * tScale * (big ? 0.5 + 0.5 * takeover : 1);
+                // the central vortex comes down as the rope (ropeKm) and widens in proportion to its full width over the
+                // formation. It is drawn from touchdown: it used to grow unseen from nothing while the funnel was drawn
+                // plain, and appear at once, hundreds of metres wide, when the envelope began (user, 2026-10-26: the wedge
+                // jumped in size)
+                double coreFull = Math.Max(tg.rcKm * 1.6, 0.04), coreStart = Math.Min(ropeStartR, coreFull);
+                double core = big ? coreStart * Math.Pow(coreFull / coreStart, Ramp(lifeFrac, F1, F2)) : 0;
+                // the envelope fades in round the core in the middle stage, a fifth of its width, and fills out with the takeover
+                ground = gWeb * gScale * (big ? 0.2 + 0.8 * takeover : 1);
+                top = tWeb * tScale * (big ? 0.4 + 0.6 * takeover : 1);
                 // Rope-out (user, 2026-10-26): as it begins, the envelope's outer part breaks up into a scuddy collar
                 // from the ground to the base; its bottom lifts off the ground and rises, the scud breaking up more and
                 // thinning, until it is gone into the base (S_tor4.z, StormMarch), while the central vortex narrows to a
@@ -694,19 +709,25 @@ namespace StormLab
                     double narrow = C.Lerp(1, WedgeShrink, Ramp(lifeFrac, r0 - ShrinkSpan(tg), r0));
                     ground *= narrow; top *= narrow;
                 }
-                if (!big && FormsThin(tg.shape) && tg.formFrac > 0)
+                if (!big && tg.formFrac > 0)
                 {
-                    // a cone or stovepipe comes down as a thin, nearly even tube (a third to two thirds of its foot's full
-                    // width) and widens into its shape; its top leads or lags its foot (DrawFormation)
-                    double thin = Math.Max(pg * tg.formThin, 0.012);
-                    // (it widens once it is down: the web build's funnel takes about 6 % of the life to reach the ground)
-                    double gG = Ramp(lifeFrac, FormDown, FormDown + tg.formFrac);
-                    double gT = Ramp(lifeFrac, FormDown, FormDown + C.Clamp(tg.formFrac * (1 - tg.formTopLead), 0.04, 0.45));
-                    ground = C.Lerp(Math.Min(thin, ground), ground, gG);
-                    top = C.Lerp(Math.Min(thin * 1.6, top), top, gT);
-                    profile = C.Lerp(0.12, profile, gG);
-                    sinu = C.Lerp(Math.Max(sinu, tg.formSinu), sinu, gG);
+                    // every plain funnel comes down as a rope (ropeKm, slender and snaking, 2.0's rope proportions), stays one
+                    // through the rope stage, then fills out through a cone-like middle stage (MidStage of its foot, a cone's
+                    // profile) into its own shape; its top leads or lags its foot (DrawFormation). The web build's own
+                    // growth and rope-out stay underneath: the stage only caps the funnel (user, 2026-10-30: large cones and
+                    // stovepipes formed as fat tubes)
+                    double stageG = C.Lerp(C.Lerp(ropeStartR, MidStage * pg, gMid), pg, gFull);
+                    double stageT = C.Lerp(C.Lerp(ropeStartR * 2.8 + 0.03, Math.Max(MidStage * pt, 1.5 * MidStage * pg), gMidT), pt, gFullT);
+                    ground = Math.Min(ground, stageG);
+                    top = Math.Min(top, Math.Max(stageT, ground));
+                    profile = C.Lerp(C.Lerp(0.08, 0.6, gMid), profile, gFull);
+                    sinu = C.Lerp(tg.ropeSinu, sinu, gMid);
                 }
+                // as a rope its condensation may hang short of the ground, over the dust it raises (ropeCond)
+                a[14 * 4 + 2] *= (float)C.Lerp(tg.ropeCond, 1, gMid);
+                // what it is now, for the caption and the march: a rope, then a cone, then its shape
+                if (lifeFrac < F1 + 0.3 * span) phaseShape = FunnelShape.Rope;
+                else if (gFull < 0.5 && tg.shape != FunnelShape.Cone && tg.shape != FunnelShape.Drillbit) phaseShape = FunnelShape.Cone;
                 // (a roping-out wedge stays in envelope mode with no envelope: what is left is its central vortex)
                 // (a big tornado is drawn in envelope mode all its life, so its funnel is always the central vortex and the
                 // envelope round it; switching from plain partway through swapped one funnel for another)

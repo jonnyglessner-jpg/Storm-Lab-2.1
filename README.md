@@ -221,8 +221,12 @@ Tornado (`tornado`):
   Stovepipes are one laminar vortex, a quarter thinner than the website's, their top at least 1.3 times their foot, and
   their straight column curves out into the wall cloud from half way up (`TopFlare`, S_tor7.w: the march's trumpet
   collar begins lower and more gently than the top-quarter crown every funnel has; a cone's half as far, its top 15 %
-  wider than the website's; user, 2026-10-29). Cones and stovepipes come down as a thin
-  tube and widen once on the ground, each its own way (how fast, top or foot first, how thin, how much it snakes).
+  wider than the website's; user, 2026-10-29). Every tornado starts as a rope and grows through stages (user,
+  2026-10-30; `DrawFormation`): it comes down as a rope funnel 8-40 m in radius, each its own (how much it snakes,
+  whether its condensation reaches the ground or hangs over its dust whirl, how long it stays one: a quarter to half of
+  its formation), then fills out through a cone-like middle stage into its own shape, top first or foot first, over
+  12-30 % of its life in all; a wedge's rope is its central vortex, round which the envelope and suction vortices grow
+  in the middle stage. The caption names the stage (rope, cone, then the shape).
   `StormLabTests -slTornadoLife <preset> <seed> <cycle> [tag]` renders one tornado through its life (a tag with
   "early" shows its formation, "rope" its rope-out, "sharp" one unblended full-resolution frame from closer).
   Cost (user, 2026-10-27: frames dropped near tornadoes, more the bigger they were): the march steps through it at a
