@@ -52,18 +52,22 @@ namespace StormLab
         public const double InflowWind = 15;
         /// <summary>no texture turns faster than this, rad/s (a 20 m rope at 80 m/s)</summary>
         const double MaxRate = 4.0;
-        /// <summary>the wall cloud's inner ring turns this share of the way from the rim's rate to the funnel's (must match
-        /// StormCommon.hlsl nearField, where the ring's frame is pure at the radius whose rate this is)</summary>
+        /// <summary>where the funnel meets the wall cloud (the junction) the cloud's surface moves at this share of the
+        /// funnel's edge wind: close to the tornado's speed but under it (user, 2026-10-31)</summary>
+        public const double WallJunctionShare = 0.85;
+        /// <summary>the wall cloud's inner ring turns this share of the way from the rim's rate to the junction's (must
+        /// match StormCommon.hlsl nearField, where the ring's frame is pure at the radius whose rate this is)</summary>
         public const double WallRingShare = 0.05;
 
-        const int N = 12;
+        const int N = 13;
         const double TwoPi = 2 * Math.PI;
         // mesocyclone, funnel skin, central core, suction-vortex wisps, suction-vortex orbit, dust whirl, wall cloud,
         // RFD lip, anti-mesocyclone (clockwise), satellite tornado, anticyclonic tornado (clockwise), the wall cloud's
-        // inner ring (a little faster than the rim, WallRingShare of the way to the funnel's rate: S_spin4.x)
+        // inner ring (a little faster than the rim, WallRingShare of the way to the junction's rate: S_spin4.x), the wall
+        // cloud at its junction with the funnel (S_spin4.y)
         readonly double[] angle = new double[N];
         readonly double[] rate = new double[N];
-        double flow, flowRate;
+        double flow, flowRate, junctionR;
         double lastClock = double.NaN, lastT = double.NaN;
 
         /// <summary>this frame's rates, rad/s, counter-clockwise positive, in the order above (for checks)</summary>
@@ -90,11 +94,24 @@ namespace StormLab
                 else { for (int i = 0; i < N; i++) angle[i] = (angle[i] + rate[i] * dt) % TwoPi; flow += flowRate * dt; }
             }
             lastClock = clock; lastT = tMin;
-            // slots 29-31: the first eleven angles, then the flow (S_spin3.w); slot 32: the wall cloud's inner ring
+            // slots 29-31: the first eleven angles, then the flow (S_spin3.w); slot 32: the wall cloud's inner ring and
+            // junction angles, and the junction's radius (km) the shader tapers from
             int s = Slot0 * 4;
             for (int i = 0; i < 11; i++) a[s + i] = (float)angle[i];
             a[s + 11] = (float)flow;
             a[s + 12] = (float)angle[11];
+            a[s + 13] = (float)angle[12];
+            a[s + 14] = (float)junctionR;
+        }
+
+        /// <summary>where the funnel meets the wall cloud: the cloud-base radius plus the collar's flare (as StormMarch.compute
+        /// draws it), at least 0.1 km and at most half the wall cloud's radius; the wall cloud turns at the junction's rate
+        /// inside it (StormCommon.hlsl nearField)</summary>
+        static double JunctionRadius(float[] a)
+        {
+            double rw = Math.Max(a[6 * 4 + 2], 0.5), rb = a[14 * 4 + 1];
+            double flare = Math.Min(0.25 * rw + 0.3 * rb, 1.6 * rb + 0.1) * (a[21 * 4 + 3] > 0.5 ? 0.35 : 1.0);
+            return C.Clamp(rb + flare, 0.1, 0.5 * rw);
         }
 
         // the web build's rates (its StormMarch / StormCommon constants), unchanged
@@ -112,7 +129,9 @@ namespace StormLab
             rate[8] = -0.16;
             rate[9] = 1.2;
             rate[10] = -0.8;
-            rate[11] = rate[6] + WallRingShare * (rate[1] - rate[6]);
+            rate[12] = rate[1];
+            rate[11] = rate[6] + WallRingShare * (rate[12] - rate[6]);
+            junctionR = JunctionRadius(a);
         }
 
         // wind / radius for each feature, radii in km from the frame
@@ -147,14 +166,21 @@ namespace StormLab
             rate[9] = Math.Min(SatelliteWind / (Math.Max(a[28 * 4 + 3], 0.01) * 1000), MaxRate);
             // anticyclonic tornado, clockwise
             rate[10] = -AntiTornadoWind / (AntiTornadoR * 1000);
-            // The wall cloud's inner ring (user, 2026-10-31: where the funnel meets the wall cloud the cloud turns almost at
-            // the funnel's rate, tapering off to the rim's). The funnel's rate is the wind at its narrow edge over its
-            // radius, far more than any real wind at the wall cloud's radii, so the excess over the rim's rate dies away
-            // steeply (as 1 / r^3 in StormCommon.hlsl nearField) and the ring between is only a little faster than the rim.
-            // A ring at the geometric mean of the two rates (76 s a turn against the rim's 8 min, for a cone) turned a
-            // 1.2 km radius at 100 m/s and read as a band racing round half way out (user's capture, 2026-10-31). The
-            // shader crossfades the texture of three rigid frames (the funnel's skin, this ring, the rim).
-            rate[11] = rate[6] + WallRingShare * (skin - rate[6]);
+            // The wall cloud at its junction with the funnel (user, 2026-10-31: where the funnel meets the wall cloud the
+            // cloud turns almost at the tornado's speed but under it, tapering off to the rim's). The tornado's speed as
+            // seen is the funnel's surface at its edge, the edge wind skin x ground radius (StormTornadoes); the junction
+            // sits at the cloud-base radius plus the collar's flare, so its surface moves at WallJunctionShare of that
+            // wind, v / r here. Turning the junction at the skin's own rate moved its wider circle several times faster
+            // than the funnel's surface and the wall cloud read as outrunning the tornado (user, 2026-10-31).
+            junctionR = JunctionRadius(a);
+            double edgeWind = skin * Math.Max(a[14 * 4], 0.01) * 1000;
+            rate[12] = Math.Min(WallJunctionShare * edgeWind / (junctionR * 1000), skin);
+            // The inner ring: the excess over the rim's rate dies away steeply from the junction (as 1 / r^3 in
+            // StormCommon.hlsl nearField), so the ring between is only a little faster than the rim. A ring at the
+            // geometric mean of the rates (76 s a turn against the rim's 8 min, for a cone) turned a 1.2 km radius at
+            // 100 m/s and read as a band racing round half way out (user's capture, 2026-10-31). The shader crossfades
+            // the texture of three rigid frames (the junction's, this ring, the rim).
+            rate[11] = rate[6] + WallRingShare * (rate[12] - rate[6]);
         }
 
         /// <summary>Start again from rate x clock at the next Advance (a new plan, or a seek).</summary>
