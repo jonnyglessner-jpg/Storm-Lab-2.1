@@ -29,7 +29,7 @@ public static class StormLightCheck
 {
     const string Key = "StormLightCheck.Active", BatchKey = "StormLightCheck.Batch", CodeKey = "StormLightCheck.Code";
     const string PresetKey = "StormLightCheck.Preset", HourKey = "StormLightCheck.Hour", DebugKey = "StormLightCheck.Debug", FlickerKey = "StormLightCheck.Flicker", TailKey = "StormLightCheck.Tail", SceneKey = "StormLightCheck.Scene", FfdKey = "StormLightCheck.Ffd", TorKey = "StormLightCheck.Tor";
-    const string SpotKey = "StormLightCheck.Spot", TagKey = "StormLightCheck.Tag";
+    const string SpotKey = "StormLightCheck.Spot", TagKey = "StormLightCheck.Tag", SeedKey = "StormLightCheck.Seed";
     static string ShotDir => Path.Combine(StormLabTestKit.ProjectDir, "Screenshots");
     static string ReportDir => Path.Combine(StormLabTestKit.RepoRoot, "validation", "reports");
 
@@ -51,6 +51,7 @@ public static class StormLightCheck
         SessionState.SetBool(SceneKey, args.Contains("-slLightScene"));
         SessionState.SetBool(FfdKey, args.Contains("-slLightFfd"));
         SessionState.SetBool(TorKey, args.Contains("-slLightTornado"));
+        SessionState.SetInt(SeedKey, int.TryParse(Arg("-slLightSeed"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var sd) ? sd : -1);
         SessionState.SetString(SpotKey, Arg("-slLightSpot") ?? "");
         SessionState.SetString(TagKey, Arg("-slLightTag") ?? "now");
         EditorSceneManager.OpenScene(TestMapBuilder.ScenePath, OpenSceneMode.Single);
@@ -638,11 +639,23 @@ public static class StormLightCheck
     /// </summary>
     static IEnumerable<object> TornadoShade(TestMapWorld world, StormRenderer storm, Camera cam, TestMapStormPanel panel)
     {
-        storm.preset = "ohio"; storm.varied = true; storm.seed = 504571; storm.Replan(); world.PlaceStorm();
+        // -slLightPreset / -slLightSeed: another storm (dixie, 2026-10-31: the funnel far darker than the wall cloud and base
+        // under its low base), a minute after its first tornadic cycle's tornado is mature; otherwise the user's ohio storm
+        string preset = SessionState.GetString(PresetKey, ""); int seed = SessionState.GetInt(SeedKey, -1);
+        bool own = preset.Length > 0 || seed >= 0;
+        storm.preset = preset.Length > 0 ? preset : "ohio"; storm.varied = true; storm.seed = seed >= 0 ? seed : 504571; storm.Replan(); world.PlaceStorm();
         if (panel) { panel.dayOfYear = 171; panel.latitude = 41.9f; }
         float at = 46.6f;
+        if (own)
+        {
+            // no seed given: the first seed from 1 whose storm has a tornadic cycle
+            if (seed < 0) for (int sd = 1; sd < 80 && !(storm.Plan.cycles?.Any(c => c.tornadic) ?? false); sd++) { storm.seed = sd; storm.Replan(); }
+            world.PlaceStorm();
+            foreach (var x in TornadoViews(storm, cam, panel)) yield return x;
+            yield break;
+        }
         var parts = new List<string>();
-        rep.AppendLine("| view | funnel luminance | base beside it | funnel / base | funnel, sun only | base, sun only |").AppendLine("| --- | --- | --- | --- | --- | --- |");
+        rep.AppendLine("| view | funnel luminance | wall cloud above it | base beside it | funnel / wall cloud | funnel / base | funnel, sun only | base, sun only |").AppendLine("| --- | --- | --- | --- | --- | --- | --- | --- |");
         foreach (var (nm, hour, fromDeg) in new[] { ("noon", 12.38f, 119f), ("evening", 18.8f, 119f), ("noon_ne", 12.38f, 40f) })
         {
             if (panel) { panel.hour = hour; panel.Apply(); }
@@ -676,15 +689,118 @@ public static class StormLightCheck
             Vector2 Px(Vector3 w) { var v = cam.WorldToViewportPoint(w); return new Vector2(v.x, v.y); }
             var pF = Px(new Vector3(tor.x, groundY + 0.4f * zb, tor.z));
             var pB = Px(new Vector3(tor.x, groundY + 1.15f * zb, tor.z) + right * 1500f);
-            float lf = PatchLum(path, pF), lb = PatchLum(path, pB), sf = PatchLum(pathS, pF), sb = PatchLum(pathS, pB);
+            // the wall cloud's lowering just above the funnel's flare (the lowering is F[28] km deep under the base)
+            float lowering = F[28] * 1000f;
+            var pW = Px(new Vector3(tor.x, groundY + zb - 0.35f * lowering, tor.z));
+            float lf = PatchLum(path, pF), lb = PatchLum(path, pB), lw = PatchLum(path, pW), sf = PatchLum(pathS, pF), sb = PatchLum(pathS, pB);
             string P3 = Path.Combine(ShotDir, $"light_tornado_{nm}_dbg3.png"), P4 = Path.Combine(ShotDir, $"light_tornado_{nm}_dbg4.png");
-            parts.Add($"{nm}: funnel sky {PatchLum(P3, pF):0.000}, ground {PatchLum(P4, pF):0.000}; base sky {PatchLum(P3, pB):0.000}, ground {PatchLum(P4, pB):0.000}");
-            rep.AppendLine($"| {nm} ({hour:0.00} h) | {lf:0.000} | {lb:0.000} | {lf / Mathf.Max(lb, 1e-4f):0.00} | {sf:0.000} | {sb:0.000} |");
+            parts.Add($"{nm}: funnel sky {PatchLum(P3, pF):0.000}, ground {PatchLum(P4, pF):0.000}; wall cloud sky {PatchLum(P3, pW):0.000}, ground {PatchLum(P4, pW):0.000}; base sky {PatchLum(P3, pB):0.000}, ground {PatchLum(P4, pB):0.000}");
+            rep.AppendLine($"| {nm} ({hour:0.00} h) | {lf:0.000} | {lw:0.000} | {lb:0.000} | {lf / Mathf.Max(lw, 1e-4f):0.00} | {lf / Mathf.Max(lb, 1e-4f):0.00} | {sf:0.000} | {sb:0.000} |");
+            if (nm == "noon")
+            {
+                // the light grid and the sky visibility up through the wall cloud (at its centre) and 1.5 km beside it
+                var vol = storm.Volume;
+                rep.AppendLine().AppendLine($"Base {zb / 1000f:0.00} km, lowering {lowering / 1000f:0.00} km, wall cloud radius {F[26]:0.00} km, LCL {storm.Plan.lclM:0} m.").AppendLine();
+                rep.AppendLine("| point | km up | sun depth | depth overhead | overhead open | sky cap | ring | horizon | horizon sunward |").AppendLine("| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
+                var rS = storm.WorldToStorm(cam.transform.position + right * 1500f) - storm.WorldToStorm(cam.transform.position);
+                foreach (var (n, px, py) in new (string, float, float)[] { ("wall cloud", F[24], F[25]), ("base beside", F[24] + rS.x, F[25] + rS.y) })
+                    foreach (var z in new[] { 0.2f, 0.4f, 0.6f, 0.8f, 1.0f, 1.3f, 1.7f })
+                    {
+                        var l = Probe(vol.LightTex, vol.LN, vol.LZ, px, py, z);
+                        var sv = Probe(vol.SkyVisTex, vol.SN, vol.SZ, px, py, z);
+                        rep.AppendLine($"| {n} | {z:0.0} | {l.x:0.0} | {-10f * Mathf.Log(Mathf.Max(l.y, 1e-12f)):0.0} | {l.z:0.00} | {sv.x:0.00} | {sv.y:0.00} | {sv.z:0.00} | {sv.w:0.00} |");
+                    }
+                rep.AppendLine();
+            }
             yield return null;
         }
         rep.AppendLine();
         foreach (var l in parts) rep.AppendLine("- " + l);
         rep.AppendLine().AppendLine($"Storm: {storm.preset}, seed {storm.seed}, at {at:0.0} min ({storm.Frame.stage}). Frames: `Screenshots/light_tornado_{{noon,evening,noon_ne}}[_sun,_dbg3,_dbg4].png`.");
+    }
+
+    /// <summary>
+    /// -slLightTornado -slLightPreset key [-slLightSeed n]: every tornadic cycle of that storm, 4 min after its tornado is
+    /// mature, at the game's hours (17 h, 18.8 h), from 3 km on the inflow side (east-south-east and south), 20 m up:
+    /// the funnel's luminance halfway up its exposed part, the wall cloud's lowering above it, the base 1.5 km beside it,
+    /// and the sun's, sky's and ground's parts of each (lightDebug 2-4); the light grids up through the wall cloud.
+    /// Screenshots/light_tornado_&lt;preset&gt;_c&lt;k&gt;_&lt;hour&gt;_&lt;bearing&gt;[_dbg2..4].png
+    /// </summary>
+    static IEnumerable<object> TornadoViews(StormRenderer storm, Camera cam, TestMapStormPanel panel)
+    {
+        var P = storm.Plan;
+        rep.AppendLine($"Storm: {storm.preset}, seed {storm.seed}; base {P.zb:0.00} km (LCL {P.lclM:0} m, lift {StormDesign.CLOUD_BASE_LIFT_KM:0.0}), HP-ness {P.hpness:0.00}, rain wrap {P.wrap:0.00}.").AppendLine();
+        rep.AppendLine("| cycle | shape | hour | from | funnel | wall cloud | base beside | funnel / wall | funnel / base | funnel sun, sky, gnd | wall sun, sky, gnd | base sun, sky, gnd |")
+           .AppendLine("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
+        if (panel) { panel.dayOfYear = 145; panel.latitude = 38.1f; }
+        for (int k = 0; k < (P.cycles?.Length ?? 0); k++)
+        {
+            var cyc = P.cycles[k];
+            if (!cyc.tornadic) continue;
+            // 4 min after the tornado is mature, and 14 min after (the user's view, 2026-10-31: seed 987318 at 46-48 min,
+            // mature at 32.5) while it still stands
+            float thin = (float)cyc.times[cyc.times.Length - 4];
+            float hourArg = SessionState.GetFloat(HourKey, -1f);
+            var hours = hourArg >= 0f ? new[] { hourArg } : new[] { 17f, 18.8f };
+            foreach (var at in new[] { (float)cyc.times[3] + 4f, Mathf.Min((float)cyc.times[3] + 14f, thin - 1f) }.Distinct())
+            foreach (var hour in hours)
+            {
+                if (panel) { panel.hour = hour; panel.Apply(); }
+                storm.stormMinutes = at; storm.StepTo(at, storm.Clock, true);
+                foreach (var x in Wait(0.5f)) yield return x;
+                var F = storm.Frame.param;
+                if (F[52 + 2] <= 0.01f) { rep.AppendLine($"| {k} | {cyc.shape} | {hour:0.0} | - | (no tornado drawn at {at:0.0} min) | | | | | | | |"); break; }
+                float zb = F[4] * 1000f, lowering = F[28] * 1000f;
+                float ztop = Mathf.Max(zb - 0.6f * lowering, 300f);
+                // the user's view: on the ground 3.5 km south-east of the tornado, looking up 18 degrees at the lowering
+                foreach (var fromDeg in new[] { 135f, 180f })
+                {
+                    var tor = storm.StormToWorld(new Vector3(F[52], F[53], 0f)); tor.y = 0f;
+                    var off = new Vector3(Mathf.Sin(fromDeg * Mathf.Deg2Rad), 0f, Mathf.Cos(fromDeg * Mathf.Deg2Rad)) * 3500f;
+                    var from = tor + off;
+                    from.y = (Physics.Raycast(from + Vector3.up * 3000f, Vector3.down, out var hit, 6000f) ? hit.point.y : 0f) + 3f;
+                    cam.transform.SetPositionAndRotation(from, Quaternion.Euler(-18f, fromDeg + 180f, 0f));
+                    cam.fieldOfView = 55f;
+                    string nm = $"{storm.preset}_c{k}_{at:0}_{hour:0.0}_{fromDeg:0}";
+                    StormLabTestKit.Render(cam, Path.Combine(ShotDir, "light_warmup.png"), 2000, 750, 12);
+                    storm.ResetHistory(cam);
+                    string path = Path.Combine(ShotDir, $"light_tornado_{nm}.png");
+                    StormLabTestKit.Render(cam, path, 2000, 750, 8);
+                    var dbg = new string[5];
+                    for (int d = 2; d <= 4; d++)
+                    {
+                        storm.lightDebug = d; storm.ResetHistory(cam);
+                        dbg[d] = Path.Combine(ShotDir, $"light_tornado_{nm}_dbg{d}.png");
+                        StormLabTestKit.Render(cam, dbg[d], 2000, 750, 8);
+                    }
+                    storm.lightDebug = 0;
+                    var groundY = Physics.Raycast(tor + Vector3.up * 3000f, Vector3.down, out var h2, 6000f) ? h2.point.y : 0f;
+                    var right = cam.transform.right; right.y = 0f; right.Normalize();
+                    Vector2 Px(Vector3 w) { var v = cam.WorldToViewportPoint(w); return new Vector2(v.x, v.y); }
+                    var pF = Px(new Vector3(tor.x, groundY + 0.45f * ztop, tor.z));
+                    var pW = Px(new Vector3(tor.x, groundY + zb - 0.4f * lowering, tor.z));
+                    var pB = Px(new Vector3(tor.x, groundY + 1.15f * zb, tor.z) + right * 1500f);
+                    string Parts(Vector2 px) => $"{PatchLum(dbg[2], px):0.000}, {PatchLum(dbg[3], px):0.000}, {PatchLum(dbg[4], px):0.000}";
+                    float lf = PatchLum(path, pF), lw = PatchLum(path, pW), lb = PatchLum(path, pB);
+                    rep.AppendLine($"| {k} | {cyc.shape} {at:0} min | {hour:0.0} | {fromDeg:0} | {lf:0.000} | {lw:0.000} | {lb:0.000} | {lf / Mathf.Max(lw, 1e-4f):0.00} | {lf / Mathf.Max(lb, 1e-4f):0.00} | {Parts(pF)} | {Parts(pW)} | {Parts(pB)} |");
+                    yield return null;
+                }
+            }
+            // the light grid and the sky visibility up through the wall cloud (at its centre) and 1.5 km east of it
+            {
+                var F = storm.Frame.param; var vol = storm.Volume;
+                rep.AppendLine().AppendLine($"Cycle {k} at {storm.stormMinutes:0.0} min ({storm.Frame.stage}): base {F[4]:0.00} km, lowering {F[28]:0.00} km, wall cloud radius {F[26]:0.00} km, funnel top radius {F[52 + 4 + 1]:0.00} km, exposed to {Mathf.Max(F[4] - 0.6f * F[28], 0.3f):0.00} km.").AppendLine();
+                rep.AppendLine("| point | km up | sun depth | depth overhead | overhead open | sky cap | ring | horizon | horizon sunward |").AppendLine("| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
+                foreach (var (n, px, py) in new (string, float, float)[] { ("wall cloud", F[24], F[25]), ("base 1.5 km E", F[24] + 1.5f, F[25]) })
+                    foreach (var z in new[] { 0.1f, 0.3f, 0.5f, 0.7f, 0.9f, 1.2f, 1.6f })
+                    {
+                        var l = Probe(vol.LightTex, vol.LN, vol.LZ, px, py, z);
+                        var sv = Probe(vol.SkyVisTex, vol.SN, vol.SZ, px, py, z);
+                        rep.AppendLine($"| {n} | {z:0.0} | {l.x:0.0} | {-10f * Mathf.Log(Mathf.Max(l.y, 1e-12f)):0.0} | {l.z:0.00} | {sv.x:0.00} | {sv.y:0.00} | {sv.z:0.00} | {sv.w:0.00} |");
+                    }
+                rep.AppendLine();
+            }
+        }
     }
 
     /// <summary>

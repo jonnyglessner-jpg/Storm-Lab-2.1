@@ -153,6 +153,7 @@ namespace StormLab
         {
             cmd.SetComputeTextureParam(cs, kSky, "_Dens", dens);
             cmd.SetComputeTextureParam(cs, kSky, "_OutS", skyVis);
+            cmd.SetComputeVectorParam(cs, "_LM", sunReach);   // (the sky's light through rain and cloud by the sun's law, unified)
             cmd.SetComputeVectorParam(cs, "_LDims", new Vector4(SN, SZ, L, ZT));
             // all its levels: SkyVis takes its first level from _LSlab too, which the light grid's upper half left set
             // (2026-10-30: the sky visibility's lower half stopped updating in the game, every base lit as open sky)
@@ -161,7 +162,6 @@ namespace StormLab
 
             cmd.SetComputeTextureParam(cs, kGround, "_LightIn", light);
             cmd.SetComputeTextureParam(cs, kGround, "_OutG", ground);
-            cmd.SetComputeVectorParam(cs, "_LM", sunReach);
             cmd.SetComputeVectorArrayParam(cs, "_Towns", towns);
             cmd.SetComputeVectorParam(cs, "_TownP", new Vector4(townCount, StormRenderer.TownFloor, 0, 0));
             cmd.SetComputeVectorParam(cs, "_LDims", new Vector4(LN, LZ, L, ZT));

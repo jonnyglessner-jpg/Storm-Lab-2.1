@@ -161,7 +161,15 @@ Lighting (`lighting`):
   8 km out is lit; and the sun crossing to its far side goes through its real thickness (twice its radius), so a cone with
   the sun behind it is a dark silhouette and a thin rope still glows. Seen from the open inflow side it stays lighter
   than the base, as real funnels lit by the bright horizon behind the viewer do. `StormLightCheck -slLightTornado`
-  draws the user's view and two others (`validation/reports/StormLightCheck_tornado.md`). Light diffusing through thick cloud falls
+  draws the user's view and two others (`validation/reports/StormLightCheck_tornado.md`); with `-slLightPreset key
+  [-slLightSeed n] [-slLightHour h]` it draws that storm's tornadic cycles from 3.5 km on the inflow side instead, with
+  the funnel's, the wall cloud's and the base's sun, sky and ground parts (`StormLightCheck_<key>_tornado.md`). The sky
+  visibility (the grid of how much sky each point sees, which the sky light is weighted by) is traced through rain and
+  cloud by the same law as the sun's reach (`sunReach`) rather than the web build's sky-from-above rate, a tenth of the
+  extinction (user, 2026-10-31, the Dixie storm's wall cloud "too light" over its dark funnel: through 10 km of the HP
+  wrap's rain a tenth of the horizon still lit the lowering, while the funnel's own horizon test found that rain opaque;
+  the wall cloud's light is all horizon sky, and the storm's rain wrap is what a low LCL changes about the light under
+  the base, not the gap's geometry, which is the same for the same depth below the base). Light diffusing through thick cloud falls
   off as 1 / (1 + `diffusion` tau) (two-stream diffuse transmission) instead of the physical model's floor of a fifth of
   the sky everywhere, so under a deep storm the base is lit by the horizon under its edge and the ground below. Rain is
   `rainExtinction` (2.5) times the drawn rain's extinction, for the eye and for the light alike (heavy rain is about 4-7

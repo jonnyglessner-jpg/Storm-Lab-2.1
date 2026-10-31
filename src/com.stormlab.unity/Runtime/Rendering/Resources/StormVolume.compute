@@ -641,7 +641,14 @@ void Light(uint3 gid : SV_DispatchThreadID)
 // through the volume (zenith and 4 at 25 degrees; 6 at 50; 8 at 82, 8 degrees above the horizon), 8 steps each
 // growing 1.6x from 0.25 km (17.5 km). Optical depth becomes visibility as exp(-0.1 tau), the web build's
 // sky-from-above rate. The march (skyLight) uses the same directions; SkyLighting.Bands integrates the sky over them.
+// Unified lighting (_LM.x > 0; user, 2026-10-31, the Dixie storm: the wall cloud far lighter than the funnel under it,
+// "it is that wall cloud that is too light"): the sky's light reaches a point through rain and cloud by the same law as
+// the sun's (sunReach: the octaves and the light diffused through), as the ground light already does. The web build's
+// rate let the sky through at a tenth of the extinction the sun's trace and the funnel's own horizon test see: through
+// 10 km of light rain (an HP storm's wrap, which a low LCL brings) a tenth of the horizon still reached the lowering
+// under the base, while the funnel's test found that rain opaque, so the lowering stayed a lit grey over a dark funnel.
 RWTexture3D<float4> _OutS;
+float4 _LM;   // the unified lighting's sun reach (StormVolume.sunReach): x octaves, y octave extinction, z diffusion, w diffused sun; x = 0 otherwise
 
 float skyTrace(float3 p, float3 d)
 {
@@ -652,7 +659,7 @@ float skyTrace(float3 p, float3 d)
         if (q.z > _LDims.w || q.z < 0.0 || abs(q.x) > _LDims.z || abs(q.y) > _LDims.z) break;
         tau += betaL(q) * s; a += s; s *= 1.6;
     }
-    return exp(-0.1 * tau);
+    return _LM.x > 0.5 ? sunReach(tau, _LM) : exp(-0.1 * tau);
 }
 
 [numthreads(4, 4, 4)]
@@ -689,7 +696,6 @@ void SkyVis(uint3 gid : SV_DispatchThreadID)
 // lights the base over it 4x as brightly as the even town light, open country about a seventh as brightly.
 RWTexture2D<float4> _OutG;
 Texture3D<float4> _LightIn;
-float4 _LM;
 float4 _Towns[16];
 float4 _TownP;   // x: how many towns, y: the open country's share (StormRenderer.TownFloor)
 

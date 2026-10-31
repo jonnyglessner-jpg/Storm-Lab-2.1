@@ -35,7 +35,10 @@ README.md has the layout, use, checks and known gaps.
   way"): every medium takes its light from `stormLight` in StormMarch.compute and differs only in its phase function,
   albedo and scattering octaves. Never give a part of the storm its own light formula or multiplier; fix the shared one.
   What the storm shades besides itself (the scene's sun cookie, its ground light) takes the sun the same way
-  (`sunReach` in StormCommon.hlsl, and the rain extinction); check with `StormLightCheck -slLightScene`.
+  (`sunReach` in StormCommon.hlsl, and the rain extinction); check with `StormLightCheck -slLightScene`. So does the sky
+  visibility (`SkyVis` in StormVolume.compute, through rain and cloud by `sunReach` under unified lighting; user,
+  2026-10-31: the Dixie wall cloud lit grey over a dark funnel when it saw rain at a tenth of the sun's extinction).
+  Check a tornado against its wall cloud with `StormLightCheck -slLightTornado -slLightPreset <key> -slLightSeed <n>`.
   Check with `StormLightCheck` (physical beside unified, at 17 h and 18.8 h).
 - Funnels are smooth (no vertical grooves), as in 2.0.
 - Everything on a tornado turns by the angles in `S_spin` / `S_spin2` / `S_spin3`, each wrapped at 2 pi on its own: never
