@@ -6,7 +6,7 @@
 #ifndef STORM_COMMON
 #define STORM_COMMON
 
-float4 _SP[32];
+float4 _SP[33];
 #define S_f      _SP[0]    // xy forward (storm motion) unit, zw left unit
 #define S_base   _SP[1]    // x cloud base, y storm top (EL), z clock s, w storm time min
 #define S_tower  _SP[2]    // x top height, y radius, z amount, w striation
@@ -44,6 +44,7 @@ float4 _SP[32];
 #define S_spin2  _SP[30]   // x suction-vortex orbit, y dust whirl, z wall cloud, w RFD lip
 #define S_spin3  _SP[31]   // x anti-mesocyclone (negative: clockwise), y satellite tornado, z anticyclonic tornado (negative),
                            // w how far the inflow has carried the beaver tail's air toward the updraft, km (0: the web build's)
+#define S_spin4  _SP[32]   // x the wall cloud's inner ring (between the funnel's rate and the rim's), yzw spare
 
 Texture3D<float> _Noise;
 SamplerState sampler_LinearRepeat;
@@ -285,6 +286,24 @@ bool beaverTailBand(float3 p)
     return abs(qq) < wt * 2.2 + 0.5 && abs(p.z - zc - 0.15) < th * 2.0 + 0.25;
 }
 
+// The wall cloud's noise fields in one turning frame (dr: the point in that frame, km from its centre; o: this frame's own
+// offsets, so two frames never sample the same field): x the texture, y the game's underside fringe, z and w the scud's
+// fields (y-w only with the game's smooth underside; fine > 0 adds the second octaves). With o = 0 this is the wall
+// cloud's own frame, sample for sample as before.
+float4 wallNoise(float2 dr, float z, float fine, bool smoothBase, float3 o)
+{
+    float4 r;
+    r.x = 0.5 * n3(float3(dr * 0.5, z * 1.0) + o) + 0.5 * lerp(0.5, n3(float3(dr * 1.9, z * 2.2) + float3(0.3, 0.7, 0.2) + o), fine);
+    if (smoothBase)
+    {
+        r.y = lerp(0.5, 0.6 * n3(float3(dr * 1.1, z * 0.8) + float3(0.1, 0.9, 0.5) + o) + 0.4 * n3(float3(dr * 2.3, z * 1.6) + float3(0.6, 0.2, 0.8) + o), fine);
+        r.z = 0.65 * n3(float3(dr * 1.3, z * 1.8) + float3(0.45, 0.15, 0.7) + o) + 0.35 * lerp(0.5, n3(float3(dr * 3.1, z * 3.5) + float3(0.2, 0.8, 0.35) + o), fine);
+        r.w = n3(float3(dr * 0.75, 0.37) + o);
+    }
+    else r.yzw = 0.5;
+    return r;
+}
+
 float nearField(float3 p, float fine)
 {
     float zb = S_base.x; float clock = S_base.z;
@@ -297,13 +316,49 @@ float nearField(float3 p, float fine)
         {
             // the wall cloud turns counter-clockwise: sample its texture in a frame turned back by the angle turned so far
             float2 dr = rot2(dw, -S_spin2.z);
-            float n = 0.5 * n3(float3(dr * 0.5, p.z * 1.0)) + 0.5 * lerp(0.5, n3(float3(dr * 1.9, p.z * 2.2) + float3(0.3, 0.7, 0.2)), fine);
-            // ragged fringe hanging from the bottom: fine noise around the circumference, stretched vertically
             float ang = atan2(dr.y, dr.x);
-            float fringe = lerp(0.5, n3(float3(ang * 1.3, rw * 0.8, p.z * 0.6) + float3(0.1, 0.9, 0.5)), fine);
             bool smoothBase = _WallP.x > 0.5;
-            if (smoothBase)
-                fringe = lerp(0.5, 0.6 * n3(float3(dr * 1.1, p.z * 0.8) + float3(0.1, 0.9, 0.5)) + 0.4 * n3(float3(dr * 2.3, p.z * 1.6) + float3(0.6, 0.2, 0.8)), fine);
+            // Differential rotation (user, 2026-10-31: where the tornado meets the wall cloud the cloud must turn at almost
+            // the tornado's speed, tapering off outward to the wall cloud's edge). The wall cloud is the low-level
+            // mesocyclone the funnel hangs from: round the funnel its air turns at the funnel's rate, and outward the wind
+            // over the radius falls away to the rim's (StormSpin: the rim at a real wall-cloud wind, the funnel's skin at
+            // the wind at its edge). Three rigid frames: the funnel's skin about the funnel's top (S_spin.y), the inner
+            // ring a twentieth of the way from the rim's rate to the funnel's (S_spin4.x, StormSpin.WallRingShare), and the
+            // wall cloud's own at its rim (S_spin2.z); the texture is crossfaded between the two nearest. The excess over
+            // the rim's rate falls as 1 / r^3 from the junction (where the collar meets the lowering), so the funnel's
+            // frame is mostly gone by 1.6 junction radii and the ring's frame is pure at 2.7 (the funnel's rate is the
+            // wind at its narrow edge over its radius, far beyond any real wind out here; a gentler log-radius taper
+            // with the ring at the geometric mean of the rates sent a band racing round half way out, user's capture,
+            // 2026-10-31). Never one frame at a blended angle: the angles each wrap at 2 pi (CLAUDE.md; the dust's
+            // snapping). The outline, lobes and bowl stay the rim's.
+            // Game wall cloud only (smooth underside); the website's stays as the web build draws it.
+            float4 N;
+            float fe = 0.0; float2 dt = 0.0;
+            if (smoothBase && S_tor.z > 0.01 && S_tor3.x != 0.0)
+            {
+                dt = p.xy - S_tor3.xy;
+                float flare = min(0.25 * Rw + 0.3 * S_tor2.y, 1.6 * S_tor2.y + 0.1) * (S_tor4.w > 0.5 ? 0.35 : 1.0);
+                float rj = clamp(S_tor2.y + flare, 0.1, 0.5 * Rw);   // the junction's radius
+                float e = pow(rj / max(length(dt), rj), 3.0), eR = pow(rj / Rw, 3.0);
+                fe = saturate((e - eR) / (1.0 - eR)) * ss(0.05, 0.4, S_tor.z);   // 1 at the junction, 0 at the rim
+            }
+            if (fe <= 0.0) N = wallNoise(dr, p.z, fine, smoothBase, 0.0);
+            else
+            {
+                // the two nearest frames and the share of the outer one; the crossfade's lost contrast made up
+                float4 A, B; float s;
+                float4 ring = wallNoise(rot2(dt, -S_spin4.x), p.z, fine, smoothBase, float3(0.37, 0.61, 0.23));
+                const float tr = 0.05;   // the ring's share (StormSpin.WallRingShare): its frame is pure where fe = tr
+                // inside the junction (fe = 1) the funnel's frame alone: taking the ring there put a slow disc inside a fast
+                // one, a seam that glitched and snapped where the funnel met the cloud (user, 2026-10-31)
+                if (fe >= tr) { A = wallNoise(rot2(dt, -S_spin.y), p.z, fine, smoothBase, float3(0.71, 0.29, 0.53)); B = ring; s = (1.0 - fe) / (1.0 - tr); }
+                else { A = ring; B = wallNoise(dr, p.z, fine, smoothBase, 0.0); s = 1.0 - fe / tr; }
+                float g = rsqrt(1.0 - 2.0 * s * (1.0 - s));
+                N = saturate(0.5 + (lerp(A, B, s) - 0.5) * g);
+            }
+            float n = N.x;
+            // ragged fringe hanging from the bottom: fine noise around the circumference, stretched vertically
+            float fringe = smoothBase ? N.y : lerp(0.5, n3(float3(ang * 1.3, rw * 0.8, p.z * 0.6) + float3(0.1, 0.9, 0.5)), fine);
             // a broad bowl: deepest in the middle, its underside curving up to the base at the rim
             // Broad, subtle lobes rotate with the texture so motion remains readable even
             // when the RFD's stationary outline surrounds the cloud. They shrink with it.
@@ -323,8 +378,8 @@ float nearField(float3 p, float fine)
                 // as a line of cloud under the base).
                 float size = saturate((Rw - 1.2) / 2.4);
                 float depth = 0.06 + 0.18 * lw;
-                float sn = 0.65 * n3(float3(dr * 1.3, p.z * 1.8) + float3(0.45, 0.15, 0.7)) + 0.35 * lerp(0.5, n3(float3(dr * 3.1, p.z * 3.5) + float3(0.2, 0.8, 0.35)), fine);
-                float sb = bot - 0.5 * depth * n3(float3(dr * 0.75, 0.37));   // this fragment's own hanging depth
+                float sn = N.z;
+                float sb = bot - 0.5 * depth * N.w;   // this fragment's own hanging depth
                 float hang = ss(sb - depth, sb - 0.3 * depth, p.z) * ss(bot + 0.06, bot - 0.02, p.z) * ss(0.05, 0.25, p.z);
                 float inner = ss(contourR * 0.9, contourR * 0.45, rw);
                 float cover = lerp(0.66, 0.57, size);
