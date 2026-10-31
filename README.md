@@ -31,6 +31,38 @@ minutes)`. `minutesPerSecond` is the storm clock: 1/60 is real time (the default
 minute). For lightning, add `StormLightning` next to it: it adds the flashes, the bridge that lights the cloud, and storm-driven
 flash rates. For a floating origin call `ShiftOrigin(offset)` with the offset the game applied.
 
+The bolts (user, 2026-10-30: "more big, visible bolts reaching out of the updraft and anvil, hitting the ground", with
+big branches, and anvil crawlers; the flash rate and brightness were already right and are unchanged): most ground
+flashes (`LightningSettings.reachingGroundFraction`, 0.6) now reach out of the storm before they strike: the channel
+runs out at height through the cloud, bends where it leaves the tower's side or the anvil's underside (the knee) and
+slants down to the ground 3.5-8.5 km out from where it began (positive flashes out of the anvil, 2.5-7 km on from their
+anvil origin), carrying the biggest branches (up to about 5 km, pointing down and out, the longer ones forking again),
+and a third of them fork to a second ground contact a few hundred metres to a mile from the first. The rest drop
+through the base as before, with forked branches of their own. Anvil crawlers are no longer only the violent cycles'
+peak: once the anvil has spread (from about 20 min) a share of the in-cloud flashes
+(`StormLightningTuning.anvilCrawlerShare`, 0.3, more as the storm ages) run from the upper updraft out under the anvil
+as crawlers, each leg forking again. The anchor search finds the anvil's real underside in the far end's column (near
+the storm it is up to 3 km below the design's anvil-bottom parameter, where the root curves down into the tower; far out,
+above it) and sits just inside it, 2.5-8 updraft radii downwind; the trunk leaves the tower top, drops out of the
+anvil's thick root within its first third and runs the rest of the way just under the anvil's base in the clear, about
+half the legs hang a further 0.5-1.6 km below, seen whole from the ground, and the rest run up to 1.2 km into the anvil
+and light it from inside. `LightningLookCheck` photographs each kind, from the side and from under the
+anvil.
+The check also found why the bolts themselves had hardly ever shown. HDRP draws every transparent before the
+BeforeTransparent custom passes when Refraction is off in the frame settings (it is), so the storm, composited there,
+laid its transmittance over the channels on top of their own occlusion; the channels are now drawn by a custom pass of
+their own at BeforePostProcess (`LightningSystem.ChannelPass`, shader pass `StormLightning`), after the storm, with no
+depth test (the storm writes its cloud's depth where it is opaque, and a test against it would cut a channel wherever
+it is seen against cloud): cloud and rain hide them once, through their own optical-depth occlusion, as designed, and a
+bolt behind a near building or tree shows through it for the frames it lasts. Two more things kept the channels dim,
+and these were the real reason: the night scale (0.0035 at dusk) went into
+the lines' 8-bit vertex colours, which rounded every branch to black and the trunk to one step (it now goes into the
+material, `LightningSystem.ApplyEmission`), and the channel's emission was 8 storm units (eight times a sunlit cloud),
+far below the flash's own light on the cloud; a return stroke is now 600 units (`LightningSystem.emission`; the saved
+components in the scenes carry it too), with the halo a smaller fraction of the core so a bolt by day stays a thin line.
+And the core's minimum width on screen was 1.2 px (`minimumPixelWidth`): a channel that did not clip to white broke into
+a dotted line on the diagonal, landing on every other pixel centre; it is 2 px now.
+
 On the test map, every new storm (Play, **N**, or a new setup or seed in the panel) starts at storm time 0, as towering
 cumulus, off the map to the west, south-west or south (`TestMapWorld.startBearings`, 165-285 deg), on a track picked by
 its seed. Its updraft crosses onto the map 2 minutes (`enterBeforeMature`) before it is fully mature (a supercell's
@@ -421,6 +453,17 @@ ms a frame; nothing is allocated a frame.
   sheet (`storm_tornado_sheet.png`, beside 2.0's in `tornado_sheet_vs_2.0.jpg`), six close with the sun to the side,
   unforced variety storms, and the website's tornado beside the detailed one. Report: `validation/reports/TornadoChecks.md`.
   `dotnet run --project validation/parity/csharp -- --tornadoes` lists the characters a few storms get.
+- **Lightning look**: **StormLab > Test Map > Lightning Look Check** (`LightningLookCheck.RunFromCommandLine
+  [-slBoltHour h]`, about 2 min): the storm held at its first mature cycle at dusk, seen from a chaser's spot 12 km off;
+  it drives the flashes itself, one kind at a time, and photographs each at its peak: three reaching ground bolts, two
+  positive bolts out of the anvil, a plain drop through the base, an in-cloud flash and three anvil crawlers (at their
+  first pulse and late in their flicker) and one reaching bolt by day (16 h). Measures each flash (how far out it strikes, ground contacts, longest branch,
+  a crawler's extent and lowest point); PASS: every kind made, every ground channel ends on the terrain, the reaching
+  bolts strike over 3 km out, crawlers stay over 2 km up and spread over 6 km. Mind that at a pulse's peak the cloud
+  lit by the flash renders as a 2 x 2 checkerboard (the march's lightning relight, spread over frames; the channels
+  over it are fine, as the late-flicker frames show), which was taken for a fault in the channels for a long while.
+  Report:
+  `validation/reports/LightningLookCheck.md`, images `Screenshots/lightning_*.png` and `lightning_sheet.jpg`.
 - **Test map**: `-executeMethod TestMapBuilder.BuildFromCommandLine` (needs `TestMapData/` and the generated textures,
   both gitignored), then `-executeMethod TestMapTests.RunFromCommandLine`: the drive test (all 9 roads pass) and views,
   including the storm from a chaser's position in the game's HDRP look. Report: `validation/reports/TestMapReport.md`.
@@ -462,7 +505,7 @@ tests/StormLabTest -executeMethod <method> -logFile <log>`. Never with `-nograph
 - Physical lighting is calibrated at a 15 degree sun (2.0's reference); the default sun is the website's, 21 degrees up.
 - The lightning light field spans the whole 180 km volume (96 x 96 x 32, about 1.9 km cells); 2.0's spanned 60 km at
   about 0.9 km. A ground flash lights the base and rain shaft strongly; an in-cloud flash seen from 24 km is a modest
-  glow. The bolt itself has not yet been checked in an open-air view (the test flash struck inside the rain curtain).
+  glow. The bolts in open air are checked by `LightningLookCheck` (2026-10-30).
 - Not carried over from 2.0: the brain, wind advection of the cloud, the 30 m near-field volume and StormGenome's
   climatology (SPC ratings and path lengths): the detailed tornado's rating comes from the website's funnel width.
 - The detailed tornado partway through a central-vortex takeover (big stovepipes and wedges, early in their lives) has

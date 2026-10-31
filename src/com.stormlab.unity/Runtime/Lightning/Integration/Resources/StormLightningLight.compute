@@ -82,10 +82,24 @@ void FindAnchors(uint3 id:SV_DispatchThreadID)
         // Downwind along the anvil, spread across it.
         float2 ad=dot(S_anvil.xy,S_anvil.xy)>.01 ? normalize(S_anvil.xy) : float2(1,0);
         float2 across=float2(-ad.y,ad.x);
-        float along=R*lerp(1.5,4.5+3*_SLReach,slRandom(rng));
-        dir=ad; radius=along; centre+=across*R*lerp(-1.5,1.5,slRandom(rng));
+        float along=R*lerp(2.5,5+3*_SLReach,slRandom(rng));
+        dir=ad; radius=along; centre+=across*R*lerp(-2.5,2.5,slRandom(rng));
     }
     float3 p=float3(centre+dir*radius,z);
+    if(crawlTarget)
+    {
+        // The anvil's real underside is far below S_anvil2.x near the storm (its root curves down into the tower) and
+        // above it far out (the thin far anvil): find the lowest cloud in this column and sit just inside it, so the
+        // crawler's trunk (which slopes on down out of the anchor) and its hanging legs run under the anvil in the clear.
+        float lowest=-1;
+        [loop] for(int k=0;k<40;k++)
+        {
+            float zk=S_anvil2.y-k*.25;
+            if(zk<base+1.5) break;
+            if(slMedium(float3(p.xy,zk)).x>=.5) lowest=zk;
+        }
+        p.z=lowest>0 ? lowest+.35 : z;
+    }
     // Require an interior cushion; origins on a boundary can appear detached after density filtering.
     float cloud=slMedium(p).x;
     [unroll] for(int axis=0;axis<3;axis++)

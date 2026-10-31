@@ -24,6 +24,10 @@ namespace StormLab.Lightning
         // Higher storm rates are clipped to it. It bounds the per-flash cloud-anchor readbacks as well. 200 leaves room for
         // a strong supercell's lightning jump (150-200/min) without flattening it.
         public float maxFlashesPerMinute = 200;
+        // Share of ground flashes that reach out of the storm before they strike: out through the cloud, out of the tower's
+        // side or the anvil's underside, and down to the ground well out from under where they began, with the biggest
+        // branches and now and then a second ground contact. The rest drop through the base.
+        public float reachingGroundFraction = .6f;
 
         public void Validate()
         {
@@ -31,6 +35,7 @@ namespace StormLab.Lightning
                 !Finite(flashesPerMinute) || flashesPerMinute < 0 || flashesPerMinute > 600 ||
                 !Finite(groundFraction) || groundFraction < 0 || groundFraction > 1 ||
                 !Finite(positiveGroundFraction) || positiveGroundFraction < 0 || positiveGroundFraction > 1 ||
+                !Finite(reachingGroundFraction) || reachingGroundFraction < 0 || reachingGroundFraction > 1 ||
                 !Finite(cellRadiusM) || cellRadiusM <= 0 ||
                 !Finite(lowerChargeHeightM) || lowerChargeHeightM < 1000 ||
                 !Finite(upperChargeHeightM) || upperChargeHeightM <= lowerChargeHeightM)
@@ -198,11 +203,17 @@ namespace StormLab.Lightning
             settings.Validate();
             if (e.kind == FlashKind.Crawler) return Crawler(e, settings, centre, groundY, terrainHeight, anchors);
             var rng = new LightningRandom(e.seed);
+            float Ground(Vector3 p) => terrainHeight == null ? groundY : terrainHeight(p);
             // Reach (heightened activity) carries flashes further from the updraft and gives them more and longer branches.
             float reach = Math.Min(Math.Max(e.reach, 0), 1);
+            bool ground = e.kind != FlashKind.InCloud;
             Vector3 offset = Disk(ref rng, settings.cellRadiusM * .65f);
             Vector3 start = centre + offset + Vector3.UnitY *
                 (e.kind == FlashKind.PositiveGround ? settings.upperChargeHeightM : settings.lowerChargeHeightM);
+            // A reaching bolt runs out of the storm before it strikes (reachingGroundFraction): out through the cloud, out of
+            // the tower's side or the anvil's underside, and down to the ground well out from under where it began, with the
+            // biggest branches. The rest drop through the base.
+            bool reaching = ground && rng.Unit() < settings.reachingGroundFraction;
             Vector3 end;
             if (e.kind == FlashKind.InCloud)
                 end = centre + Disk(ref rng, settings.cellRadiusM) + Vector3.UnitY * settings.upperChargeHeightM;
@@ -220,30 +231,80 @@ namespace StormLab.Lightning
                 start = placement.origin;
                 if (Vector3.DistanceSquared(start, end) < 1) throw new ArgumentOutOfRangeException(nameof(anchors));
             }
-            if (e.kind != FlashKind.InCloud)
+            if (reaching)
             {
-                end.Y = terrainHeight == null ? groundY : terrainHeight(end);
+                // outward from the updraft through the origin: the way out of the storm's side, or on out under the anvil
+                Vector3 outward = new Vector3(start.X - centre.X, 0, start.Z - centre.Z);
+                if (outward.LengthSquared() < 250000) outward += Disk(ref rng, 1) * 1000;
+                outward = Vector3.Normalize(outward);
+                float lateral = (e.kind == FlashKind.PositiveGround ? rng.Range(2500, 7000) : rng.Range(3500, 8500)) * (1 + .6f * reach);
+                end = start + outward * lateral + Disk(ref rng, 900);
+            }
+            if (ground)
+            {
+                end.Y = Ground(end);
                 if (!LightningSettings.Finite(end.Y)) throw new ArgumentOutOfRangeException(nameof(terrainHeight));
             }
             var channels = new List<LightningChannel>();
-            Vector3[] main = Path(start, end, ref rng, 128, .14f);
-            for (int i = 1; i < main.Length - 1; i++)
-                main[i].Y = Math.Max(main[i].Y, (terrainHeight == null ? groundY : terrainHeight(main[i])) + 5);
+            Vector3[] main = Path(start, end, ref rng, 128, reaching ? .12f : .14f);
+            if (reaching)
+            {
+                // Out at height first, then the slant down: the channel runs most of the way out through the cloud, bends
+                // where it leaves it (the knee) and drops to the ground, as the big bolts out of a storm's side do. The
+                // straight path is bent through the knee (a tent over its length), keeping its roughness.
+                float along = rng.Range(.35f, .5f);
+                Vector3 knee = start + (end - start) * new Vector3(1, 0, 1) * rng.Range(.45f, .65f);
+                knee.Y = start.Y - (start.Y - end.Y) * rng.Range(.25f, .4f);
+                Vector3 bend = knee - (start + (end - start) * along);
+                for (int i = 1; i < main.Length - 1; i++)
+                {
+                    float f = i / 128f;
+                    main[i] += bend * (f < along ? f / along : (1 - f) / (1 - along));
+                }
+            }
+            for (int i = 1; i < main.Length - 1; i++) main[i].Y = Math.Max(main[i].Y, Ground(main[i]) + 5);
             channels.Add(new LightningChannel(main, 1, true));
-            // Branches inherit a local direction; fine and broad bends are correlated at several scales.
-            int branches = (e.kind == FlashKind.PositiveGround ? 5 : 11) + (int)(6 * reach);
+            // Branches inherit a local direction; fine and broad bends are correlated at several scales. A ground bolt's point
+            // down and out (the stepped leader's failed tries); the longer ones fork again. A reaching bolt's are the biggest.
+            float big = reaching ? 1.7f : 1;
+            int branches = (e.kind == FlashKind.PositiveGround ? 5 : 11) + (int)(6 * reach) + (reaching ? 3 : 0);
             for (int b = 0; b < branches; b++)
             {
-                int at = (int)rng.Range(12, 105);
+                int at = reaching ? (int)rng.Range(28, 112) : (int)rng.Range(12, 105);
                 Vector3 direction = Vector3.Normalize(main[Math.Min(at + 5, 128)] - main[at]);
                 Vector3 side = Disk(ref rng, 1);
-                Vector3 tip = main[at] + (direction * .55f + side) * rng.Range(400, 1900) * (1 + 1.2f * reach);
+                float length = rng.Range(400, 1900) * big * (1 + 1.2f * reach);
+                Vector3 tip = main[at] + Vector3.Normalize(direction * .55f + side - Vector3.UnitY * (ground ? rng.Range(0, .5f) : 0)) * length;
                 // Side leaders are unconnected: they must not accidentally become extra ground contacts.
                 tip.Y = Math.Max(groundY + 80, tip.Y);
                 var branch = Path(main[at], tip, ref rng, 32, .12f);
-                for (int i = 1; i < branch.Length; i++)
-                    branch[i].Y = Math.Max(branch[i].Y, (terrainHeight == null ? groundY : terrainHeight(branch[i])) + 20);
-                channels.Add(new LightningChannel(branch, rng.Range(.12f, .42f) * (1 + .5f * reach), false));
+                for (int i = 1; i < branch.Length; i++) branch[i].Y = Math.Max(branch[i].Y, Ground(branch[i]) + 20);
+                float bright = rng.Range(.12f, .42f) * (1 + .5f * reach) * (reaching ? 1.25f : 1);
+                channels.Add(new LightningChannel(branch, bright, false));
+                int forks = length > 1400 ? (int)rng.Range(1, 3) : 0;
+                for (int f = 0; f < forks; f++)
+                {
+                    int from = (int)rng.Range(10, 26);
+                    Vector3 d2 = Vector3.Normalize(branch[Math.Min(from + 4, 32)] - branch[from]);
+                    Vector3 tip2 = branch[from] + Vector3.Normalize(d2 * .5f + Disk(ref rng, 1) - Vector3.UnitY * (ground ? rng.Range(0, .4f) : 0)) * length * rng.Range(.25f, .55f);
+                    tip2.Y = Math.Max(groundY + 80, tip2.Y);
+                    var twig = Path(branch[from], tip2, ref rng, 16, .12f);
+                    for (int i = 1; i < twig.Length; i++) twig[i].Y = Math.Max(twig[i].Y, Ground(twig[i]) + 20);
+                    channels.Add(new LightningChannel(twig, bright * rng.Range(.5f, .8f), false));
+                }
+            }
+            if (ground && rng.Unit() < (reaching ? .35 : .12))
+            {
+                // A forked strike: one branch makes it to the ground too, a few hundred metres to a mile from the first
+                // contact, and carries the return strokes with the trunk (so it is a main channel, dimmer).
+                int at = (int)rng.Range(reaching ? 72 : 60, 108);
+                float angle = rng.Range(0, (float)Math.PI * 2), r = rng.Range(400, 1800) * big;
+                Vector3 foot = end + new Vector3((float)Math.Cos(angle) * r, 0, (float)Math.Sin(angle) * r);
+                foot.Y = Ground(foot);
+                if (!LightningSettings.Finite(foot.Y)) throw new ArgumentOutOfRangeException(nameof(terrainHeight));
+                var fork = Path(main[at], foot, ref rng, 64, .13f);
+                for (int i = 1; i < fork.Length - 1; i++) fork[i].Y = Math.Max(fork[i].Y, Ground(fork[i]) + 5);
+                channels.Add(new LightningChannel(fork, rng.Range(.45f, .75f), true));
             }
             int count = e.kind == FlashKind.NegativeGround ? (int)rng.Range(1, 6) :
                 e.kind == FlashKind.InCloud ? (int)rng.Range(2, 5) : 1;
@@ -255,8 +316,9 @@ namespace StormLab.Lightning
 
         /// <summary>
         /// Crawler geometry. Most run nearly horizontally from the upper updraft out under the anvil, throwing long side
-        /// branches that spread sideways like a spider's legs; the rest leave the storm's side and end in clear air. Neither
-        /// reaches the ground. With cloud anchors the origin is in the upper cloud and the far end in the anvil.
+        /// branches that spread sideways like a spider's legs, forking as they go: some hang below the anvil's underside in
+        /// the clear, the rest run through it and light it from inside. The others leave the storm's side and end in clear
+        /// air. Neither reaches the ground. With cloud anchors the origin is in the upper cloud and the far end in the anvil.
         /// </summary>
         static LightningFlash Crawler(FlashEvent e, LightningSettings settings, Vector3 centre, float groundY,
             Func<Vector3, float> terrainHeight, LightningAnchors? anchors)
@@ -285,13 +347,26 @@ namespace StormLab.Lightning
                 end = start + outward * rng.Range(5000, 9000) * (.8f + .5f * reach);
                 end.Y = start.Y - rng.Range(2500, 5000);
             }
+            // An anvil crawler's far end is in the anvil's lowest layer (the anchor); the trunk slopes on down out of it, so
+            // its outer half runs just under the anvil's base in the clear, where it and its hanging legs are seen whole.
+            if (!toAir) end.Y -= rng.Range(400, 1000);
             float Floor(Vector3 p) => Ground(p) + (toAir ? 900 : 2500);
             end.Y = Math.Max(end.Y, Floor(end));
             var channels = new List<LightningChannel>();
             Vector3[] main = Path(start, end, ref rng, 128, toAir ? .12f : .07f);
+            if (!toAir)
+            {
+                // Out of the tower top and down to the far end's height within the first third, then level: the trunk
+                // leaves the anvil's thick root early and runs the rest of the way just under the anvil's base.
+                for (int i = 1; i < main.Length - 1; i++)
+                {
+                    float t = i / 128f, u = Math.Min(1, t / .3f);
+                    main[i].Y += (start.Y + (end.Y - start.Y) * u * u * (3 - 2 * u)) - (start.Y + (end.Y - start.Y) * t);
+                }
+            }
             for (int i = 1; i < main.Length; i++) main[i].Y = Math.Max(main[i].Y, Floor(main[i]));
             channels.Add(new LightningChannel(main, 1, true));
-            int branches = toAir ? 7 + (int)(4 * reach) : 14 + (int)(8 * reach);
+            int branches = toAir ? 7 + (int)(4 * reach) : 16 + (int)(8 * reach);
             for (int b = 0; b < branches; b++)
             {
                 int at = (int)rng.Range(8, 118);
@@ -299,12 +374,29 @@ namespace StormLab.Lightning
                 direction = direction.LengthSquared() > 1 ? Vector3.Normalize(direction) : Vector3.UnitX;
                 Vector3 side = Disk(ref rng, 1);
                 float length = (toAir ? rng.Range(600, 2200) : rng.Range(1500, 5500)) * (.8f + .6f * reach);
-                Vector3 tip = main[at] + (direction * .45f + side) * length;
-                tip.Y = main[at].Y + (toAir ? -rng.Range(200, 1400) : rng.Range(-700, 250));
+                Vector3 tip = main[at] + Vector3.Normalize(direction * .45f + side) * length;
+                // under the anvil: a good half of an anvil crawler's legs hang below its underside, seen whole from the ground
+                bool under = !toAir && rng.Unit() < .55;
+                tip.Y = main[at].Y + (toAir ? -rng.Range(200, 1400) : under ? -rng.Range(500, 1600) : rng.Range(-100, 1200));
                 tip.Y = Math.Max(tip.Y, Floor(tip));
                 var branch = Path(main[at], tip, ref rng, 32, .1f);
                 for (int i = 1; i < branch.Length; i++) branch[i].Y = Math.Max(branch[i].Y, Floor(branch[i]));
-                channels.Add(new LightningChannel(branch, rng.Range(.3f, .65f), false));
+                float bright = rng.Range(.3f, .65f);
+                channels.Add(new LightningChannel(branch, bright, false));
+                // each leg forks again, sideways and a little down, like a river delta seen from above
+                int forks = (int)rng.Range(0, 3);
+                for (int f = 0; f < forks; f++)
+                {
+                    int from = (int)rng.Range(8, 26);
+                    Vector3 d2 = branch[Math.Min(from + 4, 32)] - branch[from]; d2.Y = 0;
+                    d2 = d2.LengthSquared() > 1 ? Vector3.Normalize(d2) : direction;
+                    Vector3 tip2 = branch[from] + Vector3.Normalize(d2 * .4f + Disk(ref rng, 1)) * length * rng.Range(.25f, .6f);
+                    tip2.Y = branch[from].Y + (under || toAir ? -rng.Range(0, 600) : rng.Range(-200, 500));
+                    tip2.Y = Math.Max(tip2.Y, Floor(tip2));
+                    var twig = Path(branch[from], tip2, ref rng, 16, .1f);
+                    for (int i = 1; i < twig.Length; i++) twig[i].Y = Math.Max(twig[i].Y, Floor(twig[i]));
+                    channels.Add(new LightningChannel(twig, bright * rng.Range(.55f, .85f), false));
+                }
             }
             // A crawler flickers: several pulses over most of a second as the leader keeps branching.
             int count = (int)rng.Range(3, 7);

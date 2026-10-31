@@ -27,6 +27,9 @@ namespace StormLab.Lightning
         [Tooltip("Share of in-cloud flashes that become crawlers at the peak of a cycle with a violent tornado (wedge, " +
             "multiple-vortex, or the teaching sequence's second tornado). None in weaker cycles.")]
         [Range(0, .5f)] public float crawlerShare = .2f;
+        [Tooltip("Share of in-cloud flashes that run out under and through the anvil as crawlers once it has spread (from " +
+            "about 20 min), more as the storm ages. The violent-cycle share (crawlerShare) applies where it is higher.")]
+        [Range(0, .6f)] public float anvilCrawlerShare = .3f;
         [Tooltip("Strong updrafts on the Plains: extra positive share of ground flashes (inverted-polarity storms).")]
         [Range(0, 1)] public float invertedPolarityBoost = .2f;
     }
@@ -59,7 +62,8 @@ namespace StormLab.Lightning
     /// plan and the storm time, so it replays. Each cycle heightens the activity: the rate climbs as the wall cloud
     /// develops, climbs further in the minutes before touchdown (peaking just before the tornado forms), then tapers off
     /// as the tornado runs its course and dips below the baseline as it ropes out. Stronger cycles surge more; the
-    /// heightened moments carry flashes further from the updraft (reach), and violent tornadoes add crawlers.</summary>
+    /// heightened moments carry flashes further from the updraft (reach), and violent tornadoes add crawlers. Once the
+    /// anvil has spread, a share of the in-cloud flashes are anvil crawlers whatever the cycle (anvilCrawlerShare).</summary>
     public static class StormLightningActivity
     {
         /// <summary>The plan's circulations: its seeded cycles, or the teaching sequence's two (30 and 68 min).</summary>
@@ -105,7 +109,7 @@ namespace StormLab.Lightning
             // graupel and ice collide; compressed so a big Plains updraft stays well under the ceiling.
             double size = (P.R / 3) * Math.Pow(C.Clamp((P.w - 8) / 27, 0, 3), .75);
             double coldDepth = LightningPolarity.Ramp(P.el - P.fzlKm, 2, 6);
-            double growth, live, rain, firstRain, jump = 0, reach = 0, crawl = 0, lull = 0, strength = 1;
+            double growth, live, rain, firstRain, jump = 0, reach = 0, crawl = 0, anvilCrawl, lull = 0, strength = 1;
             double t = tMin;
             if (P.kind == StormKind.Supercell)
             {
@@ -115,6 +119,9 @@ namespace StormLab.Lightning
                 live = 1 - 0.6 * LightningPolarity.Ramp(t, P.duration - 12, P.duration + 4);
                 rain = LightningPolarity.Ramp(t, 14, 24);
                 firstRain = LightningPolarity.Ramp(t, 16, 22) * (1 - LightningPolarity.Ramp(t, 28, 40));
+                // anvil crawlers: flashes run out under the anvil once it has spread (14-24 min), more as the storm ages
+                // and the anvil's stratiform region grows
+                anvilCrawl = LightningPolarity.Ramp(t, 20, 36) * (.65 + .35 * LightningPolarity.Ramp(t, 55, 95));
                 foreach (var c in cycles)
                 {
                     double s = c.strength;
@@ -147,6 +154,7 @@ namespace StormLab.Lightning
                 live = 1 - LightningPolarity.Ramp(t, 26, 45);
                 rain = LightningPolarity.Ramp(t, 15, 24);
                 firstRain = LightningPolarity.Ramp(t, 18, 23) * (1 - LightningPolarity.Ramp(t, 30, 40));
+                anvilCrawl = .5 * LightningPolarity.Ramp(t, 20, 30);
             }
             double kind = P.kind == StormKind.Pulse ? k.pulseFactor : 1;
             double vigour = .75 + .25 * strength;
@@ -155,7 +163,7 @@ namespace StormLab.Lightning
             LightningPolarity.Split(region, P.w * live, rain, firstRain, 1 - live, k, out float ground, out float positive);
             ground = Math.Min(.6f, ground * (1 + .3f * (float)reach));
             return new LightningActivity((float)Math.Max(0, rate), ground, positive, (float)(reach * live),
-                (float)(k.crawlerShare * crawl * live));
+                (float)(Math.Max(k.crawlerShare * crawl, k.anvilCrawlerShare * anvilCrawl) * live));
         }
     }
 }

@@ -33,9 +33,12 @@ namespace StormLab.Lightning
         [Tooltip("Hide internal channels until the cloud renderer supports lightning transmittance.")]
         public bool showInCloudChannels;
         [Min(.1f)] public float channelWidthM = 3;
-        [Tooltip("Minimum apparent core width. Prevents distant channels breaking into isolated pixels.")]
-        [Range(.5f, 3)] public float minimumPixelWidth = 1.2f;
-        [Min(0)] public float emission = 8;
+        [Tooltip("Minimum apparent core width (the core's full width at half its brightness). Under about 2 a channel " +
+                 "that does not clip to white breaks into a dotted line on the diagonal (every other pixel centre).")]
+        [Range(.5f, 3)] public float minimumPixelWidth = 2f;
+        [Tooltip("the channel's radiance in the storm's units (1 = a sunlit cloud); a return stroke is hundreds of times a " +
+                 "sunlit cloud, and must stay well above the flash's light on the cloud, which lights it to tens of units")]
+        [Min(0)] public float emission = 600;
         [Tooltip("scales the flashes' light on the scene and their channels' brightness (a game's night exposure: " +
                  "StormLab sets it from StormRenderer.LightningScale)")]
         [Min(0)] public float lightScale = 1;
@@ -87,6 +90,36 @@ namespace StormLab.Lightning
             public AudioClip clip;
             public double endsAt;
         }
+        /// <summary>
+        /// Draws the channels after the storm has been composited. HDRP draws every transparent before the
+        /// BeforeTransparent custom passes when Refraction is off in the frame settings, so a storm composited there
+        /// (StormCustomPass) laid its transmittance over the channels on top of their own occlusion. Here, at
+        /// BeforePostProcess, the channels go over the finished scene, and cloud and rain hide them once, through
+        /// their own optical depth (StormLightning.shader).
+        /// </summary>
+        sealed class ChannelPass : CustomPass
+        {
+            static readonly ShaderTagId Tag = new ShaderTagId("StormLightning");
+            protected override bool executeInSceneView => true;
+            protected override void Execute(CustomPassContext ctx)
+            {
+                var desc = new UnityEngine.Rendering.RendererUtils.RendererListDesc(Tag, ctx.cullingResults, ctx.hdCamera.camera)
+                {
+                    renderQueueRange = RenderQueueRange.all, sortingCriteria = SortingCriteria.CommonTransparent,
+                    rendererConfiguration = PerObjectData.None,
+                };
+                CoreUtils.SetRenderTarget(ctx.cmd, ctx.cameraColorBuffer, ctx.cameraDepthBuffer, ClearFlag.None);
+                CoreUtils.DrawRendererList(ctx.renderContext, ctx.cmd, ctx.renderContext.CreateRendererList(desc));
+            }
+        }
+        static ChannelPass channelPass;
+        /// <summary>HDRP drops its global custom passes when scripts reload, so this is called every sample, as the storm does.</summary>
+        static void EnsureChannelPass()
+        {
+            channelPass ??= new ChannelPass { name = "StormLab lightning channels" };
+            CustomPassVolume.RegisterUniqueGlobalCustomPass(CustomPassInjectionPoint.BeforePostProcess, channelPass);
+        }
+
         readonly List<FlashEvent> events = new List<FlashEvent>();
         readonly Dictionary<long, Visual> active = new Dictionary<long, Visual>();
         readonly List<long> expired = new List<long>();
@@ -107,6 +140,7 @@ namespace StormLab.Lightning
             if (double.IsNaN(seconds) || double.IsInfinity(seconds) || seconds < 0 || seconds > 1e9)
                 throw new ArgumentOutOfRangeException(nameof(seconds));
             settings.Validate();
+            EnsureChannelPass();
             double dt = seconds - previous;
             bool seek = double.IsNaN(previous) || dt < 0 || dt > .25;
             if (seek) ClearPresentation();
@@ -147,6 +181,9 @@ namespace StormLab.Lightning
                 }
             }
             illumination.Clear();
+            // The light scale goes into the material, not the vertex colours: those are 8-bit, and a night scale of a few
+            // thousandths rounded the branches to black and the trunk to one step.
+            ApplyEmission();
             foreach (var pair in active)
             {
                 var visual = pair.Value; var flash = visual.flash;
@@ -166,7 +203,7 @@ namespace StormLab.Lightning
                     line.enabled = visible && power > .0005f;
                     line.positionCount = Math.Max(2, (int)(channel.points.Length * progress));
                     for (int p = 0; p < line.positionCount; p++) line.SetPosition(p, ToUnity(channel.points[p]));
-                    var colour = new Color(power * lightScale, power * lightScale * .96f, power * lightScale * 1.08f, 1);
+                    var colour = new Color(power, power, power, 1);
                     line.startColor = colour; line.endColor = channel.main ? colour : new Color(0, 0, 0, 0);
                 }
                 visual.light.intensity = intensity * FlashCandela * lightScale;
@@ -189,7 +226,7 @@ namespace StormLab.Lightning
                 if (!shader) throw new InvalidOperationException("StormLightning shader is missing.");
                 material = new Material(shader) { name = "Lightning emission (runtime)", hideFlags = HideFlags.DontSave };
             }
-            material.SetColor("_Color", new Color(emission, emission, emission, 1));
+            ApplyEmission();
             var root = new GameObject("Lightning " + flash.Event.id); root.layer=gameObject.layer; root.transform.SetParent(transform, false);
             root.hideFlags = HideFlags.DontSave;
             root.AddComponent<LightningGeneratedVisual>();
@@ -220,6 +257,13 @@ namespace StormLab.Lightning
             light.color = new Color(.86f, .9f, 1); light.range = flash.Event.kind == FlashKind.Crawler ? 12000 : 6000;
             light.shadows = LightShadows.None;
             return new Visual { flash = flash, root = root, lines = lines, light = light };
+        }
+
+        void ApplyEmission()
+        {
+            if (!material) return;
+            float e = emission * lightScale;
+            material.SetColor("_Color", new Color(e, e * .96f, e * 1.08f, 1));
         }
 
         void PlayThunder(LightningFlash flash, double lateSeconds)
@@ -282,7 +326,7 @@ namespace StormLab.Lightning
                 Release(child.gameObject);
             }
         }
-        void OnEnable() { ResetPlayback(); RenderPipelineManager.beginCameraRendering += PrepareCamera; }
+        void OnEnable() { ResetPlayback(); EnsureChannelPass(); RenderPipelineManager.beginCameraRendering += PrepareCamera; }
         void OnDisable() { RenderPipelineManager.beginCameraRendering -= PrepareCamera; ResetPlayback(); }
         void PrepareCamera(ScriptableRenderContext context, Camera camera)
             => PrepareForCamera(camera);

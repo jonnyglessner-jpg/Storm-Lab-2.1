@@ -42,8 +42,16 @@ README.md has the layout, use, checks and known gaps.
   `MaxEf`; wedges 750 yd-2 mi and EF3+, EF5 only wedges from 1000 yd or drillbits, ropes/trunks EF2 at most, cones and
   stovepipes EF4). Free storms are held to them in `Constrain`, games in `Rate` (which changes the shape when it must).
   Run `validation/parity/csharp -- --shapes` after touching tornado sizes, ratings or the game's tiers.
-- `Runtime/Lightning` (core) is 2.0's unchanged code but for its namespace and the `ThunderOverride` hook (2026-10-26,
-  for `StormAudio`'s thunder); fixes there should go back to 2.0 too.
+- `Runtime/Lightning` (core) is 2.0's code but for its namespace, the `ThunderOverride` hook (2026-10-26, for
+  `StormAudio`'s thunder), the 2026-10-30 bolt geometry in `LightningModel` (reaching ground bolts with forked branches
+  and second contacts, crawlers forking under and through the anvil; copy it back to 2.0 with its namespace) and the
+  channels' own custom pass (`ChannelPass` at BeforePostProcess, shader pass `StormLightning`: with Refraction off HDRP
+  draws transparents before the storm's BeforeTransparent pass, so the storm's transmittance went over the bolts on top
+  of their own occlusion; no depth test, since the storm writes its cloud's depth; cloud and rain hide a bolt by its
+  optical depth), the channel emission in storm units (600; the night scale goes into the
+  material, never the 8-bit vertex colours); fixes there should go back to 2.0 too. The flash rate
+  and brightness are right (user, 2026-10-30: "already good"): change what the flashes look like and where they go,
+  not how many or how bright. Check bolts with `LightningLookCheck`.
 - Sound (`Runtime/Audio`): thunder plays CC0 recordings (`Resources/StormLab/Thunder`, cut by
   `validation/audio/thunder/cut.py` from `audio-sources/thunder`, credited in its CREDITS.md; new recordings must be
   CC0 or CC-BY and listed there; run `check.py` after a re-cut). The rest is procedural; the synths in `Synth/` stay plain
@@ -64,6 +72,7 @@ README.md has the layout, use, checks and known gaps.
   `TestMapTests.RunFromCommandLine [-testmapShotsOnly] [-testmapMap dixie|midwest]`; the real-data maps build with
   `BuildDixieFromCommandLine` / `BuildMidwestFromCommandLine` after `tools/testmap/real` (README there).
 - Play-mode checks on the test map: `StormPlayCheck`, `StormDayCheck`, `StormGameCheck [-slGameSeed n] [-slGamePreset key]`,
-  `StormAudioCheck [-slAudioWiring]` (all `.RunFromCommandLine`); `StormSpawnCheck` runs without Play.
+  `StormAudioCheck [-slAudioWiring]`, `LightningLookCheck [-slBoltHour h]` (all `.RunFromCommandLine`); `StormSpawnCheck`
+  runs without Play.
 - Sound synths offline: `dotnet run --project validation/audio` (WAVs to `validation/audio/out/`).
 - Pure C# checks with Unity's bundled dotnet: `validation/parity/csharp`.

@@ -6,11 +6,16 @@ Shader "StormLab/Lightning"
         Tags { "RenderPipeline"="HDRenderPipeline" "Queue"="Transparent+20" "RenderType"="Transparent" }
         Pass
         {
-            // HDRP draws SRPDefaultUnlit passes with its forward transparents
-            Tags { "LightMode"="SRPDefaultUnlit" }
+            // Drawn by LightningSystem's own custom pass (ChannelPass, BeforePostProcess), after the storm: HDRP draws
+            // every transparent before the BeforeTransparent custom passes when Refraction is off in the frame settings,
+            // and the storm then composited its transmittance over the channels on top of their own occlusion.
+            Tags { "LightMode"="StormLightning" }
             Blend SrcAlpha One
             ZWrite Off
-            ZTest LEqual
+            // No depth test: the storm writes its cloud's depth where it is opaque (StormComposite's StormDepth pass),
+            // and a test against it would cut a channel wherever it is seen against cloud. Cloud and rain hide a channel
+            // by its optical depth below; a bolt behind a near building or tree shows through it for the frames it lasts.
+            ZTest Always
             Cull Off
             HLSLPROGRAM
             #pragma vertex Vert
@@ -38,9 +43,10 @@ Shader "StormLab/Lightning"
             {
                 float across = abs(i.uv.y * 2 - 1);
                 // One narrow radiating core within a broad, dim optical halo. The CPU sizes the
-                // ribbon per camera, keeping the core sampled even at long viewing distances.
+                // ribbon per camera, keeping the core sampled even at long viewing distances. The halo is a
+                // small fraction of the core, which is hundreds of times a sunlit cloud (LightningSystem.emission).
                 float core = exp2(-across * across * 36);
-                float halo = exp2(-across * across * 10) * .045;
+                float halo = exp2(-across * across * 10) * .008;
                 float profile = (core + halo) * (1 - smoothstep(.8, 1, across));
                 half3 tint = lerp(half3(.56, .66, 1), half3(1, .97, 1), core);
                 float visibility = 1;
