@@ -24,7 +24,7 @@ namespace StormLab
     public sealed class StormSpin
     {
         /// <summary>first of the angle slots (S_spin), and how many</summary>
-        public const int Slot0 = StormTornadoes.NSLOT, Slots = 3;
+        public const int Slot0 = StormTornadoes.NSLOT, Slots = 4;
         /// <summary>the whole parameter block with the angle slots (must match StormCommon.hlsl)</summary>
         public const int NSLOT = Slot0 + Slots;
 
@@ -52,11 +52,15 @@ namespace StormLab
         public const double InflowWind = 15;
         /// <summary>no texture turns faster than this, rad/s (a 20 m rope at 80 m/s)</summary>
         const double MaxRate = 4.0;
+        /// <summary>the wall cloud's inner ring turns this share of the way from the rim's rate to the funnel's (must match
+        /// StormCommon.hlsl nearField, where the ring's frame is pure at the radius whose rate this is)</summary>
+        public const double WallRingShare = 0.05;
 
-        const int N = 11;
+        const int N = 12;
         const double TwoPi = 2 * Math.PI;
         // mesocyclone, funnel skin, central core, suction-vortex wisps, suction-vortex orbit, dust whirl, wall cloud,
-        // RFD lip, anti-mesocyclone (clockwise), satellite tornado, anticyclonic tornado (clockwise)
+        // RFD lip, anti-mesocyclone (clockwise), satellite tornado, anticyclonic tornado (clockwise), the wall cloud's
+        // inner ring (a little faster than the rim, WallRingShare of the way to the funnel's rate: S_spin4.x)
         readonly double[] angle = new double[N];
         readonly double[] rate = new double[N];
         double flow, flowRate;
@@ -86,9 +90,11 @@ namespace StormLab
                 else { for (int i = 0; i < N; i++) angle[i] = (angle[i] + rate[i] * dt) % TwoPi; flow += flowRate * dt; }
             }
             lastClock = clock; lastT = tMin;
+            // slots 29-31: the first eleven angles, then the flow (S_spin3.w); slot 32: the wall cloud's inner ring
             int s = Slot0 * 4;
-            for (int i = 0; i < N; i++) a[s + i] = (float)angle[i];
-            a[s + N] = (float)flow;
+            for (int i = 0; i < 11; i++) a[s + i] = (float)angle[i];
+            a[s + 11] = (float)flow;
+            a[s + 12] = (float)angle[11];
         }
 
         // the web build's rates (its StormMarch / StormCommon constants), unchanged
@@ -106,6 +112,7 @@ namespace StormLab
             rate[8] = -0.16;
             rate[9] = 1.2;
             rate[10] = -0.8;
+            rate[11] = rate[6] + WallRingShare * (rate[1] - rate[6]);
         }
 
         // wind / radius for each feature, radii in km from the frame
@@ -140,6 +147,14 @@ namespace StormLab
             rate[9] = Math.Min(SatelliteWind / (Math.Max(a[28 * 4 + 3], 0.01) * 1000), MaxRate);
             // anticyclonic tornado, clockwise
             rate[10] = -AntiTornadoWind / (AntiTornadoR * 1000);
+            // The wall cloud's inner ring (user, 2026-10-31: where the funnel meets the wall cloud the cloud turns almost at
+            // the funnel's rate, tapering off to the rim's). The funnel's rate is the wind at its narrow edge over its
+            // radius, far more than any real wind at the wall cloud's radii, so the excess over the rim's rate dies away
+            // steeply (as 1 / r^3 in StormCommon.hlsl nearField) and the ring between is only a little faster than the rim.
+            // A ring at the geometric mean of the two rates (76 s a turn against the rim's 8 min, for a cone) turned a
+            // 1.2 km radius at 100 m/s and read as a band racing round half way out (user's capture, 2026-10-31). The
+            // shader crossfades the texture of three rigid frames (the funnel's skin, this ring, the rim).
+            rate[11] = rate[6] + WallRingShare * (skin - rate[6]);
         }
 
         /// <summary>Start again from rate x clock at the next Advance (a new plan, or a seek).</summary>
