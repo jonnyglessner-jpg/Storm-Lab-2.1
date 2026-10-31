@@ -109,7 +109,7 @@ namespace StormLab.Lightning
                     rendererConfiguration = PerObjectData.None,
                 };
                 CoreUtils.SetRenderTarget(ctx.cmd, ctx.cameraColorBuffer, ctx.cameraDepthBuffer, ClearFlag.None);
-                CoreUtils.DrawRendererList(ctx.renderContext, ctx.cmd, ctx.renderContext.CreateRendererList(desc));
+                CoreUtils.DrawRendererList(ctx.cmd, ctx.renderContext.CreateRendererList(desc));
             }
         }
         static ChannelPass channelPass;
