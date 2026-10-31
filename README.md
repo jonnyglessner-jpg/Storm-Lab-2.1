@@ -116,7 +116,9 @@ its edge moves at that wind in real time: the mesocyclone 14-37 m/s at the updra
 web build's rates had made it a 20-60x time-lapse), the wall cloud 12-26 m/s at its rim (4-16 min), the RFD lip 12 m/s,
 the anti-mesocyclone 10 m/s ("web:" presets only), the tornado's skin its own wind at the funnel's edge, its core solid-body inside the radius
 of maximum wind (Rankine), suction vortices 30 m/s about their axes orbiting at half the parent's wind, the dust whirl the
-1/r wind outside the core, satellite and anticyclonic ("web:" only) tornadoes 35 and 30 m/s. Constants and sources are in
+wind at the debris column's rim (falling as r^-0.6 outside the core, as mobile radars measure real tornadoes; at Rankine's
+1/r a cone's rim turned slower than its dust rose and the column read as rising, not turning, user 2026-10-31), satellite
+and anticyclonic ("web:" only) tornadoes 35 and 30 m/s. Constants and sources are in
 `StormSpin.cs`; `Website` gives the web build's rates (the website comparison uses it).
 `-- --spin [preset]` lists, stage by stage, the speeds the web build's way showed and the real ones, then every feature's
 time per turn.
@@ -453,6 +455,14 @@ ms a frame; nothing is allocated a frame.
   sheet (`storm_tornado_sheet.png`, beside 2.0's in `tornado_sheet_vs_2.0.jpg`), six close with the sun to the side,
   unforced variety storms, and the website's tornado beside the detailed one. Report: `validation/reports/TornadoChecks.md`.
   `dotnet run --project validation/parity/csharp -- --tornadoes` lists the characters a few storms get.
+- **Tornado flow**: **StormLab > Tornado Flow Check** (`TornadoFlowCheck.RunFromCommandLine [-slFlowSeconds s]
+  [-slFlowTag name] [-slFlowStrip s]`, about 3 min): a close rope, cone and wedge, each held at its storm moment while the wall clock runs
+  20 s at 30 fps, as a player sees them; the mean change from each frame to the next. The spin, the rising dust and the sway
+  change the image steadily, so a texture that winds up and snaps back shows as a spike (PASS: none over 2.5x the
+  median). Report: `validation/reports/TornadoFlowCheck[_tag].md`, each view's trace as CSV beside it, the frames round
+  each view's worst change in `Screenshots/flow_*.png`; `-slFlowStrip s` keeps a frame every s seconds too
+  (`flow_<view>_s<n>.png`), to judge turning against rising over seconds. Run it after touching how anything turns in
+  `tornadoField`.
 - **Lightning look**: **StormLab > Test Map > Lightning Look Check** (`LightningLookCheck.RunFromCommandLine
   [-slBoltHour h]`, about 2 min): the storm held at its first mature cycle at dusk, seen from a chaser's spot 12 km off;
   it drives the flashes itself, one kind at a time, and photographs each at its peak: three reaching ground bolts, two

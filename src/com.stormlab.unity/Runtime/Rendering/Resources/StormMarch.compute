@@ -561,16 +561,46 @@ float3 tornadoField(float3 q)
     float dh = tornadoDustTop(dust);
     float2 dustDv = q.xy - tornadoAxis(0.0, ztop, clock);
     float dustD = length(dustDv);
-    // noise in a frame turning with the dust and rising with it (about 15 m/s). The dust turns differentially (user,
-    // 2026-10-30: the rotation was barely visible): inside the radius of maximum wind at the core's angle (S_spin.z,
-    // solid-body, seconds per turn), three radii out at the whirl's (S_spin2.y, the slow 1 / r^2 flow), sheared between
-    // (both integrated angles, StormSpin). One frame at the whirl's rate turned a cone's whole column once in minutes.
+    // noise in a frame turning with the dust and rising with it. The dust turns differentially (user, 2026-10-30: the
+    // rotation was barely visible): inside the radius of maximum wind at the core's angle (S_spin.z, solid-body, seconds
+    // per turn), three radii out at the whirl's (S_spin2.y, the wind at the column's rim, r^-0.6 outside the core), sheared
+    // between (both integrated angles, StormSpin). One frame at the whirl's rate turned a cone's whole column once in
+    // minutes. The rise is differential the same way: 15 m/s in the core's frame (the updraft in a tornado's wall is
+    // 25-60 m/s, Stull ch. 15; the dust it lofts rises slower than the air) and 5 m/s in the whirl's, where the air mostly
+    // flows in along the ground. Everything rising at 15 m/s outran a rim turning at 12 m/s and the column read as
+    // rising, not turning (user, 2026-10-31); the rim now turns about four times as fast as it rises.
+    // The shear is a crossfade of the noise sampled in the two frames, not one frame at an angle blended between the
+    // two: StormSpin keeps every angle in 0..2 pi, so a blended angle wound the band up by a turn as the core's angle
+    // neared 2 pi and snapped it back when it wrapped, every turn of the core (user, 2026-10-30: the debris cloud and
+    // the funnel's foot distort, then hard-reset, on a loop). No one angle can be continuous in both (a mean of two
+    // angles never is); the noise in each frame is. The whirl's frame samples its own noise (other offsets), so the
+    // two never line up and the crossfade's contrast can be made up exactly (two independent fields).
     float rcD = max(S_tor6.z, 0.02);
-    float turn = lerp(S_spin.z, S_spin2.y, ss(rcD, 3.0 * rcD, dustD));
-    float3 dustQ = float3(rot2(dustDv, -turn), q.z - clock * 0.015);
-    float dn = n3k(dustQ, 0.7 / dr, float3(0.3, 0.1, 0.7));                                  // broad unevenness
-    float fine = n3k(dustQ * float3(1.0, 1.0, 1.6), 2.0 / dr, float3(0.62, 0.18, 0.41));    // fine texture
-    float lumps = n3k(dustQ * float3(1.0, 1.0, 0.7), 1.3 / dr, float3(0.11, 0.83, 0.49));   // the billows, taller than wide
+    float shear = ss(rcD, 3.0 * rcD, dustD);
+    float dzc = q.z - clock * 0.015, dzw = q.z - clock * 0.005;
+    float3 dustQ = float3(rot2(dustDv, -S_spin.z), dzc);   // the core's frame (the curtains' helix turns with it)
+    float dn, fine, lumps;
+    if (shear >= 1.0)
+    {
+        float3 wq = float3(rot2(dustDv, -S_spin2.y), dzw);   // the whirl's frame
+        dn = n3k(wq, 0.7 / dr, float3(0.67, 0.49, 0.23));                                   // broad unevenness
+        fine = n3k(wq * float3(1.0, 1.0, 1.6), 2.0 / dr, float3(0.19, 0.73, 0.86));          // fine texture
+        lumps = n3k(wq * float3(1.0, 1.0, 0.7), 1.3 / dr, float3(0.44, 0.27, 0.91));         // the billows, taller than wide
+    }
+    else
+    {
+        dn = n3k(dustQ, 0.7 / dr, float3(0.3, 0.1, 0.7));
+        fine = n3k(dustQ * float3(1.0, 1.0, 1.6), 2.0 / dr, float3(0.62, 0.18, 0.41));
+        lumps = n3k(dustQ * float3(1.0, 1.0, 0.7), 1.3 / dr, float3(0.11, 0.83, 0.49));
+        if (shear > 0.0)
+        {
+            float3 wq = float3(rot2(dustDv, -S_spin2.y), dzw);
+            float g = rsqrt(1.0 - 2.0 * shear * (1.0 - shear));   // the crossfade's lost contrast, made up
+            dn = saturate(0.5 + (lerp(dn, n3k(wq, 0.7 / dr, float3(0.67, 0.49, 0.23)), shear) - 0.5) * g);
+            fine = saturate(0.5 + (lerp(fine, n3k(wq * float3(1.0, 1.0, 1.6), 2.0 / dr, float3(0.19, 0.73, 0.86)), shear) - 0.5) * g);
+            lumps = saturate(0.5 + (lerp(lumps, n3k(wq * float3(1.0, 1.0, 0.7), 1.3 / dr, float3(0.44, 0.27, 0.91)), shear) - 0.5) * g);
+        }
+    }
     float hd = saturate(q.z / max(dh, 0.05));
     // the column: a little wider at its foot, its outline heaved by the billows (about +-30 %), its top ragged
     float edge = dr * (1.0 - 0.3 * hd * hd) * (1.0 + (dn - 0.5) * 0.5 + (lumps - 0.5) * 0.6);

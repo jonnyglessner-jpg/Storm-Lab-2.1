@@ -123,9 +123,13 @@ namespace StormLab
             rate[3] = Math.Min(SubVortexWind / (Math.Max(a[22 * 4 + 1], 0.02) * 1000), MaxRate);
             // the sub-vortices' orbit: about half the parent's wind at the funnel's edge, where they orbit
             rate[4] = OrbitFrac * skin;
-            // the dust whirl, out beyond the core where the wind falls as 1 / r (Rankine): v(r) / r = vmax rc / r^2
+            // the dust whirl, at the debris column's rim out beyond the core. The wind there falls off slower than Rankine's
+            // 1 / r: mobile-radar profiles of real tornadoes (Wurman & Gill 2000, Wurman & Alexander 2005) decay about as
+            // r^-0.6 outside the radius of maximum wind, so v(r) / r = vmax (rc / r)^0.6 / r. At 1 / r a 350 m cone's rim
+            // (0.4 km) turned at 12 m/s, slower than its dust rose (user, 2026-10-31: lots of rising motion, not enough
+            // rotation); at r^-0.6 it turns at about 22 m/s.
             double dr = Math.Max(a[14 * 4] * a[23 * 4 + 3] + 0.06, rc);
-            rate[5] = Math.Min(vmax * rc / (dr * dr * 1000), skin);
+            rate[5] = Math.Min(vmax * Math.Pow(rc / dr, 0.6) / (dr * 1000), skin);
             // wall cloud at its rim (S_wall2.y the web rate, S_wall.z the radius)
             rate[6] = WallWind * a[7 * 4 + 1] / (Math.Max(a[6 * 4 + 2], 0.5) * 1000);
             // the horseshoe's lip round the clear slot (S_rfdb.z its radius)

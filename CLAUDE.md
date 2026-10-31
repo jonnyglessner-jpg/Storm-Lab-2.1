@@ -38,6 +38,9 @@ README.md has the layout, use, checks and known gaps.
   (`sunReach` in StormCommon.hlsl, and the rain extinction); check with `StormLightCheck -slLightScene`.
   Check with `StormLightCheck` (physical beside unified, at 17 h and 18.8 h).
 - Funnels are smooth (no vertical grooves), as in 2.0.
+- Everything on a tornado turns by the angles in `S_spin` / `S_spin2` / `S_spin3`, each wrapped at 2 pi on its own: never
+  blend two of them into one angle (a lerp between the core's and the whirl's wound the dust up and snapped it every turn,
+  user 2026-10-30); rotate by one and blend what is sampled. Run `TornadoFlowCheck` after touching how anything turns.
 - Tornado sizes and ratings by shape (user, 2026-10-29) live in `StormTornadoes` (`MinWidthM`, `MaxWidthM`, `MinEf`,
   `MaxEf`; wedges 750 yd-2 mi and EF3+, EF5 only wedges from 1000 yd or drillbits, ropes/trunks EF2 at most, cones and
   stovepipes EF4). Free storms are held to them in `Constrain`, games in `Rate` (which changes the shape when it must).
@@ -68,6 +71,9 @@ README.md has the layout, use, checks and known gaps.
 ## Running
 
 - Unity 6000.6.6f1, project `tests/StormLabTest`, headless with `-batchmode` (never `-nographics`).
+  A headless check opens an empty scene, and the editor reopens on the last scene it had: after running one, the editor
+  comes up on an empty scene and the game looks gone (user, 2026-10-30). File > Open Scene > `Assets/Scenes/TestMap.unity`
+  brings it back, or set `Library/LastSceneManagerSetup.txt` to that scene before the user opens the editor.
 - `StormLabTests.RunFromCommandLine [-slQuick] [-slCompare <cases.json> -slOut <dir>]`, `TestMapBuilder.BuildFromCommandLine`,
   `TestMapTests.RunFromCommandLine [-testmapShotsOnly] [-testmapMap dixie|midwest]`; the real-data maps build with
   `BuildDixieFromCommandLine` / `BuildMidwestFromCommandLine` after `tools/testmap/real` (README there).
