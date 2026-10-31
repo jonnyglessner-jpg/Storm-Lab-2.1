@@ -126,6 +126,10 @@ namespace StormLab.Lightning
         readonly List<LightningIllumination> illumination = new List<LightningIllumination>();
         readonly List<Voice> voices = new List<Voice>();
         Material material;
+        // one reusable gradient for a crawling channel's head (LineRenderer copies it on assignment)
+        readonly Gradient headGradient = new Gradient();
+        readonly GradientColorKey[] colourKeys = new GradientColorKey[3];
+        readonly GradientAlphaKey[] alphaKeys = { new GradientAlphaKey(1, 0), new GradientAlphaKey(1, 1) };
         double previous = double.NaN;
         long consideredThrough = -1;
 
@@ -149,7 +153,8 @@ namespace StormLab.Lightning
             foreach (var pair in active)
                 if (seconds - pair.Value.flash.Event.time > Math.Max(1, pair.Value.flash.Duration)) expired.Add(pair.Key);
             foreach (long key in expired) { Release(active[key].root); active.Remove(key); }
-            LightningSchedule.Query(settings, Math.Max(-1e-6, seconds - 1), seconds, events, ActivityAtTime);
+            // back far enough to rebuild the longest flash after a seek: a crawler crawls for up to 2.2 s and pulses on
+            LightningSchedule.Query(settings, Math.Max(-1e-6, seconds - 3), seconds, events, ActivityAtTime);
             CurrentActivity = ActivityAtTime?.Invoke(seconds);
             // At high rates the newest flashes win; all allocation budgets remain bounded.
             for (int i = Math.Max(0, events.Count - maxVisibleFlashes); i < events.Count; i++)
@@ -190,29 +195,56 @@ namespace StormLab.Lightning
                 double age = seconds - flash.Event.time;
                 float intensity = flash.Intensity(exposureStart - flash.Event.time, age);
                 bool visible = flash.Event.kind != FlashKind.InCloud || showInCloudChannels;
-                float progress = flash.LeaderProgress(age);
+                bool crawler = flash.Event.kind == FlashKind.Crawler;
                 for (int c = 0; c < visual.lines.Length; c++)
                 {
                     var line = visual.lines[c]; var channel = flash.Channels[c];
+                    // each channel runs out from its root in its own time: with the stepped leader for a bolt, after the
+                    // trunk's leader has passed its root for a crawler (LightningChannel.startAge)
+                    float progress = channel.Progress(age);
+                    if (progress <= 0) { line.enabled = false; continue; }
                     float power = intensity * channel.brightness;
                     // Failed side leaders are mostly visible during the first return stroke; a crawler's branches keep
-                    // carrying current through its pulses, and its slow leader is seen creeping out.
-                    bool crawler = flash.Event.kind == FlashKind.Crawler;
+                    // carrying current through its pulses.
                     if (!channel.main && age > flash.StrokeTimes[0] + .06) power *= crawler ? .6f : .08f;
-                    if (age < flash.LeadSeconds) power = (crawler ? .25f : .008f) * channel.brightness;
-                    line.enabled = visible && power > .0005f;
+                    float head = power;
+                    if (crawler)
+                    {
+                        // The crawl: a trail behind a bright head while the channel runs out, the trail kept glowing while
+                        // any part of the flash still crawls, and the pulses over the channels already formed.
+                        float trail = .5f * channel.brightness;
+                        if (age < flash.LeadSeconds + .1) power = Math.Max(power, trail);
+                        head = progress < 1 ? Math.Max(power, channel.brightness) : power;
+                    }
+                    else if (age < flash.LeadSeconds) head = power = .008f * channel.brightness;
+                    line.enabled = visible && Math.Max(power, head) > .0005f;
                     line.positionCount = Math.Max(2, (int)(channel.points.Length * progress));
                     for (int p = 0; p < line.positionCount; p++) line.SetPosition(p, ToUnity(channel.points[p]));
-                    var colour = new Color(power, power, power, 1);
-                    line.startColor = colour; line.endColor = channel.main ? colour : new Color(0, 0, 0, 0);
+                    if (crawler && progress < 1)
+                    {
+                        // the head is the last quarter of what has formed, not a fade over the whole channel
+                        colourKeys[0] = new GradientColorKey(new Color(power, power, power), 0);
+                        colourKeys[1] = new GradientColorKey(new Color(power, power, power), .75f);
+                        colourKeys[2] = new GradientColorKey(new Color(head, head, head), 1);
+                        headGradient.SetKeys(colourKeys, alphaKeys);
+                        line.colorGradient = headGradient;
+                    }
+                    else
+                    {
+                        line.startColor = new Color(power, power, power, 1);
+                        line.endColor = channel.main || crawler ? new Color(head, head, head, 1) : new Color(0, 0, 0, 0);
+                    }
                 }
                 visual.light.intensity = intensity * FlashCandela * lightScale;
                 if (intensity > .0005f)
                 {
                     var path = flash.Channels[0].points;
-                    // An extended discharge lights more than its initiation point. Bound the source count per flash.
+                    // An extended discharge lights more than its initiation point. Bound the source count per flash. A
+                    // crawler lights the cloud along the part of its trunk that has formed, its light riding with the head.
+                    float formed = crawler ? flash.Channels[0].Progress(age) : 1;
                     for (int sample = 0; sample < 4; sample++)
-                        illumination.Add(new LightningIllumination(ToUnity(path[sample * (path.Length - 1) / 3]), intensity * .25f, flash.Event.kind));
+                        illumination.Add(new LightningIllumination(ToUnity(path[(int)((path.Length - 1) * formed * sample / 3)]), intensity * .25f, flash.Event.kind));
+                    if (crawler) visual.light.transform.position = ToUnity(path[(int)((path.Length - 1) * formed)]);
                 }
             }
             previous = seconds; playbackSeconds = seconds;

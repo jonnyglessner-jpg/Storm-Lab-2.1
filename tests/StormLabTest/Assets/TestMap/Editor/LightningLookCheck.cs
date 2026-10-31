@@ -96,6 +96,8 @@ public static class LightningLookCheck
     {
         public string name; public FlashKind kind; public int shots; public float reaching = .6f; public float aimUp = 3500f;
         public float[] ages = { .04f }; public float hour = -1; public bool underAnvil;
+        // ages as fractions of the flash's LeadSeconds (a crawler's crawl is a second or two, its own per flash)
+        public bool leadFractions;
         public LightningActivity Activity => new LightningActivity(30,
             kind == FlashKind.NegativeGround || kind == FlashKind.PositiveGround ? 1 : 0, kind == FlashKind.PositiveGround ? 1 : 0, .5f,
             kind == FlashKind.Crawler ? 1 : 0);
@@ -143,8 +145,9 @@ public static class LightningLookCheck
             new Case { name = "anvil_positive", kind = FlashKind.PositiveGround, shots = 2, reaching = 1, aimUp = 4500f },
             new Case { name = "drop", kind = FlashKind.NegativeGround, shots = 1, reaching = 0 },
             new Case { name = "incloud", kind = FlashKind.InCloud, shots = 1, aimUp = 5000f },
-            new Case { name = "crawler", kind = FlashKind.Crawler, shots = 3, aimUp = 8000f, ages = new[] { .34f, .62f } },
-            new Case { name = "crawler_under", kind = FlashKind.Crawler, shots = 2, underAnvil = true, ages = new[] { .34f, .62f } },
+            // a crawler mid-crawl (the leader half way out, its legs sprouting behind it) and just after it has formed
+            new Case { name = "crawler", kind = FlashKind.Crawler, shots = 3, aimUp = 8000f, ages = new[] { .45f, 1f }, leadFractions = true },
+            new Case { name = "crawler_under", kind = FlashKind.Crawler, shots = 2, underAnvil = true, ages = new[] { .45f, 1f }, leadFractions = true },
             new Case { name = "reaching_day", kind = FlashKind.NegativeGround, shots = 2, reaching = 1, hour = 16f },
         };
         // under the anvil: a chaser 9 km downwind of the updraft looking up along it
@@ -158,7 +161,7 @@ public static class LightningLookCheck
         flashes.minimumPixelWidth = Mathf.Max(.5f, 2f * cam.pixelHeight / 900f);
         rep.AppendLine("| shot | kind | channels | origin AGL | strikes | out from origin | longest branch | ground contacts | lowest point AGL | extent | far end |").AppendLine("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
         var shots = new List<string>();
-        int reachingOut = 0, reachingTried = 0, contactsOff = 0, crawlersLow = 0, crawlersShort = 0, missing = 0;
+        int reachingOut = 0, reachingTried = 0, contactsOff = 0, crawlersLow = 0, crawlersShort = 0, crawlersAtOnce = 0, missing = 0, branchesBusy = 0;
         var events = new List<FlashEvent>();
         float Terrain(Vector3 p) => Physics.Raycast(p + Vector3.up * 3000f, Vector3.down, out var h, 6000f) ? h.point.y : storm.origin.y;
         for (int ci = 0; ci < cases.Length; ci++)
@@ -184,9 +187,19 @@ public static class LightningLookCheck
             {
                 if (got >= c.shots) break;
                 flashes.SampleAt(e.time - .005);
-                flashes.SampleAt(e.time + c.ages[0]);
+                flashes.SampleAt(e.time + .02);
                 if (!flashes.TryGetFlash(e.id, out var flash)) continue;   // no cloud anchor for this candidate: the next
+                float Age(int i) => c.leadFractions ? flash.LeadSeconds * c.ages[i] : c.ages[i];
+                flashes.SampleAt(e.time + Age(0));
+                if (!flashes.TryGetFlash(e.id, out flash)) continue;
                 got++;
+                if (c.kind == FlashKind.Crawler)
+                {
+                    // a crawler fans out where its anchors put it: look at the middle of this one from the chosen spot
+                    var sum = Vector3.zero; int n = 0;
+                    foreach (var ch in flash.Channels) foreach (var p in ch.points) { sum += new Vector3(p.X, p.Y, p.Z); n++; }
+                    cam.transform.rotation = Quaternion.LookRotation(sum / n - cam.transform.position, Vector3.up);
+                }
                 // geometry
                 var main = flash.Channels[0].points;
                 var o = new Vector3(main[0].X, main[0].Y, main[0].Z);
@@ -211,20 +224,44 @@ public static class LightningLookCheck
                 }
                 bool groundKind = c.kind == FlashKind.NegativeGround || c.kind == FlashKind.PositiveGround;
                 if (c.name == "reaching" || c.name == "anvil_positive" || c.name == "reaching_day") { reachingTried++; if (lateral > 3000f) reachingOut++; }
-                if (c.kind == FlashKind.Crawler) { if (lowest < 2000f) crawlersLow++; if (extent < 6000f) crawlersShort++; }
+                if (c.kind == FlashKind.Crawler)
+                {
+                    if (lowest < 2000f) crawlersLow++; if (extent < 6000f) crawlersShort++;
+                    // the crawl: most channels set out after the trunk's leader has run a while, none before it is half out
+                    int later = flash.Channels.Count(ch => ch.startAge > .15f * flash.LeadSeconds);
+                    if (later < flash.Channels.Length / 2 || flash.LeadSeconds < .5f) crawlersAtOnce++;
+                }
+                else if (groundKind)
+                {
+                    // calm branches: a dozen side leaders at most, none over 3.5 km along its bends
+                    int sides = flash.Channels.Count(ch => !ch.main);
+                    if (sides > 14 || longest > 3500f) branchesBusy++;
+                }
                 string originAgl = $"{(o.y - Terrain(o)) / 1000:0.0} km";
                 var foot = new Vector3(main[128].X, main[128].Y, main[128].Z);
                 string where = $"{Vector3.Distance(cam.transform.position, foot) / 1000:0.0} km from the camera" + (groundKind ? $", {Vector2.Distance(new Vector2(foot.x, foot.z), new Vector2(target.x, target.z)) / 1000:0.0} km from the updraft" : "");
-                rep.AppendLine($"| {c.name}_{got} | {c.kind} | {flash.Channels.Length} | {originAgl} | {flash.StrokeTimes.Length} | {lateral / 1000:0.0} km | {longest / 1000:0.00} km | {(groundKind ? contacts.ToString() : "-")} | {lowest / 1000:0.00} km | {extent / 1000:0.0} km | {where} |");
-                // the pictures: the peak of the first stroke (a crawler's first pulse), and late in a crawler's flicker
+                string strikes = c.kind == FlashKind.Crawler ? $"{flash.StrokeTimes.Length} pulses, crawl {flash.LeadSeconds:0.00} s" : flash.StrokeTimes.Length.ToString();
+                rep.AppendLine($"| {c.name}_{got} | {c.kind} | {flash.Channels.Length} | {originAgl} | {strikes} | {lateral / 1000:0.0} km | {longest / 1000:0.00} km | {(groundKind ? contacts.ToString() : "-")} | {lowest / 1000:0.00} km | {extent / 1000:0.0} km | {where} |");
+                // the pictures: the peak of the first stroke; a crawler half way through its crawl and just after it
                 for (int ai = 0; ai < c.ages.Length; ai++)
                 {
-                    if (ai > 0) flashes.SampleAt(e.time + c.ages[ai]);
+                    if (ai > 0) flashes.SampleAt(e.time + Age(ai));
                     // the march spreads a flash's relight over frames: let it settle on this moment before the picture
                     foreach (var x in PlayerFrames(4)) yield return x;
-                    string name = $"lightning_{c.name}_{got}" + (c.ages.Length > 1 ? $"_{c.ages[ai] * 1000:000}ms" : "") + ".png";
+                    string name = $"lightning_{c.name}_{got}" + (c.ages.Length > 1 ? $"_{Age(ai) * 1000:000}ms" : "") + ".png";
                     Save(cam, flashes, Path.Combine(ShotDir, name));
                     shots.Add(name);
+                    if (c.kind == FlashKind.Crawler)
+                    {
+                        // the same moment with the cloud's hiding of the channels off: the crawl's shape and how far it has
+                        // run, which the anvil hides from most spots on the ground
+                        var bridge = sl.Bridge; bool occ = bridge.channelOcclusion;
+                        bridge.channelOcclusion = false; bridge.RefreshChannelOcclusion(); yield return null;
+                        string clear = name.Replace(".png", "_clear.png");
+                        Save(cam, flashes, Path.Combine(ShotDir, clear));
+                        shots.Add(clear);
+                        bridge.channelOcclusion = occ; bridge.RefreshChannelOcclusion(); yield return null;
+                    }
                 }
                 // -slBoltDebug: for the first reaching bolt, the same frame with the channel occlusion off, 30x the
                 // emission and 4 px lines, and the lines' state, to tell a dim bolt from a hidden or missing one
@@ -278,7 +315,9 @@ public static class LightningLookCheck
         rep.AppendLine($"- {(contactsOff == 0 ? "PASS" : "FAIL")}: every ground channel (the trunk and any fork to the ground) ends on the terrain ({contactsOff} off it)");
         rep.AppendLine($"- {(reachingOut == reachingTried ? "PASS" : "FAIL")}: the reaching bolts strike over 3 km out from where they began ({reachingOut} of {reachingTried})");
         rep.AppendLine($"- {(crawlersLow == 0 && crawlersShort == 0 ? "PASS" : "FAIL")}: crawlers stay over 2 km up ({crawlersLow} low) and spread over 6 km ({crawlersShort} short)");
-        ok &= missing == 0 && contactsOff == 0 && reachingOut == reachingTried && crawlersLow == 0 && crawlersShort == 0;
+        rep.AppendLine($"- {(crawlersAtOnce == 0 ? "PASS" : "FAIL")}: crawlers run out over half a second or more, most of their channels setting out after the trunk's leader ({crawlersAtOnce} appearing at once)");
+        rep.AppendLine($"- {(branchesBusy == 0 ? "PASS" : "FAIL")}: ground bolts carry at most 14 side leaders, none over 3.5 km ({branchesBusy} busier)");
+        ok &= missing == 0 && contactsOff == 0 && reachingOut == reachingTried && crawlersLow == 0 && crawlersShort == 0 && crawlersAtOnce == 0 && branchesBusy == 0;
         rep.AppendLine().AppendLine("Images: " + string.Join(", ", shots.Select(s => $"`Screenshots/{s}`")) + "; contact sheet `Screenshots/lightning_sheet.jpg`.");
         // contact sheet, two columns
         int cw = 800, ch2 = 450, rows = (shots.Count + 1) / 2;

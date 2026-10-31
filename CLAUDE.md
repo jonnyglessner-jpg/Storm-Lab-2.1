@@ -49,11 +49,15 @@ README.md has the layout, use, checks and known gaps.
   stovepipes EF4). Free storms are held to them in `Constrain`, games in `Rate` (which changes the shape when it must).
   Run `validation/parity/csharp -- --shapes` after touching tornado sizes, ratings or the game's tiers.
 - `Runtime/Lightning` (core) is 2.0's code but for its namespace, the `ThunderOverride` hook (2026-10-26, for
-  `StormAudio`'s thunder), the 2026-10-30 bolt geometry in `LightningModel` (reaching ground bolts with forked branches
-  and second contacts, crawlers forking under and through the anvil; copy it back to 2.0 with its namespace) and the
+  `StormAudio`'s thunder), the 2026-10-30/31 bolt geometry in `LightningModel` (reaching ground bolts with a few calm
+  branches and second contacts; crawlers that crawl: a trunk that forks into secondary trunks, every channel setting out
+  when the leader passes its root, `LightningChannel.startAge` / `growSeconds`, `CrawlerSpeedMps`; copy it back to 2.0
+  with its namespace) and the
   channels' own custom pass (`ChannelPass` at BeforePostProcess, shader pass `StormLightning`: with Refraction off HDRP
   draws transparents before the storm's BeforeTransparent pass, so the storm's transmittance went over the bolts on top
-  of their own occlusion; no depth test, since the storm writes its cloud's depth; cloud and rain hide a bolt by its
+  of their own occlusion; no hardware depth test, since the storm writes its cloud's depth, but the fragment tests
+  against the opaque depth copy `_CameraDepthTexture`, which holds no storm depth, so the ground hides a bolt's foot and
+  cloud never cuts one; cloud and rain hide a bolt by its
   optical depth), the channel emission in storm units (600; the night scale goes into the
   material, never the 8-bit vertex colours); fixes there should go back to 2.0 too. The flash rate
   and brightness are right (user, 2026-10-30: "already good"): change what the flashes look like and where they go,

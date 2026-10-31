@@ -12,9 +12,11 @@ Shader "StormLab/Lightning"
             Tags { "LightMode"="StormLightning" }
             Blend SrcAlpha One
             ZWrite Off
-            // No depth test: the storm writes its cloud's depth where it is opaque (StormComposite's StormDepth pass),
-            // and a test against it would cut a channel wherever it is seen against cloud. Cloud and rain hide a channel
-            // by its optical depth below; a bolt behind a near building or tree shows through it for the frames it lasts.
+            // No hardware depth test: the storm writes its cloud's depth into the depth buffer where it is opaque
+            // (StormComposite's StormDepth pass, at BeforeTransparent), and a test against it would cut a channel wherever
+            // it is seen against cloud. Cloud and rain hide a channel by its optical depth below. The fragment shader
+            // tests against the opaque depth copy instead (_CameraDepthTexture, taken before the storm draws), so the
+            // ground, a hill or a building hides what is behind it and the storm never does.
             ZTest Always
             Cull Off
             HLSLPROGRAM
@@ -41,6 +43,18 @@ Shader "StormLab/Lightning"
             }
             half4 Frag(Varyings i) : SV_Target
             {
+                // Behind the scene's opaque geometry: hidden. A bolt's foot stops at the ground it strikes: before this the
+                // lower half of its ribbon and its round cap (half the ribbon's width, 50 m and more at 12 km) were drawn
+                // on through the ground, and a strike behind a rise or a building over it (user, 2026-10-31: bolts seen
+                // through the ground). The opaque copy holds no storm depth, so cloud never cuts a channel; the far plane
+                // (0, reversed Z) is open sky.
+                float sceneZ = LoadCameraDepth(uint2(i.positionCS.xy));
+                if (sceneZ > 0)
+                {
+                    float sceneEye = LinearEyeDepth(sceneZ, _ZBufferParams);
+                    float eye = LinearEyeDepth(i.positionCS.z, _ZBufferParams);
+                    if (eye > sceneEye + max(2, sceneEye * .002)) discard;
+                }
                 float across = abs(i.uv.y * 2 - 1);
                 // One narrow radiating core within a broad, dim optical halo. The CPU sizes the
                 // ribbon per camera, keeping the core sampled even at long viewing distances. The halo is a

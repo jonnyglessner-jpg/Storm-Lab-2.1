@@ -169,8 +169,25 @@ namespace StormLab.Lightning
         public readonly Vector3[] points;
         public readonly float brightness;
         public readonly bool main;
+        /// <summary>When this channel's leader sets out (seconds after the flash begins) and how long it takes to reach its
+        /// tip. A ground bolt's channels all run with its stepped leader (0, LeaderSeconds); a crawler's branches set out
+        /// when the trunk's leader passes their root, so the flash spreads over the anvil instead of appearing whole.</summary>
+        public readonly float startAge, growSeconds;
         public LightningChannel(Vector3[] points, float brightness, bool main)
-        { this.points = points; this.brightness = brightness; this.main = main; }
+            : this(points, brightness, main, 0, LightningFlash.LeaderSeconds) { }
+        public LightningChannel(Vector3[] points, float brightness, bool main, float startAge, float growSeconds)
+        {
+            this.points = points; this.brightness = brightness; this.main = main;
+            this.startAge = startAge; this.growSeconds = Math.Max(.001f, growSeconds);
+        }
+        /// <summary>0..1: how far this channel's leader has run at a flash age.</summary>
+        public float Progress(double age) => (float)Math.Max(0, Math.Min(1, (age - startAge) / growSeconds));
+        public float Length()
+        {
+            float l = 0;
+            for (int i = 1; i < points.Length; i++) l += Vector3.Distance(points[i], points[i - 1]);
+            return l;
+        }
     }
 
     /// <summary>Cloud-validated world-space anchors supplied by an optional renderer adapter.</summary>
@@ -188,13 +205,22 @@ namespace StormLab.Lightning
         public readonly float[] StrokeTimes;
         public readonly Vector3 LightPosition;
         public const float LeaderSeconds = .035f;
-        /// <summary>A crawler's leader creeps across the sky for a few tenths of a second before it lights up.</summary>
-        public const float CrawlerLeaderSeconds = .32f;
-        public float LeadSeconds => Event.kind == FlashKind.Crawler ? CrawlerLeaderSeconds : LeaderSeconds;
-        public float Duration => StrokeTimes[StrokeTimes.Length - 1] + .25f;
+        /// <summary>How fast a crawler's leader is seen to run out over the anvil, m/s: a 15 km trunk in a little over a second,
+        /// as the long anvil crawlers are seen to crawl. Its channels set out one after another as it passes their roots.</summary>
+        public const float CrawlerSpeedMps = 12000;
+        /// <summary>Seconds until the whole flash has formed: a ground bolt's stepped leader, or the time a crawler's last
+        /// twig has run its length.</summary>
+        public float LeadSeconds { get; }
+        /// <summary>Seconds the flash is shown: past its last pulse, and past the end of a crawler's crawl.</summary>
+        public float Duration => Math.Max(StrokeTimes[StrokeTimes.Length - 1], LeadSeconds + .1f) + .25f;
 
         LightningFlash(FlashEvent e, LightningChannel[] channels, float[] strokes, Vector3 lightPosition)
-        { Event = e; Channels = channels; StrokeTimes = strokes; LightPosition = lightPosition; }
+        {
+            Event = e; Channels = channels; StrokeTimes = strokes; LightPosition = lightPosition;
+            float lead = 0;
+            foreach (var c in channels) lead = Math.Max(lead, c.startAge + c.growSeconds);
+            LeadSeconds = lead;
+        }
 
         /// <summary>Coordinates are world metres, y up. Ground is a flat plane; a terrain adapter may supply the endpoint height.</summary>
         public static LightningFlash Create(FlashEvent e, LightningSettings settings, Vector3 centre, float groundY,
@@ -265,35 +291,37 @@ namespace StormLab.Lightning
             for (int i = 1; i < main.Length - 1; i++) main[i].Y = Math.Max(main[i].Y, Ground(main[i]) + 5);
             channels.Add(new LightningChannel(main, 1, true));
             // Branches inherit a local direction; fine and broad bends are correlated at several scales. A ground bolt's point
-            // down and out (the stepped leader's failed tries); the longer ones fork again. A reaching bolt's are the biggest.
-            float big = reaching ? 1.7f : 1;
-            int branches = (e.kind == FlashKind.PositiveGround ? 5 : 11) + (int)(6 * reach) + (reaching ? 3 : 0);
+            // down and out (the stepped leader's failed tries): a handful of them, most short stubs, one in three a long one
+            // that may fork once more. Calmer than the first version's (user, 2026-10-31: the branches needed calming): a
+            // real bolt's branches follow its trunk down, and the trunk stays the one thing the eye reads.
+            float big = reaching ? 1.35f : 1;
+            int branches = (e.kind == FlashKind.PositiveGround ? 3 : 6) + (int)(3 * reach) + (reaching ? 1 : 0);
             for (int b = 0; b < branches; b++)
             {
-                int at = reaching ? (int)rng.Range(28, 112) : (int)rng.Range(12, 105);
+                int at = reaching ? (int)rng.Range(24, 112) : (int)rng.Range(12, 108);
                 Vector3 direction = Vector3.Normalize(main[Math.Min(at + 5, 128)] - main[at]);
                 Vector3 side = Disk(ref rng, 1);
-                float length = rng.Range(400, 1900) * big * (1 + 1.2f * reach);
-                Vector3 tip = main[at] + Vector3.Normalize(direction * .55f + side - Vector3.UnitY * (ground ? rng.Range(0, .5f) : 0)) * length;
+                bool longOne = rng.Unit() < .3;
+                float length = (longOne ? rng.Range(800, 1600) : rng.Range(250, 800)) * big * (1 + .5f * reach);
+                Vector3 tip = main[at] + Vector3.Normalize(direction * .9f + side * .7f - Vector3.UnitY * (ground ? rng.Range(.1f, .6f) : 0)) * length;
                 // Side leaders are unconnected: they must not accidentally become extra ground contacts.
                 tip.Y = Math.Max(groundY + 80, tip.Y);
-                var branch = Path(main[at], tip, ref rng, 32, .12f);
+                var branch = Path(main[at], tip, ref rng, 32, .1f);
                 for (int i = 1; i < branch.Length; i++) branch[i].Y = Math.Max(branch[i].Y, Ground(branch[i]) + 20);
-                float bright = rng.Range(.12f, .42f) * (1 + .5f * reach) * (reaching ? 1.25f : 1);
+                float bright = rng.Range(.1f, .3f) * (1 + .3f * reach);
                 channels.Add(new LightningChannel(branch, bright, false));
-                int forks = length > 1400 ? (int)rng.Range(1, 3) : 0;
-                for (int f = 0; f < forks; f++)
+                if (longOne && length > 1100)
                 {
-                    int from = (int)rng.Range(10, 26);
+                    int from = (int)rng.Range(10, 24);
                     Vector3 d2 = Vector3.Normalize(branch[Math.Min(from + 4, 32)] - branch[from]);
-                    Vector3 tip2 = branch[from] + Vector3.Normalize(d2 * .5f + Disk(ref rng, 1) - Vector3.UnitY * (ground ? rng.Range(0, .4f) : 0)) * length * rng.Range(.25f, .55f);
+                    Vector3 tip2 = branch[from] + Vector3.Normalize(d2 * .8f + Disk(ref rng, 1) * .7f - Vector3.UnitY * (ground ? rng.Range(.1f, .5f) : 0)) * length * rng.Range(.3f, .5f);
                     tip2.Y = Math.Max(groundY + 80, tip2.Y);
-                    var twig = Path(branch[from], tip2, ref rng, 16, .12f);
+                    var twig = Path(branch[from], tip2, ref rng, 16, .1f);
                     for (int i = 1; i < twig.Length; i++) twig[i].Y = Math.Max(twig[i].Y, Ground(twig[i]) + 20);
                     channels.Add(new LightningChannel(twig, bright * rng.Range(.5f, .8f), false));
                 }
             }
-            if (ground && rng.Unit() < (reaching ? .35 : .12))
+            if (ground && rng.Unit() < (reaching ? .3 : .12))
             {
                 // A forked strike: one branch makes it to the ground too, a few hundred metres to a mile from the first
                 // contact, and carries the return strokes with the trunk (so it is a main channel, dimmer).
@@ -344,7 +372,7 @@ namespace StormLab.Lightning
                 Vector3 outward = new Vector3(far.X - centre.X, 0, far.Z - centre.Z);
                 if (outward.LengthSquared() < 1) outward = Disk(ref rng, 1);
                 outward = Vector3.Normalize(outward);
-                end = start + outward * rng.Range(5000, 9000) * (.8f + .5f * reach);
+                end = start + outward * rng.Range(6000, 10000) * (.85f + .4f * reach);
                 end.Y = start.Y - rng.Range(2500, 5000);
             }
             // An anvil crawler's far end is in the anvil's lowest layer (the anchor); the trunk slopes on down out of it, so
@@ -365,48 +393,98 @@ namespace StormLab.Lightning
                 }
             }
             for (int i = 1; i < main.Length; i++) main[i].Y = Math.Max(main[i].Y, Floor(main[i]));
-            channels.Add(new LightningChannel(main, 1, true));
-            int branches = toAir ? 7 + (int)(4 * reach) : 16 + (int)(8 * reach);
-            for (int b = 0; b < branches; b++)
+            // The crawl: the trunk's leader runs out at CrawlerSpeedMps (a long one held to a couple of seconds), and every
+            // channel off it sets out when the leader passes its root and runs its own length at the same speed, so the
+            // flash is seen to flow out over the anvil and fork as it goes, never to appear whole (user, 2026-10-31).
+            float trunkLength = PathLength(main);
+            float trunkSeconds = Math.Min(2.2f, Math.Max(.5f, trunkLength / CrawlerSpeedMps));
+            float speed = trunkLength / trunkSeconds;
+            var trunk = new LightningChannel(main, 1, true, 0, trunkSeconds);
+            channels.Add(trunk);
+            LightningChannel Sprout(LightningChannel parent, int at, Vector3 tip, int segments, float roughness, float bright)
             {
-                int at = (int)rng.Range(8, 118);
-                Vector3 direction = main[Math.Min(at + 5, 128)] - main[at]; direction.Y = 0;
-                direction = direction.LengthSquared() > 1 ? Vector3.Normalize(direction) : Vector3.UnitX;
-                Vector3 side = Disk(ref rng, 1);
-                float length = (toAir ? rng.Range(600, 2200) : rng.Range(1500, 5500)) * (.8f + .6f * reach);
-                Vector3 tip = main[at] + Vector3.Normalize(direction * .45f + side) * length;
-                // under the anvil: a good half of an anvil crawler's legs hang below its underside, seen whole from the ground
-                bool under = !toAir && rng.Unit() < .55;
-                tip.Y = main[at].Y + (toAir ? -rng.Range(200, 1400) : under ? -rng.Range(500, 1600) : rng.Range(-100, 1200));
+                var pts = Path(parent.points[at], tip, ref rng, segments, roughness);
+                for (int i = 1; i < pts.Length; i++) pts[i].Y = Math.Max(pts[i].Y, Floor(pts[i]));
+                float start = parent.startAge + parent.growSeconds * at / (float)(parent.points.Length - 1);
+                return new LightningChannel(pts, bright, false, start, Math.Max(.06f, PathLength(pts) / speed));
+            }
+            // The trunk forks: one or two secondary trunks leave it a quarter to two thirds of the way out, diverging 20 to
+            // 50 degrees, and run on nearly as far, so the flash fans out over the anvil instead of following one line.
+            var trunks = new List<LightningChannel> { trunk };
+            int trunkForks = toAir ? (rng.Unit() < .5 ? 1 : 0) : (int)rng.Range(1, 3);
+            for (int f = 0; f < trunkForks; f++)
+            {
+                int at = (int)rng.Range(30, 85);
+                Vector3 d = main[Math.Min(at + 8, 128)] - main[at]; d.Y = 0;
+                d = d.LengthSquared() > 1 ? Vector3.Normalize(d) : Vector3.UnitX;
+                float angle = rng.Range(.35f, .9f) * (rng.Unit() < .5 ? -1 : 1);
+                float cos = (float)Math.Cos(angle), sin = (float)Math.Sin(angle);
+                Vector3 dir = new Vector3(d.X * cos - d.Z * sin, 0, d.X * sin + d.Z * cos);
+                float len = Vector3.Distance(main[at], main[128]) * rng.Range(.6f, 1.1f);
+                Vector3 tip = main[at] + dir * len;
+                tip.Y = main[at].Y + (toAir ? -rng.Range(300, 1500) : rng.Range(-600, 200));
                 tip.Y = Math.Max(tip.Y, Floor(tip));
-                var branch = Path(main[at], tip, ref rng, 32, .1f);
-                for (int i = 1; i < branch.Length; i++) branch[i].Y = Math.Max(branch[i].Y, Floor(branch[i]));
-                float bright = rng.Range(.3f, .65f);
-                channels.Add(new LightningChannel(branch, bright, false));
-                // each leg forks again, sideways and a little down, like a river delta seen from above
-                int forks = (int)rng.Range(0, 3);
-                for (int f = 0; f < forks; f++)
+                var fork = Sprout(trunk, at, tip, 64, toAir ? .1f : .07f, rng.Range(.6f, .85f));
+                channels.Add(fork); trunks.Add(fork);
+            }
+            // Legs along every trunk, spreading sideways like a spider's legs, each forking again like a river delta seen
+            // from above. Under the anvil a good half hang below its underside, seen whole from the ground.
+            foreach (var t in trunks)
+            {
+                int segments = t.points.Length - 1;
+                int legs = Math.Max(2, Math.Min(12, (int)(t.Length() / (toAir ? 1800 : 1500) * (1 + .4f * reach))));
+                for (int b = 0; b < legs; b++)
                 {
-                    int from = (int)rng.Range(8, 26);
-                    Vector3 d2 = branch[Math.Min(from + 4, 32)] - branch[from]; d2.Y = 0;
-                    d2 = d2.LengthSquared() > 1 ? Vector3.Normalize(d2) : direction;
-                    Vector3 tip2 = branch[from] + Vector3.Normalize(d2 * .4f + Disk(ref rng, 1)) * length * rng.Range(.25f, .6f);
-                    tip2.Y = branch[from].Y + (under || toAir ? -rng.Range(0, 600) : rng.Range(-200, 500));
-                    tip2.Y = Math.Max(tip2.Y, Floor(tip2));
-                    var twig = Path(branch[from], tip2, ref rng, 16, .1f);
-                    for (int i = 1; i < twig.Length; i++) twig[i].Y = Math.Max(twig[i].Y, Floor(twig[i]));
-                    channels.Add(new LightningChannel(twig, bright * rng.Range(.55f, .85f), false));
+                    int at = (int)rng.Range(segments * .06f, segments * .94f);
+                    Vector3 direction = t.points[Math.Min(at + Math.Max(1, segments / 25), segments)] - t.points[at]; direction.Y = 0;
+                    direction = direction.LengthSquared() > 1 ? Vector3.Normalize(direction) : Vector3.UnitX;
+                    Vector3 side = Disk(ref rng, 1);
+                    float length = (toAir ? rng.Range(600, 2200) : rng.Range(1200, 4500)) * (.8f + .6f * reach);
+                    Vector3 tip = t.points[at] + Vector3.Normalize(direction * .45f + side) * length;
+                    bool under = !toAir && rng.Unit() < .55;
+                    tip.Y = t.points[at].Y + (toAir ? -rng.Range(200, 1400) : under ? -rng.Range(500, 1600) : rng.Range(-100, 1200));
+                    tip.Y = Math.Max(tip.Y, Floor(tip));
+                    float bright = rng.Range(.3f, .65f) * (t == trunk ? 1 : .85f);
+                    var leg = Sprout(t, at, tip, 32, .1f, bright);
+                    channels.Add(leg);
+                    int forks = (int)rng.Range(0, 3);
+                    for (int f = 0; f < forks; f++)
+                    {
+                        int from = (int)rng.Range(8, 26);
+                        Vector3 d2 = leg.points[Math.Min(from + 4, 32)] - leg.points[from]; d2.Y = 0;
+                        d2 = d2.LengthSquared() > 1 ? Vector3.Normalize(d2) : direction;
+                        Vector3 tip2 = leg.points[from] + Vector3.Normalize(d2 * .4f + Disk(ref rng, 1)) * length * rng.Range(.25f, .6f);
+                        tip2.Y = leg.points[from].Y + (under || toAir ? -rng.Range(0, 600) : rng.Range(-200, 500));
+                        tip2.Y = Math.Max(tip2.Y, Floor(tip2));
+                        channels.Add(Sprout(leg, from, tip2, 16, .1f, bright * rng.Range(.55f, .85f)));
+                    }
                 }
             }
-            // A crawler flickers: several pulses over most of a second as the leader keeps branching.
+            // A crawler flickers: pulses (recoil leaders brightening the channels already formed) spread from a third of the
+            // way through the crawl to its end, where the whole network lights once more; between them the creeping leader
+            // itself glows (Intensity).
+            float crawl = 0;
+            foreach (var c in channels) crawl = Math.Max(crawl, c.startAge + c.growSeconds);
             int count = (int)rng.Range(3, 7);
             var strokes = new float[count];
-            strokes[0] = CrawlerLeaderSeconds;
-            for (int i = 1; i < count; i++) strokes[i] = strokes[i - 1] + rng.Range(.05f, .13f);
+            float first = trunkSeconds * rng.Range(.3f, .5f), last = Math.Max(first + .1f, crawl - .02f);
+            for (int i = 0; i < count; i++)
+            {
+                float f = count == 1 ? 1 : i / (float)(count - 1);
+                strokes[i] = first + (last - first) * f + (i > 0 && i < count - 1 ? rng.Range(-.04f, .04f) : 0);
+                if (i > 0) strokes[i] = Math.Max(strokes[i], strokes[i - 1] + .06f);
+            }
             return new LightningFlash(e, channels.ToArray(), strokes, main[main.Length / 2]);
         }
 
         static bool Finite(Vector3 p) => LightningSettings.Finite(p.X) && LightningSettings.Finite(p.Y) && LightningSettings.Finite(p.Z);
+
+        static float PathLength(Vector3[] p)
+        {
+            float l = 0;
+            for (int i = 1; i < p.Length; i++) l += Vector3.Distance(p[i], p[i - 1]);
+            return l;
+        }
 
         static Vector3 Disk(ref LightningRandom rng, float radius)
         {
@@ -436,18 +514,25 @@ namespace StormLab.Lightning
         {
             if (ageThrough < 0 || ageFrom > Duration || ageThrough < ageFrom) return 0;
             float peak = 0;
+            bool crawler = Event.kind == FlashKind.Crawler;
             for (int i = 0; i < StrokeTimes.Length; i++)
             {
                 double age = Math.Max(ageFrom, StrokeTimes[i]) - StrokeTimes[i];
                 if (ageThrough < StrokeTimes[i]) continue;
-                float value = (float)Math.Exp(-age / (i == 0 ? .024 : .016)) * (i == 0 ? 1 : .72f);
-                peak = Math.Max(peak, value);
+                // a crawler's pulses are slower and softer than a return stroke: its channels brighten and fade over tenths
+                double decay = crawler ? .05 : i == 0 ? .024 : .016;
+                float weight = crawler ? (i == 0 ? .8f : .6f) : (i == 0 ? 1 : .72f);
+                peak = Math.Max(peak, (float)Math.Exp(-age / decay) * weight);
             }
+            // the creeping leader's own glow while a crawler is still running out over the anvil: well seen, as the crawl
+            // is what the eye follows, below the pulses that go over it
+            if (crawler && ageFrom < LeadSeconds + .1) peak = Math.Max(peak, .55f);
             if (Event.kind == FlashKind.PositiveGround && ageThrough >= LeaderSeconds)
                 peak = Math.Max(peak, .12f * (float)Math.Exp(-Math.Max(0, ageFrom - LeaderSeconds) / .12));
             return peak;
         }
 
+        /// <summary>0..1: how far the whole flash has formed (its channels' own Progress differs for a crawler).</summary>
         public float LeaderProgress(double age) => (float)Math.Max(0, Math.Min(1, age / LeadSeconds));
     }
 

@@ -37,6 +37,8 @@ namespace StormLab.Lightning
 
         StormPlan boundPlan;
         LightningCycle[] cycles;
+        Terrain[] terrains = System.Array.Empty<Terrain>();
+        int terrainsFrame = -1;
         bool dirty = true;
         double wallSeconds;
 
@@ -61,8 +63,21 @@ namespace StormLab.Lightning
                 return new Vector3(u.x, Storm.origin.y, u.z);
             };
             Flashes.TerrainHeight = p =>
-                strikeColliders && Physics.Raycast(new Vector3(p.x, Storm.origin.y + 6000f, p.z), Vector3.down, out var hit, 12000f, strikeLayers, QueryTriggerInteraction.Ignore)
-                    ? hit.point.y : Storm.origin.y;
+            {
+                if (strikeColliders && Physics.Raycast(new Vector3(p.x, Storm.origin.y + 6000f, p.z), Vector3.down, out var hit, 12000f, strikeLayers, QueryTriggerInteraction.Ignore))
+                    return hit.point.y;
+                // Off every collider (beyond the map's edge, over the test map's horizon skirt, which has none): the
+                // terrain's own height, so a far strike still ends on the ground and not at the storm's plane under it.
+                if (terrainsFrame != Time.frameCount) { terrains = Terrain.activeTerrains; terrainsFrame = Time.frameCount; }
+                foreach (var t in terrains)
+                {
+                    if (!t || !t.terrainData) continue;
+                    var o = t.transform.position; var s = t.terrainData.size;
+                    if (p.x < o.x || p.x > o.x + s.x || p.z < o.z || p.z > o.z + s.z) continue;
+                    return t.SampleHeight(p) + o.y;
+                }
+                return Storm.origin.y;
+            };
             Storm.OriginShifted -= OnOriginShifted;
             Storm.OriginShifted += OnOriginShifted;
         }

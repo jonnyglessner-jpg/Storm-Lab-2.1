@@ -36,18 +36,27 @@ big branches, and anvil crawlers; the flash rate and brightness were already rig
 flashes (`LightningSettings.reachingGroundFraction`, 0.6) now reach out of the storm before they strike: the channel
 runs out at height through the cloud, bends where it leaves the tower's side or the anvil's underside (the knee) and
 slants down to the ground 3.5-8.5 km out from where it began (positive flashes out of the anvil, 2.5-7 km on from their
-anvil origin), carrying the biggest branches (up to about 5 km, pointing down and out, the longer ones forking again),
-and a third of them fork to a second ground contact a few hundred metres to a mile from the first. The rest drop
-through the base as before, with forked branches of their own. Anvil crawlers are no longer only the violent cycles'
-peak: once the anvil has spread (from about 20 min) a share of the in-cloud flashes
+anvil origin), carrying the biggest branches, and three in ten fork to a second ground contact a few hundred metres to a
+mile from the first. The rest drop through the base as before. Branches (calmed 2026-10-31, user: "the branches need
+calmed down"): a handful of side leaders following the trunk down and out, most of them stubs of a few hundred metres,
+one in three a long one of 1-2.5 km that may fork once more; the trunk stays what the eye reads. Anvil crawlers are no
+longer only the violent cycles' peak: once the anvil has spread (from about 20 min) a share of the in-cloud flashes
 (`StormLightningTuning.anvilCrawlerShare`, 0.3, more as the storm ages) run from the upper updraft out under the anvil
-as crawlers, each leg forking again. The anchor search finds the anvil's real underside in the far end's column (near
+as crawlers. A crawler is seen to crawl (2026-10-31, user: "fork and flow across the anvil, not strike all at once"):
+its trunk's leader runs out at `LightningFlash.CrawlerSpeedMps` (12 km/s, a long trunk held to 0.5-2.2 s), forks into
+one or two secondary trunks that diverge 20-50 degrees and run on nearly as far, and every leg and twig sets out when
+the leader passes its root (`LightningChannel.startAge`, `growSeconds`) and runs its own length at the same speed: a
+bright head on a dim trail, the trail glowing while any part still crawls, and 3-6 soft pulses over the channels already
+formed from a third of the way through the crawl. The anchor search finds the anvil's real underside in the far end's column (near
 the storm it is up to 3 km below the design's anvil-bottom parameter, where the root curves down into the tower; far out,
 above it) and sits just inside it, 2.5-8 updraft radii downwind; the trunk leaves the tower top, drops out of the
 anvil's thick root within its first third and runs the rest of the way just under the anvil's base in the clear, about
 half the legs hang a further 0.5-1.6 km below, seen whole from the ground, and the rest run up to 1.2 km into the anvil
 and light it from inside. `LightningLookCheck` photographs each kind, from the side and from under the
-anvil.
+anvil. A bolt ends on the ground it strikes: the channel shader tests each fragment against the scene's opaque depth
+(`_CameraDepthTexture`, copied before the storm draws, so cloud never cuts a channel), hiding the half of the ribbon
+and the cap below the contact and any bolt behind a rise or a building (2026-10-31, user: bolts seen through the
+ground); off every collider (beyond the map, over the horizon skirt) the strike height comes from the terrain itself.
 The check also found why the bolts themselves had hardly ever shown. HDRP draws every transparent before the
 BeforeTransparent custom passes when Refraction is off in the frame settings (it is), so the storm, composited there,
 laid its transmittance over the channels on top of their own occlusion; the channels are now drawn by a custom pass of
@@ -474,10 +483,13 @@ ms a frame; nothing is allocated a frame.
 - **Lightning look**: **StormLab > Test Map > Lightning Look Check** (`LightningLookCheck.RunFromCommandLine
   [-slBoltHour h]`, about 2 min): the storm held at its first mature cycle at dusk, seen from a chaser's spot 12 km off;
   it drives the flashes itself, one kind at a time, and photographs each at its peak: three reaching ground bolts, two
-  positive bolts out of the anvil, a plain drop through the base, an in-cloud flash and three anvil crawlers (at their
-  first pulse and late in their flicker) and one reaching bolt by day (16 h). Measures each flash (how far out it strikes, ground contacts, longest branch,
-  a crawler's extent and lowest point); PASS: every kind made, every ground channel ends on the terrain, the reaching
-  bolts strike over 3 km out, crawlers stay over 2 km up and spread over 6 km. Mind that at a pulse's peak the cloud
+  positive bolts out of the anvil, a plain drop through the base, an in-cloud flash and three anvil crawlers (half way
+  through their crawl and just after it) and one reaching bolt by day (16 h). Measures each flash (how far out it strikes, ground contacts, longest branch,
+  a crawler's extent, lowest point and crawl time); PASS: every kind made, every ground channel ends on the terrain, the reaching
+  bolts strike over 3 km out, crawlers stay over 2 km up and spread over 6 km, crawlers run out over half a second or
+  more with most channels setting out after the trunk's leader, ground bolts carry at most 14 side leaders none over
+  3.5 km, and each crawler is photographed again with the cloud's hiding of the channels off (`*_clear.png`), since the anvil
+  hides most of a crawl from the ground. Mind that at a pulse's peak the cloud
   lit by the flash renders as a 2 x 2 checkerboard (the march's lightning relight, spread over frames; the channels
   over it are fine, as the late-flicker frames show), which was taken for a fault in the channels for a long while.
   Report:
