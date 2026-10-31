@@ -44,7 +44,8 @@ float4 _SP[33];
 #define S_spin2  _SP[30]   // x suction-vortex orbit, y dust whirl, z wall cloud, w RFD lip
 #define S_spin3  _SP[31]   // x anti-mesocyclone (negative: clockwise), y satellite tornado, z anticyclonic tornado (negative),
                            // w how far the inflow has carried the beaver tail's air toward the updraft, km (0: the web build's)
-#define S_spin4  _SP[32]   // x the wall cloud's inner ring (between the funnel's rate and the rim's), yzw spare
+#define S_spin4  _SP[32]   // x the wall cloud's inner ring (between the junction's rate and the rim's), y the wall cloud at its
+                           // junction with the funnel (its surface just under the funnel's edge wind), z the junction's radius km, w spare
 
 Texture3D<float> _Noise;
 SamplerState sampler_LinearRepeat;
@@ -320,25 +321,25 @@ float nearField(float3 p, float fine)
             bool smoothBase = _WallP.x > 0.5;
             // Differential rotation (user, 2026-10-31: where the tornado meets the wall cloud the cloud must turn at almost
             // the tornado's speed, tapering off outward to the wall cloud's edge). The wall cloud is the low-level
-            // mesocyclone the funnel hangs from: round the funnel its air turns at the funnel's rate, and outward the wind
-            // over the radius falls away to the rim's (StormSpin: the rim at a real wall-cloud wind, the funnel's skin at
-            // the wind at its edge). Three rigid frames: the funnel's skin about the funnel's top (S_spin.y), the inner
-            // ring a twentieth of the way from the rim's rate to the funnel's (S_spin4.x, StormSpin.WallRingShare), and the
-            // wall cloud's own at its rim (S_spin2.z); the texture is crossfaded between the two nearest. The excess over
-            // the rim's rate falls as 1 / r^3 from the junction (where the collar meets the lowering), so the funnel's
-            // frame is mostly gone by 1.6 junction radii and the ring's frame is pure at 2.7 (the funnel's rate is the
-            // wind at its narrow edge over its radius, far beyond any real wind out here; a gentler log-radius taper
-            // with the ring at the geometric mean of the rates sent a band racing round half way out, user's capture,
-            // 2026-10-31). Never one frame at a blended angle: the angles each wrap at 2 pi (CLAUDE.md; the dust's
-            // snapping). The outline, lobes and bowl stay the rim's.
+            // mesocyclone the funnel hangs from: round the funnel its surface moves at just under the funnel's edge wind,
+            // and outward the wind over the radius falls away to the rim's (StormSpin: the rim at a real wall-cloud wind,
+            // the junction at WallJunctionShare of the edge wind over the junction's radius; at the skin's own rate the
+            // junction's wider circle outran the funnel, user 2026-10-31). Three rigid frames: the junction's about the
+            // funnel's top (S_spin4.y), the inner ring a twentieth of the way from the rim's rate to the junction's
+            // (S_spin4.x, StormSpin.WallRingShare), and the wall cloud's own at its rim (S_spin2.z); the texture is
+            // crossfaded between the two nearest. The excess over the rim's rate falls as 1 / r^3 from the junction
+            // (where the collar meets the lowering, S_spin4.z from StormSpin), so the junction's frame is mostly gone by
+            // 1.6 junction radii and the ring's frame is pure at 2.7 (a gentler log-radius taper with the ring at the
+            // geometric mean of the rates sent a band racing round half way out, user's capture, 2026-10-31). Never one
+            // frame at a blended angle: the angles each wrap at 2 pi (CLAUDE.md; the dust's snapping). The outline,
+            // lobes and bowl stay the rim's.
             // Game wall cloud only (smooth underside); the website's stays as the web build draws it.
             float4 N;
             float fe = 0.0; float2 dt = 0.0;
             if (smoothBase && S_tor.z > 0.01 && S_tor3.x != 0.0)
             {
                 dt = p.xy - S_tor3.xy;
-                float flare = min(0.25 * Rw + 0.3 * S_tor2.y, 1.6 * S_tor2.y + 0.1) * (S_tor4.w > 0.5 ? 0.35 : 1.0);
-                float rj = clamp(S_tor2.y + flare, 0.1, 0.5 * Rw);   // the junction's radius
+                float rj = clamp(S_spin4.z, 0.1, 0.5 * Rw);   // the junction's radius (StormSpin.JunctionRadius)
                 float e = pow(rj / max(length(dt), rj), 3.0), eR = pow(rj / Rw, 3.0);
                 fe = saturate((e - eR) / (1.0 - eR)) * ss(0.05, 0.4, S_tor.z);   // 1 at the junction, 0 at the rim
             }
@@ -349,9 +350,9 @@ float nearField(float3 p, float fine)
                 float4 A, B; float s;
                 float4 ring = wallNoise(rot2(dt, -S_spin4.x), p.z, fine, smoothBase, float3(0.37, 0.61, 0.23));
                 const float tr = 0.05;   // the ring's share (StormSpin.WallRingShare): its frame is pure where fe = tr
-                // inside the junction (fe = 1) the funnel's frame alone: taking the ring there put a slow disc inside a fast
-                // one, a seam that glitched and snapped where the funnel met the cloud (user, 2026-10-31)
-                if (fe >= tr) { A = wallNoise(rot2(dt, -S_spin.y), p.z, fine, smoothBase, float3(0.71, 0.29, 0.53)); B = ring; s = (1.0 - fe) / (1.0 - tr); }
+                // inside the junction (fe = 1) the junction's frame alone: taking the ring there put a slow disc inside a
+                // fast one, a seam that glitched and snapped where the funnel met the cloud (user, 2026-10-31)
+                if (fe >= tr) { A = wallNoise(rot2(dt, -S_spin4.y), p.z, fine, smoothBase, float3(0.71, 0.29, 0.53)); B = ring; s = (1.0 - fe) / (1.0 - tr); }
                 else { A = ring; B = wallNoise(dr, p.z, fine, smoothBase, 0.0); s = 1.0 - fe / tr; }
                 float g = rsqrt(1.0 - 2.0 * s * (1.0 - s));
                 N = saturate(0.5 + (lerp(A, B, s) - 0.5) * g);

@@ -230,15 +230,15 @@ static class DumpCs
             var F = new StormFrame(); var spin = new StormSpin();
             string stage = null; double t0 = 0; int n = 0, back = 0;
             double sMw = 0, sMn = 0, sSw = 0, sSn = 0, sOw = 0, sOn = 0;
-            var all = new System.Collections.Generic.List<string>(); var sum = new double[12]; int nt = 0;
-            string[] names = { "meso", "skin", "core", "wisps", "orbit", "dust", "wall", "RFD lip", "anti-meso", "satellite", "anti tor", "wall ring" };
+            var all = new System.Collections.Generic.List<string>(); var sum = new double[13]; int nt = 0;
+            string[] names = { "meso", "skin", "core", "wisps", "orbit", "dust", "wall", "RFD lip", "anti-meso", "satellite", "anti tor", "wall ring", "wall junction" };
             string Turn(double r) => r <= 1e-9 ? "-" : 2 * Math.PI / r >= 120 ? $"{2 * Math.PI / r / 60:0.0} min" : $"{2 * Math.PI / r:0.0} s";
             double prevM = double.NaN, prevS = 0, prevO = 0, prevC = 0;
             void Flush(double t1)
             {
                 if (stage == null || n == 0) return;
                 Console.WriteLine($"| {stage} | {t0:0.0}-{t1:0.0} | {sMw / n:0.000} | {sMn / n:0.000} | {sSw / n:0.000} | {sSn / n:0.000} | {sOw / n:0.000} | {sOn / n:0.000} | {back * 100.0 / n:0}% |");
-                all.Add($"| {stage} | " + string.Join(" | ", sum.Select((v, i) => Turn(Math.Abs(v) / ((i >= 1 && i <= 5 || i == 11) ? Math.Max(nt, 1) : n)))) + " |");
+                all.Add($"| {stage} | " + string.Join(" | ", sum.Select((v, i) => Turn(Math.Abs(v) / ((i >= 1 && i <= 5 || i >= 11) ? Math.Max(nt, 1) : n)))) + " |");
             }
             for (double clock = 0; ; clock += dt)
             {
