@@ -14,12 +14,15 @@ README.md has the layout, use, checks and known gaps.
 - Game adaptations go beside the port, not into it (as `lighting = Physical`, `tornado = Detailed`, `cloudDetail =
   Enhanced`, scene depth, the lightning hook, `TornadoWindAt`). `CloudNoise` is the web build's noise and the volume's
   build reads it: never change it for looks; the enhanced detail has its own `DetailNoise`, read only by the march. `StormTornadoes` (2.0's tornado character) post-processes the frame and owns slots
-  23-28; `StormDesign` fills 0-22 exactly as the website. `StormSpin` owns 29-32: the angles every turning cloud feature has turned
+  23-28; `StormDesign` fills 0-22 exactly as the website. `StormSpin` owns 29-33: the angles every turning cloud feature has turned
   (mesocyclone, wall cloud with its inner ring and its junction with the funnel, RFD lip, anti-mesocyclone, the detailed tornado's parts, satellite and anticyclonic tornadoes),
   added up per frame. Rates are real-world winds over each feature's radius (`spinRates = Real`, user 2026-10-27: everything
   at real speeds); `Website` gives the web build's rates for the website comparison. Never turn a feature by `rate x clock` when its rate can change (the
   speed seen is then rate + clock x d(rate)/dt: stalls, lurches, spin reversing); integrate it in `StormSpin` instead
-  (`validation/parity/csharp -- --spin` compares the two). New random draws get their own `StormRng` stream.
+  (`validation/parity/csharp -- --spin` compares the two). The same goes for a texture that rises or flows in units of a
+  size that changes: `(z - v x clock) / r` slides the whole texture by clock x d(1 / r) (a funnel widening out of its rope
+  stage sent the skin and dust plunging at ~1 km/s, user 2026-11-01); sample `z / r - rise` with the rise added up in
+  `StormSpin` (S_spin5; `-- --rise` checks the speeds). New random draws get their own `StormRng` stream.
   `StormScenario` (2.0's game layout) uses streams 500 (tiers, lanes, starts), 600+i (storm seeds), 700+i (precip);
   its storms reach the website plan only through `PlanOverrides` (precip, forced tornadic), which parity must not see.
   Game changes to the plan itself (cycle shapes, timing, no anticyclonic side) go in `StormGame.Adapt`, which every game plan passes through

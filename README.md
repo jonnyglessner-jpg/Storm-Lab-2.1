@@ -512,7 +512,10 @@ ms a frame; nothing is allocated a frame.
   median). Report: `validation/reports/TornadoFlowCheck[_tag].md`, each view's trace as CSV beside it, the frames round
   each view's worst change in `Screenshots/flow_*.png`; `-slFlowStrip s` keeps a frame every s seconds too
   (`flow_<view>_s<n>.png`), to judge turning against rising over seconds. Run it after touching how anything turns in
-  `tornadoField`.
+  `tornadoField`. A fourth view, `cone_forming_0.8km`, lets storm time run at the game's pace through a cone widening out of
+  its rope stage (a texture sliding with the funnel's growth shows as a median far above the held cone's);
+  `dotnet run --project validation/parity/csharp -- --rise` prints how fast the skin and dust textures move up and down
+  through every tornado stage of a few storms per setup, the old way and StormSpin's (S_spin5).
 - **Lightning look**: **StormLab > Test Map > Lightning Look Check** (`LightningLookCheck.RunFromCommandLine
   [-slBoltHour h]`, about 2 min): the storm held at its first mature cycle at dusk, seen from a chaser's spot 12 km off;
   it drives the flashes itself, one kind at a time, and photographs each at its peak: three reaching ground bolts, two

@@ -18,6 +18,7 @@ static class DumpCs
         if (args.Length > 0 && args[0] == "--runup") { RunUp(); return; }
         if (args.Length > 0 && args[0] == "--gameframes") { GameFrames(args[1], int.Parse(args[2]), int.Parse(args[3]), double.Parse(args[4], CultureInfo.InvariantCulture), double.Parse(args[5], CultureInfo.InvariantCulture)); return; }
         if (args.Length > 0 && args[0] == "--spin") { Spin(args.Length > 1 ? args[1] : "plains"); return; }
+        if (args.Length > 0 && args[0] == "--rise") { Rise(); return; }
         if (args.Length > 0 && args[0] == "--anti")
         {
             // game storms have no anticyclonic side (StormGame.Adapt, user 2026-10-27): storm minutes with an anti-mesocyclone
@@ -205,6 +206,71 @@ static class DumpCs
             }
             Console.WriteLine();
         }
+    }
+
+    /// <summary>
+    /// How fast the tornado's textures are seen to move up and down, m/s (+ up), on a game's clock (as --spin): the funnel's
+    /// skin half way up and the dust column 100 m up, sampled in units of their radius. The old way rose as
+    /// (z - v x clock) / r, so a radius that changed slid the texture by clock x d(1 / r); StormSpin's rises (S_spin5) as
+    /// z / r - rise. Per tornado stage, the fastest downward and upward speeds each way. The fix holds if the new speeds stay
+    /// near the rise itself (20 m/s skin, 15 m/s dust) plus the funnel's own stretch (z / r x dr/dt).
+    /// </summary>
+    static void Rise()
+    {
+        double pace = StormScenario.DefaultPace, dt = 0.25;
+        bool ok = true;
+        Console.WriteLine("| storm | stage | storm min | skin old down / up | skin new down / up | dust old down / up | dust new down / up |");
+        Console.WriteLine("|---|---|---|---|---|---|---|");
+        foreach (var pre in StormPreset.All)
+        {
+            var region = StormTornadoes.RegionOf(pre.key);
+            int found = 0;
+            for (int seed = 1; seed <= 60 && found < 2; seed++)
+            {
+                var P = StormGame.Adapt(StormDesign.Plan(pre, seed));
+                var ch = StormTornadoes.Build(P, region);
+                if (ch == null || !ch.Any(c => c != null)) continue;
+                found++;
+                var F = new StormFrame(); var spin = new StormSpin();
+                double prevC = double.NaN, prevRm = 0, prevDr = 0, prevRs = 0, prevRd = 0;
+                string stage = null; double t0 = 0;
+                double[] ext = new double[8];
+                void Flush(double t1)
+                {
+                    if (stage == null || !stage.Contains("ornado")) return;
+                    Console.WriteLine($"| {pre.key} {seed} | {stage} | {t0:0.0}-{t1:0.0} | {ext[0]:0} / {ext[1]:0} | {ext[2]:0} / {ext[3]:0} | {ext[4]:0} / {ext[5]:0} | {ext[6]:0} / {ext[7]:0} |");
+                    // the new speeds: the rise plus the stretch; a slide of the old kind would be hundreds of m/s
+                    ok &= ext[2] > -60 && ext[3] < 80 && ext[6] > -60 && ext[7] < 80;
+                }
+                for (double clock = 0; ; clock += dt)
+                {
+                    double t = clock * pace / 60;
+                    if (t > P.duration) { Flush(t); break; }
+                    StormDesign.At(P, t, clock, F); StormTornadoes.Apply(P, ch, t, F); StormLife.Apply(P, t, F);
+                    spin.Advance(F, t, clock);
+                    var a = F.param;
+                    bool tor = a[13 * 4 + 2] > 0;
+                    double rm = Math.Max(0.5 * (a[14 * 4] + a[14 * 4 + 1]), 0.02);
+                    double bd = a[21 * 4 + 3] > 0.5 ? a[21 * 4 + 2] : 0.0;
+                    double dr = Math.Max(a[14 * 4] * a[23 * 4 + 3] * (1.0 - 0.7 * bd) + 0.06, 0.08);
+                    double rs = spin.Rise(0), rd = spin.Rise(2);
+                    if (F.stage != stage) { Flush(t); stage = F.stage; t0 = t; Array.Clear(ext, 0, ext.Length); }
+                    if (tor && !double.IsNaN(prevC))
+                    {
+                        // where the texture at height z last frame is now: the height with the same noise coordinate
+                        double zs = Math.Max(0.5 * (a[1 * 4] - 0.6 * a[7 * 4]), 0.15), zd = 0.1;
+                        double oldS = ((zs - 0.02 * prevC) / prevRm * rm + 0.02 * clock - zs) / dt * 1000;
+                        double newS = ((zs / prevRm - prevRs + rs) * rm - zs) / dt * 1000;
+                        double oldD = ((zd - 0.015 * prevC) / prevDr * dr + 0.015 * clock - zd) / dt * 1000;
+                        double newD = ((zd / prevDr - prevRd + rd) * dr - zd) / dt * 1000;
+                        double[] v = { oldS, newS, oldD, newD };
+                        for (int i = 0; i < 4; i++) { ext[2 * i] = Math.Min(ext[2 * i], v[i]); ext[2 * i + 1] = Math.Max(ext[2 * i + 1], v[i]); }
+                    }
+                    prevC = clock; prevRm = rm; prevDr = dr; prevRs = rs; prevRd = rd;
+                }
+            }
+        }
+        Console.WriteLine(ok ? "rise: OK" : "rise: FAIL (a texture slides faster than its rise and stretch allow)");
     }
 
     /// <summary>

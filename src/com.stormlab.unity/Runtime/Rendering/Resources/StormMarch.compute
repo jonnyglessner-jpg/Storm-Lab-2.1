@@ -455,9 +455,11 @@ float3 tornadoField(float3 q)
     // grooved. Texture is sampled in a frame turning with the vortex, in units of the funnel's mean radius both round it
     // and up it, so what structure there is lies in soft bands winding round the funnel rather than streaks up it. The
     // edge stays clean low down and turns ragged only where the funnel flares into the lowering.
+    // It rises 20 m/s by S_spin5.x, the rise added up in mean radii (StormSpin): (q.z - clock x 0.02) / rm slid the whole
+    // skin down by kilometres whenever the funnel widened (user, 2026-11-01). Every rise below is the same.
     float2 pr = rot2(dv, -S_spin.y) / max(rad, 0.02);
     float rm = max(0.5 * (S_tor2.x + S_tor2.y), 0.02);
-    float zz = (q.z - clock * 0.02) / rm;
+    float zz = q.z / rm - S_spin5.x;
     // The collar turns with the wall cloud it flares into, not with the funnel (user, 2026-10-31: at the skin's rate its
     // lumps, a few funnel widths out, swept round at hundreds of m/s, read as cloud racing across the wall cloud at the
     // tornado's speed, and seen from below their far side sank down the screen as they came round). Early in the flare,
@@ -470,7 +472,7 @@ float3 tornadoField(float3 q)
     // The detailed tornado only; the web build's tornado keeps its one frame.
     float cj = S_tor8.y > 0.0 ? ss(0.08, 0.35, collar) : 0.0;
     float2 pj = rot2(dv, -S_spin4.y) / max(rad, 0.02);
-    float zzj = (q.z - clock * 0.005) / rm;
+    float zzj = q.z / rm - 0.25 * S_spin5.x;
     float gj = rsqrt(1.0 - 2.0 * cj * (1.0 - cj));
     // These coordinates are normalised by radius; filter in world units so small
     // funnels do not sparkle when their skin is smaller than a rendered pixel.
@@ -539,9 +541,11 @@ float3 tornadoField(float3 q)
     if (second)
     {
         // the central vortex: slender, visible all the way down, still there when the envelope breaks down
-        float radc = max(S_tor4.x, 0.02) * lerp(1.0, 1.6, pow(h, 1.5)) * (1.0 - 0.4 * S_tor2.w);
+        float radcShape = lerp(1.0, 1.6, pow(h, 1.5));
+        float radc = max(S_tor4.x, 0.02) * radcShape * (1.0 - 0.4 * S_tor2.w);
         float2 prc = rot2(dv, -S_spin.z) / max(radc, 0.03);
-        float zc = (q.z - clock * 0.02) / max(radc, 0.03);
+        // (risen in radii at its foot, S_spin5.y; its widening upward is fixed, so dividing it out keeps the rise at 20 m/s)
+        float zc = (q.z / max(max(S_tor4.x, 0.02) * (1.0 - 0.4 * S_tor2.w), 0.03) - S_spin5.y) / radcShape;
         // its surface as rough as the funnel's skin (roughK), not a fixed +-17 % of its radius: early in a wedge's life the
         // core is a kilometre across, and that tore its silhouette into stacked, saw-edged shreds (user, 2026-10-26)
         float roughc = ((n3(float3(prc * 0.55, zc * 0.9)) - 0.5) * 0.3 + (n3(float3(prc * 1.6, zc * 2.6) + float3(0.62, 0.21, 0.4)) - 0.5) * 0.12) * roughK * 0.35;
@@ -601,7 +605,8 @@ float3 tornadoField(float3 q)
     // two never line up and the crossfade's contrast can be made up exactly (two independent fields).
     float rcD = max(S_tor6.z, 0.02);
     float shear = ss(rcD, 3.0 * rcD, dustD);
-    float dzc = q.z - clock * 0.015, dzw = q.z - clock * 0.005;
+    // (the noise is scaled by 1 / dr: risen by dr x S_spin5.z, the rise added up in column radii, it is q.z / dr - S_spin5.z)
+    float dzc = q.z - dr * S_spin5.z, dzw = q.z - dr * S_spin5.z / 3.0;
     float3 dustQ = float3(rot2(dustDv, -S_spin.z), dzc);   // the core's frame (the curtains' helix turns with it)
     float dn, fine, lumps;
     if (shear >= 1.0)
@@ -717,9 +722,11 @@ float2 satelliteField(float3 q)
     float2 c = lerp(S_tor11.xy, lerp(S_tor11.xy, S_tor3.xy, 0.3), ss(0.2, 1.0, h)) + sway;
     float2 dv = q.xy - c; float d = length(dv);
     float r0 = max(S_tor11.w, 0.01);
-    float rad = r0 * lerp(1.0, 3.0, pow(h, 1.6)) * (0.6 + 0.4 * min(S_tor11.z * 2.0, 1.0));
+    float radShape = lerp(1.0, 3.0, pow(h, 1.6));
+    float rad = r0 * radShape * (0.6 + 0.4 * min(S_tor11.z * 2.0, 1.0));
     float2 pr = rot2(dv, -S_spin3.y) / max(rad, 0.02);
-    float zs = (q.z - clock * 0.02) / max(rad, 0.02);
+    // (risen in radii at its foot, S_spin5.w, as it grows; its widening upward divided out)
+    float zs = (q.z / max(r0 * (0.6 + 0.4 * min(S_tor11.z * 2.0, 1.0)), 0.02) - S_spin5.w) / radShape;
     float rough = (n3(float3(pr * 0.55, zs * 0.9)) - 0.5) * 0.3 + (n3(float3(pr * 1.6, zs * 2.6) + float3(0.15, 0.6, 0.35)) - 0.5) * 0.12;
     float reach = 0.35 + 0.45 * ss(0.2, 0.8, S_tor11.z) + 0.15 * sin(clock * 0.1);
     float zc = zb * (1.0 - reach);

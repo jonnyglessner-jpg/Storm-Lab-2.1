@@ -6,10 +6,14 @@
 // spikes several times the median. PASS when no frame changes more than 2.5x the median in any view.
 //   StormLab > Tornado Flow Check
 // Batch: -executeMethod TornadoFlowCheck.RunFromCommandLine [-slFlowSeconds s] [-slFlowW w -slFlowH h] [-slFlowTag name]
-// [-slFlowStrip s] (never with -nographics). Report validation/reports/TornadoFlowCheck.md (TornadoFlowCheck_<tag>.md with
+// [-slFlowStrip s] [-slFlowOnly part-of-a-view's-name] (never with -nographics). Report validation/reports/TornadoFlowCheck.md (TornadoFlowCheck_<tag>.md with
 // a tag), the trace of every view as CSV beside it, and the frames round each view's worst spike in
 // Screenshots/flow_*.png. -slFlowStrip s also keeps a frame every s seconds (flow_<view>_s<n>.png), to judge how the
 // dust moves over seconds (turning against rising) rather than frame to frame.
+// The forming view lets storm time run at the game's pace (StormScenario.DefaultPace) through a cone widening out of its
+// rope stage, on the wall clock a game would have by then: the textures rose as (z - v x clock) / r, and a widening funnel
+// slid everything down at hundreds of m/s (user, 2026-11-01). Its median change against the held cone's says how much
+// more the image moves while the funnel grows; a slide shows as a far larger one.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -27,6 +31,7 @@ public static class TornadoFlowCheck
     static string ShotDir => Path.Combine(StormLabTestKit.ProjectDir, "Screenshots");
     static int W = 1720, H = 720;
     static float seconds = 10f, strip = 0f;
+    static string only;
     const float Fps = 30f;
     const double SpikeRatio = 2.5;
 
@@ -41,6 +46,7 @@ public static class TornadoFlowCheck
         if (int.TryParse(Arg("-slFlowH"), out var h)) H = h;
         if (float.TryParse(Arg("-slFlowSeconds"), out var s)) seconds = s;
         if (float.TryParse(Arg("-slFlowStrip"), out var st)) strip = st;
+        only = Arg("-slFlowOnly");
         bool ok;
         try { ok = Run(Arg("-slFlowTag")); }
         catch (Exception e) { Debug.LogException(e); ok = false; }
@@ -92,6 +98,13 @@ public static class TornadoFlowCheck
             float T = (float)(forced.formMin + (shape == FunnelShape.Wedge ? 0.55 : 0.4) * forced.LifeMin);
             storm.Spin.Reset();
             storm.StepTo(T, 100f, true); StormLabTestKit.Sync();
+            Aim(km, up);
+            return true;
+        }
+        // the camera km beyond the funnel's ground radius, to the south-east, up m above the ground, looking at its foot (or
+        // from the ground, up it)
+        void Aim(float km, float up)
+        {
             var g = storm.TornadoGroundWorld; g.y = 0f;
             float zb = (float)(P.zb - StormDesign.CLOUD_BASE_LIFT_KM);
             float D = storm.Frame.param[14 * 4] * 1000f + km * 1000f;
@@ -99,6 +112,30 @@ public static class TornadoFlowCheck
             var at = up > 10f ? g + Vector3.up * 30f : g + Vector3.up * zb * 400f;
             cam.transform.SetPositionAndRotation(from, Quaternion.LookRotation(at - from, Vector3.up));
             cam.fieldOfView = 60f;
+        }
+        // the forming cone: placed as the held one, then put just before its funnel widens fastest (scanned on the CPU frame)
+        // with the time to run on from there
+        double pace = 0;
+        bool Forming()
+        {
+            if (!Forced(FunnelShape.Cone, 350, 2, 0.8f, 2f)) return false;
+            var tc = storm.Tornadoes[0];
+            var F = new StormFrame();
+            double best = 0, bestT = tc.formMin, prev = double.NaN, step = 0.02;
+            for (double t = tc.formMin; t < tc.formMin + 0.5 * tc.LifeMin; t += step)
+            {
+                StormDesign.At(P, t, 0, F); StormTornadoes.Apply(P, storm.Tornadoes, t, F);
+                double rm = 0.5 * (F.param[14 * 4] + F.param[14 * 4 + 1]);
+                if (!double.IsNaN(prev) && (rm - prev) / step > best) { best = (rm - prev) / step; bestT = t; }
+                prev = rm;
+            }
+            pace = StormScenario.DefaultPace;
+            double t0 = bestT - 0.25 * seconds * pace / 60.0;
+            storm.StepTo(t0, (float)(t0 * 60.0 / pace), true); StormLabTestKit.Sync();
+            // framed for the funnel at its widest in the run, which is near the middle of it
+            StormDesign.At(P, bestT + 0.5 * seconds * pace / 60.0, 0, F); StormTornadoes.Apply(P, storm.Tornadoes, bestT + 0.5 * seconds * pace / 60.0, F);
+            Aim(0.8f + (F.param[14 * 4] - storm.Frame.param[14 * 4]), 2f);
+            Debug.Log($"[TornadoFlow] forming: storm min {t0:0.00} (fastest widening at {bestT:0.00}, {best * 1000:0} m/storm min of mean radius), ground radius {storm.Frame.param[14 * 4] * 1000:0} m, tornado amount {storm.Frame.param[13 * 4 + 2]:0.00}");
             return true;
         }
         var views = new (string name, Func<bool> place)[]
@@ -106,6 +143,7 @@ public static class TornadoFlowCheck
             ("rope_0.4km", () => Forced(FunnelShape.Rope, 90, 1, 0.4f, 2f)),
             ("cone_0.4km", () => Forced(FunnelShape.Cone, 350, 2, 0.4f, 2f)),
             ("wedge_1.5km", () => Forced(FunnelShape.Wedge, 1800, 4, 1.5f, 2f)),
+            ("cone_forming_0.8km", Forming),
         };
 
         bool ok = true;
@@ -116,14 +154,16 @@ public static class TornadoFlowCheck
         Directory.CreateDirectory(repDir);
         foreach (var v in views)
         {
+            if (only != null && !v.name.Contains(only)) continue;
             storm.Tornadoes = natural;
+            pace = 0;
             if (!v.place()) { rep.AppendLine($"| {v.name} | FAIL: could not place | | | | | |"); ok = false; continue; }
-            double T = storm.StormTime; float clock = 100f;
+            double T = storm.StormTime; float clock = pace > 0 ? (float)(T * 60.0 / pace) : 100f;
             storm.ResetHistory(cam);
             // the temporal resolve settles first (the game has been running)
             for (int f = 0; f < 16; f++)
             {
-                clock += 1f / Fps; storm.StepTo(T, clock);
+                clock += 1f / Fps; T += pace / 60.0 / Fps; storm.StepTo(T, clock);
                 using (var cmd = new UnityEngine.Rendering.CommandBuffer()) { storm.RecordMarch(cmd, cam, null, W, H, false, out _); Graphics.ExecuteCommandBuffer(cmd); }
             }
             var trace = new List<(float clock, double change)>();
@@ -131,7 +171,7 @@ public static class TornadoFlowCheck
             var all = new List<byte[]>();   // every frame as PNG, for the pictures round the worst change
             for (int f = 0; f < n; f++)
             {
-                clock += 1f / Fps; storm.StepTo(T, clock);
+                clock += 1f / Fps; T += pace / 60.0 / Fps; storm.StepTo(T, clock);
                 RenderTexture rt;
                 using (var cmd = new UnityEngine.Rendering.CommandBuffer()) { rt = storm.RecordMarch(cmd, cam, null, W, H, false, out _); Graphics.ExecuteCommandBuffer(cmd); }
                 var tex = Grab(rt);

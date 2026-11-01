@@ -6,7 +6,7 @@
 #ifndef STORM_COMMON
 #define STORM_COMMON
 
-float4 _SP[33];
+float4 _SP[34];
 #define S_f      _SP[0]    // xy forward (storm motion) unit, zw left unit
 #define S_base   _SP[1]    // x cloud base, y storm top (EL), z clock s, w storm time min
 #define S_tower  _SP[2]    // x top height, y radius, z amount, w striation
@@ -46,6 +46,8 @@ float4 _SP[33];
                            // w how far the inflow has carried the beaver tail's air toward the updraft, km (0: the web build's)
 #define S_spin4  _SP[32]   // x the wall cloud's inner ring (between the junction's rate and the rim's), y the wall cloud at its
                            // junction with the funnel (its surface just under the funnel's edge wind), z the junction's radius km, w spare
+#define S_spin5  _SP[33]   // how far the tornado's textures have risen, each in its own radii (StormSpin.RiseRates): x the funnel's
+                           // skin, y the central core, z the dust (in the core's frame), w the satellite tornado
 
 Texture3D<float> _Noise;
 SamplerState sampler_LinearRepeat;
