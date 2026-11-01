@@ -30,6 +30,8 @@ namespace StormLab.Lightning
         public RenderTexture LightField => lightField;
         ComputeShader compute;
         Texture3D noise;
+        // an empty volume for the other-storm slots not in use (a compute dispatch refuses an unset texture)
+        Texture3D black3D;
         RenderTexture lightField;
         StormRenderer boundStorm;
         LightningSystem boundLightning;
@@ -137,6 +139,11 @@ namespace StormLab.Lightning
             if (!compute) compute=Resources.Load<ComputeShader>("StormLightningLight");
             if (!compute) throw new InvalidOperationException("Missing StormLightningLight compute shader.");
             if (!noise) noise=CloudNoise.Make();
+            if (!black3D)
+            {
+                black3D=new Texture3D(1,1,1,TextureFormat.RGBA32,false) { hideFlags=HideFlags.DontSave, name="Lightning empty storm" };
+                black3D.SetPixels32(new[] { new Color32(0,0,0,0) }); black3D.Apply(false,true);
+            }
             int width=Mathf.Clamp(gridWidth,24,96),height=Mathf.Clamp(gridHeight,12,48);
             if (lightField && lightField.width==width && lightField.volumeDepth==height) return;
             if (lightField) { lightField.Release(); Release(lightField); }
@@ -162,6 +169,73 @@ namespace StormLab.Lightning
             material.SetTexture("_SLDens",storm.Volume.Dens);
             material.SetVector("_SLVolume",VolumeSettings());
             material.SetVector("_SLOrigin",storm.StormToWorld(Vector3.zero));
+            // the other storms drawn hide this storm's channels too (the game's other storm overhead: its rain and cloud,
+            // which the far storm's anvil crawlers showed through, user 2026-10-31)
+            int n=GatherOthers();
+            for(int i=0;i<Others;i++) material.SetTexture(OtherDensName[i],i<n ? otherDens[i] : black3D);
+            material.SetVectorArray("_SLOther",others);
+            material.SetInt("_SLOtherCount",n);
+            // the nearest other's block, for its wall cloud, tail and flanking line drawn analytically (nearField_o)
+            if(n>0) material.SetVectorArray("_SP_o",nearest.GpuParams());
+            material.SetTexture("_Noise_o",noise);
+        }
+
+        /// <summary>how many other storms a channel can be hidden by (StormLightningMedium.hlsl SL_OTHERS)</summary>
+        public const int Others = 3;
+        static readonly string[] OtherDensName = { "_SLDensO0", "_SLDensO1", "_SLDensO2" };
+        readonly Vector4[] others = new Vector4[Others];
+        readonly Texture[] otherDens = new Texture[Others];
+        StormRenderer nearest;
+        readonly List<StormRenderer> gathered = new List<StormRenderer>();
+        /// <summary>The other storms drawn (StormRenderer.Enabled: ready, not this one), the nearest Others of them, into
+        /// otherDens (their volumes) and others (their frames: world origin m, cloud base km), nearest first. Returns how many.</summary>
+        int GatherOthers()
+        {
+            Vector3 here = storm.StormToWorld(Vector3.zero);
+            gathered.Clear();
+            foreach (var other in StormRenderer.Enabled)
+                if (other && other != storm && other.isActiveAndEnabled && other.ReadyToRender) gathered.Add(other);
+            // nearest first: the nearest gets its low features drawn analytically
+            gathered.Sort((a, b) => (a.StormToWorld(Vector3.zero) - here).sqrMagnitude.CompareTo((b.StormToWorld(Vector3.zero) - here).sqrMagnitude));
+            int n = Math.Min(Others, gathered.Count);
+            for (int i = 0; i < n; i++)
+            {
+                Vector3 o = gathered[i].StormToWorld(Vector3.zero);
+                others[i] = new Vector4(o.x, o.y, o.z, gathered[i].GpuParams()[1].x);
+                otherDens[i] = gathered[i].Volume.Dens;
+            }
+            for (int i = n; i < Others; i++) { others[i] = Vector4.zero; otherDens[i] = null; }
+            nearest = n > 0 ? gathered[0] : null;
+            return n;
+        }
+
+        /// <summary>The transmittance the channel shader gives between two world points (m): through this storm's cloud
+        /// and rain alone, or through every storm drawn as well (otherStorms), the way the channels are hidden. One small
+        /// synchronous readback, for checks. NaN while this storm is not ready.</summary>
+        public float ProbeTransmittance(Vector3 worldA, Vector3 worldB, bool otherStorms)
+        {
+            if (!storm || !storm.ReadyToRender) return float.NaN;
+            EnsureAssets();
+            int kernel = compute.FindKernel("Probe");
+            using var buffer = new ComputeBuffer(1, 4);
+            using (var cmd = new CommandBuffer { name = "Lightning transmittance probe" })
+            {
+                BindMedium(cmd, compute, kernel);
+                int n = otherStorms ? GatherOthers() : 0;
+                for (int i = 0; i < Others; i++) cmd.SetComputeTextureParam(compute, kernel, OtherDensName[i], i < n ? otherDens[i] : black3D);
+                cmd.SetComputeVectorArrayParam(compute, "_SLOther", others);
+                cmd.SetComputeIntParam(compute, "_SLOtherCount", n);
+                if (n > 0) cmd.SetComputeVectorArrayParam(compute, "_SP_o", nearest.GpuParams());
+                cmd.SetComputeTextureParam(compute, kernel, "_Noise_o", noise);
+                cmd.SetComputeVectorParam(compute, "_SLProbeA", worldA);
+                cmd.SetComputeVectorParam(compute, "_SLProbeB", worldB);
+                cmd.SetComputeIntParam(compute, "_SLProbeOthers", otherStorms ? 1 : 0);
+                cmd.SetComputeBufferParam(compute, kernel, "_SLProbeOut", buffer);
+                cmd.DispatchCompute(compute, kernel, 1, 1, 1);
+                Graphics.ExecuteCommandBuffer(cmd);
+            }
+            var result = new float[1]; buffer.GetData(result);
+            return result[0];
         }
 
         /// <summary>Shared binding also used by GPU probes. Does not change density or the sunlight grids.</summary>
@@ -170,6 +244,7 @@ namespace StormLab.Lightning
             EnsureAssets();
             cmd.SetComputeVectorArrayParam(shader,"_SP",storm.GpuParams());
             cmd.SetComputeVectorParam(shader,"_SLVolume",VolumeSettings());
+            cmd.SetComputeVectorParam(shader,"_SLOrigin",storm.StormToWorld(Vector3.zero));
             cmd.SetComputeTextureParam(shader,kernel,"_Noise",noise);
             cmd.SetComputeTextureParam(shader,kernel,"_SLDens",storm.Volume.Dens);
         }
@@ -184,6 +259,7 @@ namespace StormLab.Lightning
             if(lightning && lightning.ChannelMaterial) lightning.ChannelMaterial.SetFloat("_SLActive",0);
             if(lightField) { lightField.Release(); Release(lightField); lightField=null; }
             if(noise) { Release(noise); noise=null; }
+            if(black3D) { Release(black3D); black3D=null; }
         }
         static void Release(UnityEngine.Object obj) { if(Application.isPlaying) Destroy(obj); else DestroyImmediate(obj); }
     }

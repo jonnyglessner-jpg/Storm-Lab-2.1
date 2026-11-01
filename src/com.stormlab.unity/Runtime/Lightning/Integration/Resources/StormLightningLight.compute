@@ -26,12 +26,14 @@ void BuildLight(uint3 id:SV_DispatchThreadID)
     _SLLightOut[id]=float4(radiance,0);
 }
 
-// GPU validation uses the very same optical-depth function as the channel shader.
+// GPU validation uses the very same optical-depth function as the channel shader: the transmittance between two world
+// points (m) through this storm (_SLProbeOthers 0) or through every storm bound (1), as the channels are hidden.
 float4 _SLProbeA,_SLProbeB;
+int _SLProbeOthers;
 RWStructuredBuffer<float> _SLProbeOut;
 [numthreads(1,1,1)]
 void Probe(uint3 id:SV_DispatchThreadID)
-{ _SLProbeOut[0]=exp(-slOpticalDepth(_SLProbeA.xyz,_SLProbeB.xyz,384,1)); }
+{ _SLProbeOut[0]=exp(-slOpticalDepthWorld(_SLProbeA.xyz,_SLProbeB.xyz,384,_SLProbeOthers>0)); }
 
 RWTexture3D<float4> _SLTestDens;
 float4 _SLSolid;

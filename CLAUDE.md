@@ -67,7 +67,11 @@ README.md has the layout, use, checks and known gaps.
   of their own occlusion; no hardware depth test, since the storm writes its cloud's depth, but the fragment tests
   against the opaque depth copy `_CameraDepthTexture`, which holds no storm depth, so the ground hides a bolt's foot and
   cloud never cuts one; cloud and rain hide a bolt by its
-  optical depth), the channel emission in storm units (600; the night scale goes into the
+  optical depth, through the bolt's own storm and every other storm drawn: `slOpticalDepthWorld`, the others bound from
+  `StormRenderer.Enabled` by `LightningCloudBridge`; user 2026-10-31: the other storm's crawlers showed through the rain
+  and cloud overhead. The nearest other's low features are analytic with its own block: `StormLightningMedium.hlsl`
+  compiles StormCommon.hlsl a second time with every top-level name suffixed `_o`; a new top-level symbol in
+  StormCommon.hlsl goes into that rename list, or the second copy redefines it), the channel emission in storm units (600; the night scale goes into the
   material, never the 8-bit vertex colours); fixes there should go back to 2.0 too. The flash rate
   and brightness are right (user, 2026-10-30: "already good"): change what the flashes look like and where they go,
   not how many or how bright. Check bolts with `LightningLookCheck`.

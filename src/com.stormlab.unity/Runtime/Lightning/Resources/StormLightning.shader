@@ -63,9 +63,11 @@ Shader "StormLab/Lightning"
                 float halo = exp2(-across * across * 10) * .008;
                 float profile = (core + halo) * (1 - smoothstep(.8, 1, across));
                 half3 tint = lerp(half3(.56, .66, 1), half3(1, .97, 1), core);
+                // hidden by this storm's cloud and rain, and by every other storm's between it and the camera (the game's
+                // other storm overhead, whose rain and cloud a far storm's crawlers showed through; StormLightningMedium)
                 float visibility = 1;
                 if (_SLActive > .5)
-                    visibility = exp(-slOpticalDepth(slWorldToVolume(_WorldSpaceCameraPos),slWorldToVolume(i.world),384,1));
+                    visibility = exp(-slOpticalDepthWorld(_WorldSpaceCameraPos,i.world,384,true));
                 float scale = (_StormLabLight.x > 0 ? _StormLabLight.x : 1) * (_StormLabLight.y > .5 ? GetCurrentExposureMultiplier() : 1);
                 return half4(_Color.rgb * i.color.rgb * tint * visibility * scale, profile * _Color.a * i.color.a);
             }

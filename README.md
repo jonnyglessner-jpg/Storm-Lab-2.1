@@ -63,7 +63,17 @@ laid its transmittance over the channels on top of their own occlusion; the chan
 their own at BeforePostProcess (`LightningSystem.ChannelPass`, shader pass `StormLightning`), after the storm, with no
 depth test (the storm writes its cloud's depth where it is opaque, and a test against it would cut a channel wherever
 it is seen against cloud): cloud and rain hide them once, through their own optical-depth occlusion, as designed, and a
-bolt behind a near building or tree shows through it for the frames it lasts. Two more things kept the channels dim,
+bolt behind a near building or tree shows through it for the frames it lasts. That occlusion saw only the bolt's own
+storm (2.0 had one storm), so in a game the other storm's anvil crawlers showed through the rain and cloud of the storm
+overhead (user, 2026-10-31); the channel shader now sums the optical depth through every storm drawn
+(`StormLightningMedium.hlsl` `slOpticalDepthWorld`: the bolt's own storm, then up to three others from their volumes,
+bound by `LightningCloudBridge` from `StormRenderer.Enabled`; the nearest other's wall cloud, tail and flanking line are
+the march's analytic `nearField` with that storm's own parameter block, from `StormCommon.hlsl` compiled a second time
+under `_o` names, since the volume's coarse copy of them let a far bolt through a drawn flanking-line tower at a tenth
+of its brightness; any further storm's come from the coarse copy). `StormGameCheck` probes it: the transmittance from the ground under
+each storm (its forward-flank core, hail core and main core) to where a crawler hangs under the other's anvil, through
+the far storm alone, the near storm alone and both (`LightningCloudBridge.ProbeTransmittance`): the last is the product
+of the other two, and from one of the spots the storm overhead hides the other's crawler. Two more things kept the channels dim,
 and these were the real reason: the night scale (0.0035 at dusk) went into
 the lines' 8-bit vertex colours, which rounded every branch to black and the trunk to one step (it now goes into the
 material, `LightningSystem.ApplyEmission`), and the channel's emission was 8 storm units (eight times a sunlit cloud),
