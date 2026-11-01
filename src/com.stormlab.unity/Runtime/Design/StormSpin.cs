@@ -7,6 +7,11 @@
 // a change of speed and nothing else; the shaders read the angles (slots 29-31, S_spin, S_spin2 and S_spin3). The last
 // value (S_spin3.w) is a distance, not an angle: how far the inflow has carried the beaver tail's air toward the updraft,
 // km, added up the same way (user, 2026-10-28: the beaver tail "needs to look as if it is flowing into the storm").
+// Slot 33 (S_spin5) is how far the tornado's textures have risen, in their own radii. The march samples them in units of
+// the radius (q.z / r); rising as (q.z - v x clock) / r made the rise's offset v x clock / r, tens of km over a small
+// radius, so a radius that changed at all slid the whole texture up or down by clock x d(1 / r): a funnel widening out
+// of its rope stage sent the skin and dust plunging down at hundreds of m/s (user, 2026-11-01). Rising by the integral
+// of v / r, the offset q.z / r - rise moves at v and a changing radius only stretches the texture with the funnel.
 //
 // Real rates (user, 2026-10-27: "everything must match real world speeds"): each feature turns at a real tangential wind
 // over its own radius, v / r, so its edge moves at that wind in real time. The web build's rates were picked by eye and
@@ -24,7 +29,7 @@ namespace StormLab
     public sealed class StormSpin
     {
         /// <summary>first of the angle slots (S_spin), and how many</summary>
-        public const int Slot0 = StormTornadoes.NSLOT, Slots = 4;
+        public const int Slot0 = StormTornadoes.NSLOT, Slots = 5;
         /// <summary>the whole parameter block with the angle slots (must match StormCommon.hlsl)</summary>
         public const int NSLOT = Slot0 + Slots;
 
@@ -58,6 +63,10 @@ namespace StormLab
         /// <summary>the wall cloud's inner ring turns this share of the way from the rim's rate to the junction's (must
         /// match StormCommon.hlsl nearField, where the ring's frame is pure at the radius whose rate this is)</summary>
         public const double WallRingShare = 0.05;
+        /// <summary>how fast the tornado's textures rise, km/s (StormMarch.compute): the funnel's skin (its junction with the wall
+        /// cloud at a quarter of that), the central core, the dust in the core's frame (the whirl's at a third of that) and the
+        /// satellite tornado</summary>
+        public const double SkinRise = 0.02, CoreRise = 0.02, DustRise = 0.015, SatelliteRise = 0.02;
 
         const int N = 13;
         const double TwoPi = 2 * Math.PI;
@@ -68,10 +77,18 @@ namespace StormLab
         readonly double[] angle = new double[N];
         readonly double[] rate = new double[N];
         double flow, flowRate, junctionR;
+        // how far the skin, the central core, the dust and the satellite tornado have risen, each in its own radii (S_spin5)
+        const int NR = 4;
+        readonly double[] rise = new double[NR];
+        readonly double[] riseRate = new double[NR];
         double lastClock = double.NaN, lastT = double.NaN;
 
         /// <summary>this frame's rates, rad/s, counter-clockwise positive, in the order above (for checks)</summary>
         public double Rate(int i) => rate[i];
+        /// <summary>this frame's rise rates, radii/s: skin, core, dust, satellite (for checks)</summary>
+        public double RiseRate(int i) => riseRate[i];
+        /// <summary>how far each texture has risen, radii: skin, core, dust, satellite (for checks)</summary>
+        public double Rise(int i) => rise[i];
 
         /// <summary>
         /// Advance the angles to wall clock `clock` (s) at storm time tMin and write them into the frame. Call after
@@ -86,12 +103,23 @@ namespace StormLab
             if (rates == SpinRates.Website) WebRates(a); else RealRates(a);
             // (the web build's beaver tail does not flow: 0 keeps its look for the comparison)
             flowRate = rates == SpinRates.Website ? 0 : InflowWind / 1000;
+            RiseRates(a);
             double dt = clock - lastClock;
             bool same = dt == 0 && tMin == lastT;
             if (!same)
             {
-                if (double.IsNaN(dt) || dt <= 0) { for (int i = 0; i < N; i++) angle[i] = rate[i] * clock % TwoPi; flow = flowRate * clock; }
-                else { for (int i = 0; i < N; i++) angle[i] = (angle[i] + rate[i] * dt) % TwoPi; flow += flowRate * dt; }
+                if (double.IsNaN(dt) || dt <= 0)
+                {
+                    for (int i = 0; i < N; i++) angle[i] = rate[i] * clock % TwoPi;
+                    for (int i = 0; i < NR; i++) rise[i] = riseRate[i] * clock;
+                    flow = flowRate * clock;
+                }
+                else
+                {
+                    for (int i = 0; i < N; i++) angle[i] = (angle[i] + rate[i] * dt) % TwoPi;
+                    for (int i = 0; i < NR; i++) rise[i] += riseRate[i] * dt;
+                    flow += flowRate * dt;
+                }
             }
             lastClock = clock; lastT = tMin;
             // slots 29-31: the first eleven angles, then the flow (S_spin3.w); slot 32: the wall cloud's inner ring and
@@ -102,6 +130,23 @@ namespace StormLab
             a[s + 12] = (float)angle[11];
             a[s + 13] = (float)angle[12];
             a[s + 14] = (float)junctionR;
+            // slot 33: the rises
+            for (int i = 0; i < NR; i++) a[s + 16 + i] = (float)rise[i];
+        }
+
+        /// <summary>each texture's rise over the radius the march scales it by (StormMarch.compute tornadoField and
+        /// satelliteField; the same expressions, so only the speed would differ if they drifted apart, never the place)</summary>
+        void RiseRates(float[] a)
+        {
+            // the skin: the funnel's mean radius
+            riseRate[0] = SkinRise / Math.Max(0.5 * (a[14 * 4] + a[14 * 4 + 1]), 0.02);
+            // the central core at its foot (it widens upward by a fixed shape, which the march divides out)
+            riseRate[1] = CoreRise / Math.Max(Math.Max(a[21 * 4], 0.02) * (1.0 - 0.4 * a[14 * 4 + 3]), 0.03);
+            // the dust column's radius (a wedge breaking down shrinks it toward the central vortex)
+            double breakdown = a[21 * 4 + 3] > 0.5 ? a[21 * 4 + 2] : 0.0;
+            riseRate[2] = DustRise / Math.Max(a[14 * 4] * a[23 * 4 + 3] * (1.0 - 0.7 * breakdown) + 0.06, 0.08);
+            // the satellite at its foot (it widens upward by a fixed shape)
+            riseRate[3] = SatelliteRise / Math.Max(Math.Max(a[28 * 4 + 3], 0.01) * (0.6 + 0.4 * Math.Min(a[28 * 4 + 2] * 2.0, 1.0)), 0.02);
         }
 
         /// <summary>where the funnel meets the wall cloud: the cloud-base radius plus the collar's flare (as StormMarch.compute
