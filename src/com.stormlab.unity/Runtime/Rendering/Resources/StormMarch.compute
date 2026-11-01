@@ -334,15 +334,18 @@ float tornadoTube(float z0, float z1)
             // march in the timing check, so its comparison is with 2.0's)
             if (PROBE_LIGHTALL > 0.5) f = max(f, (S_tor2.y * 1.2 + 0.1) * (1.2 + 0.8 * rr));
         }
-        if (z0 < 0.4 * zb) f = max(f, (S_tor6.w < 2.0 ? 1.5 : 2.1) * max(rad, 0.02));   // the sheath (a wide envelope's hugs it)
+        if (z0 < 0.4 * zb) f = max(f, lerp(2.1, 1.5, ss(2.0, 1.6, S_tor6.w)) * max(rad, 0.02));   // the sheath (a wide envelope's hugs it)
     }
     return f;
 }
 // the debris column's top, km (tornadoField's dh): taller for a wider, stronger tornado (a wedge's lower for its
 // width) and where the funnel does not reach down, lower as it ropes out; dust: 1 - 0.7 x the wedge's breakdown
+// (wedgeD, here and in tornadoField: 1 for a wide envelope's dust ratio 1.35, 0 for a narrow funnel's 2.4, smooth between,
+// since a wedge's ratio now slides from the one to the other as its drillbit condenses out of the multiple-vortex
+// circulation, StormTornadoes; at a step the column's top and sheath jumped)
 float tornadoDustTop(float dust)
 {
-    float wedgeD = S_tor6.w < 2.0 ? 1.0 : 0.0;
+    float wedgeD = ss(2.0, 1.6, S_tor6.w);
     // (a wedge's column at most 0.3 km: at 0.45 it wrapped half the envelope in brown haze)
     return clamp(0.1 + 2.0 * S_tor2.x * dust * lerp(1.0, 0.4, wedgeD) + 0.03 * S_tor7.z, 0.15, lerp(0.45, 0.3, wedgeD)) * (1.0 - 0.5 * S_tor2.w) + 0.12 * (1.0 - S_tor2.z);
 }
@@ -577,7 +580,7 @@ float3 tornadoField(float3 q)
     // of the base. A wide envelope's column hugs it (S_tor6.w 1.35), a narrow funnel's is broader (2.4). It shrinks back
     // toward the central vortex as a wedge breaks down.
     float dust = 1.0 - 0.7 * breakdown;
-    float wedgeD = S_tor6.w < 2.0 ? 1.0 : 0.0;
+    float wedgeD = ss(2.0, 1.6, S_tor6.w);
     float dr = max(S_tor2.x * S_tor6.w * dust + 0.06, 0.08);
     float dh = tornadoDustTop(dust);
     float2 dustDv = q.xy - tornadoAxis(0.0, ztop, clock);

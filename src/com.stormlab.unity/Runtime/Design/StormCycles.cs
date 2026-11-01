@@ -31,6 +31,10 @@ namespace StormLab
         public TornadoShape shape;
         public bool tornadic;
         public double radius, topRatio, condensation, dust, lean, phase;
+        /// <summary>(game, StormGame.Adapt / StormTornadoes: not part of the web build's cycle) how big this cycle's clear
+        /// slot, horseshoe and wall cloud are, in units of the web build's second-cycle enlargement (0: its first cycle's
+        /// size, 1: its second's, more: bigger; StormGame.Bigness from the cycle's tornado). NaN: the web build's.</summary>
+        public double bigness = double.NaN;
     }
 
     public static class StormCycles

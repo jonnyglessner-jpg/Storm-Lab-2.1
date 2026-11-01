@@ -14,6 +14,7 @@ static class DumpCs
         if (args.Length > 0 && args[0] == "--scenario") { Scenarios(); return; }
         if (args.Length > 0 && args[0] == "--life") { Life(); return; }
         if (args.Length > 0 && (args[0] == "--wedges" || args[0] == "--shapes")) { Shapes(); return; }
+        if (args.Length > 0 && args[0] == "--slots") { Slots(); return; }
         if (args.Length > 0 && args[0] == "--runup") { RunUp(); return; }
         if (args.Length > 0 && args[0] == "--gameframes") { GameFrames(args[1], int.Parse(args[2]), int.Parse(args[3]), double.Parse(args[4], CultureInfo.InvariantCulture), double.Parse(args[5], CultureInfo.InvariantCulture)); return; }
         if (args.Length > 0 && args[0] == "--spin") { Spin(args.Length > 1 ? args[1] : "plains"); return; }
@@ -278,7 +279,9 @@ static class DumpCs
     // Shapes (--shapes, --wedges): every tornado within its shape's limits (StormTornadoes, user 2026-10-29), free storms
     // and rated games: visible width at the ground (2 x ground radius) between MinWidthM and MaxWidthM at its rating, the
     // rating between MinEf and MaxEf, an EF5 only a wedge at least WedgeEf5MinM wide or a drillbit, a wedge's phases at its
-    // width, every other phase within its own shape's width. Prints each shape's count, width range (yd) and ratings.
+    // width, every other phase within its own shape's width; no wedge on the first cycle, and a wedge's life 30-45 min
+    // (user, 2026-10-31; a game's wedge may be cut short by the map, so games are checked for the cycle only). Prints
+    // each shape's count, width range (yd), ratings and life range (min).
     static void Shapes()
     {
         const double yd = StormTornadoes.Yd;
@@ -289,16 +292,19 @@ static class DumpCs
             var region = StormTornadoes.RegionOf(pre.key);
             var widths = new System.Collections.Generic.Dictionary<FunnelShape, System.Collections.Generic.List<double>>();
             var efs = new System.Collections.Generic.Dictionary<FunnelShape, int[]>();
+            var lives = new System.Collections.Generic.Dictionary<FunnelShape, System.Collections.Generic.List<double>>();
             int bad = 0, n = 0; var why = new System.Collections.Generic.List<string>();
-            void Check(TornadoCharacter t, string where)
+            void Check(TornadoCharacter t, string where, bool free)
             {
                 if (t == null) return;
                 n++;
-                if (!widths.ContainsKey(t.shape)) { widths[t.shape] = new System.Collections.Generic.List<double>(); efs[t.shape] = new int[6]; }
-                double D = 2000 * t.groundKm; widths[t.shape].Add(D); efs[t.shape][t.ef]++;
+                if (!widths.ContainsKey(t.shape)) { widths[t.shape] = new System.Collections.Generic.List<double>(); efs[t.shape] = new int[6]; lives[t.shape] = new System.Collections.Generic.List<double>(); }
+                double D = 2000 * t.groundKm; widths[t.shape].Add(D); efs[t.shape][t.ef]++; lives[t.shape].Add(t.LifeMin);
                 string f = null;
                 double lo = t.shape == FunnelShape.Wedge && t.ef >= 5 ? StormTornadoes.WedgeEf5MinM : StormTornadoes.MinWidthM(t.shape);
-                if (D < lo - 1 || D > StormTornadoes.MaxWidthM(t.shape, t.ef) + 1) f = $"width {D / yd:0} yd";
+                if (t.shape == FunnelShape.Wedge && t.cycle == 0) f = "wedge on the first cycle";
+                else if (t.shape == FunnelShape.Wedge && free && (t.LifeMin < StormGame.WedgeLifeMin - 1e-6 || t.LifeMin > StormGame.WedgeLifeMax + 1e-6)) f = $"wedge life {t.LifeMin:0.0} min";
+                else if (D < lo - 1 || D > StormTornadoes.MaxWidthM(t.shape, t.ef) + 1) f = $"width {D / yd:0} yd";
                 else if (t.ef < StormTornadoes.MinEf(t.shape) || t.ef > StormTornadoes.MaxEf(t.shape)) f = $"EF{t.ef}";
                 else if (t.ef >= 5 && t.shape != FunnelShape.Wedge && t.shape != FunnelShape.Drillbit) f = "EF5 shape";
                 else if (t.phases != null)
@@ -313,20 +319,80 @@ static class DumpCs
             {
                 var P = StormGame.Adapt(StormDesign.Plan(pre, seed));
                 var ch = StormTornadoes.Build(P, region); if (ch == null) continue;
-                foreach (var t in ch) Check(t, $"seed {seed}");
+                foreach (var t in ch) Check(t, $"seed {seed}", true);
             }
             int nFree = n;
             for (int seed = 1; seed <= 300; seed++)
             {
                 var sc = new StormScenario(pre, seed, 80467.2 / 2);
-                foreach (var st in sc.storms) foreach (var t in st.tornadoes ?? new TornadoCharacter[0]) Check(t, $"game {seed} storm {st.index + 1}");
+                foreach (var st in sc.storms) foreach (var t in st.tornadoes ?? new TornadoCharacter[0]) Check(t, $"game {seed} storm {st.index + 1}", false);
             }
             ok &= bad == 0;
             Console.WriteLine($"{pre.key}: {nFree} tornadoes in 800 free storms, {n - nFree} in 300 games; out of limits {bad}");
             foreach (var kv in widths.OrderBy(k => (int)k.Key))
             {
                 var w = kv.Value; w.Sort();
-                Console.WriteLine($"  {names[(int)kv.Key],-13} {w.Count,5}: width yd min/50/max {w[0] / yd,5:0} {w[w.Count / 2] / yd,5:0} {w[w.Count - 1] / yd,5:0}; EF0-5 {string.Join("/", efs[kv.Key])}");
+                var l = lives[kv.Key]; l.Sort();
+                Console.WriteLine($"  {names[(int)kv.Key],-13} {w.Count,5}: width yd min/50/max {w[0] / yd,5:0} {w[w.Count / 2] / yd,5:0} {w[w.Count - 1] / yd,5:0}; EF0-5 {string.Join("/", efs[kv.Key])}; life min {l[0]:0.0}-{l[l.Count - 1]:0.0} (median {l[l.Count / 2]:0.0})");
+            }
+            foreach (var w in why) Console.WriteLine("  " + w);
+        }
+        Console.WriteLine(ok ? "PASS" : "FAIL");
+    }
+
+    // Slots (--slots): each cycle's clear slot, horseshoe and wall cloud sized to its tornado (StormCycle.bigness,
+    // StormGame.Bigness, user 2026-10-31), free storms and games: at the tornado's full size (half way from mature to the
+    // rope-out), per shape, the cycle's bigness, the surge (horseshoe) radius, the wall-cloud radius and the slot radius,
+    // km, and the funnel's top over the wall cloud's radius (it must hang inside it: FAIL over 0.8) and over the surge's.
+    static void Slots()
+    {
+        bool ok = true;
+        var names = Enum.GetNames(typeof(FunnelShape));
+        foreach (var pre in StormPreset.All)
+        {
+            var region = StormTornadoes.RegionOf(pre.key);
+            var rows = new System.Collections.Generic.Dictionary<FunnelShape, System.Collections.Generic.List<(double b, double rs, double rw, double sl, double top, double g)>>();
+            int bad = 0, n = 0; var why = new System.Collections.Generic.List<string>();
+            var F = new StormFrame();
+            void Check(StormPlan P, TornadoCharacter[] ch, string where)
+            {
+                if (ch == null) return;
+                for (int k = 0; k < ch.Length; k++)
+                {
+                    var t = ch[k]; if (t == null) continue;
+                    var c = P.cycles[k];
+                    double tm = (c.times[3] + c.times[c.times.Length - 5]) / 2;
+                    StormDesign.At(P, tm, 0, F); StormTornadoes.Apply(P, ch, tm, F);
+                    var a = F.param;
+                    double rs = a[18 * 4 + 2], rw = a[6 * 4 + 2], sl = a[11 * 4 + 1], top = a[14 * 4 + 1], g = a[14 * 4];
+                    if (!rows.ContainsKey(t.shape)) rows[t.shape] = new System.Collections.Generic.List<(double, double, double, double, double, double)>();
+                    rows[t.shape].Add((c.bigness, rs, rw, sl, top, g)); n++;
+                    if (double.IsNaN(c.bigness)) { bad++; if (why.Count < 6) why.Add($"{where} cycle {k}: no bigness"); }
+                    else if (top > 0.8 * rw) { bad++; if (why.Count < 6) why.Add($"{where} cycle {k}: {t.shape} top {top:0.00} km over a {rw:0.00} km wall cloud"); }
+                }
+            }
+            for (int seed = 1; seed <= 300; seed++)
+            {
+                var P = StormGame.Adapt(StormDesign.Plan(pre, seed));
+                Check(P, StormTornadoes.Build(P, region), $"seed {seed}");
+            }
+            for (int seed = 1; seed <= 100; seed++)
+            {
+                var sc = new StormScenario(pre, seed, 80467.2 / 2);
+                foreach (var st in sc.storms) Check(st.plan, st.tornadoes, $"game {seed} storm {st.index + 1}");
+            }
+            ok &= bad == 0;
+            Console.WriteLine($"{pre.key}: {n} tornadoes (300 free storms, 100 games); out of place {bad}");
+            Console.WriteLine("  shape           n | bigness min/50/max | surge km | wall km | slot km | top / wall | top / surge");
+            foreach (var kv in rows.OrderBy(k => (int)k.Key))
+            {
+                var r = kv.Value;
+                string Q(Func<(double b, double rs, double rw, double sl, double top, double g), double> f)
+                {
+                    var v = r.Select(f).OrderBy(x => x).ToList();
+                    return $"{v[0],5:0.00} {v[v.Count / 2],5:0.00} {v[v.Count - 1],5:0.00}";
+                }
+                Console.WriteLine($"  {names[(int)kv.Key],-13} {r.Count,5} | {Q(x => x.b)} | {Q(x => x.rs)} | {Q(x => x.rw)} | {Q(x => x.sl)} | {Q(x => x.top / x.rw)} | {Q(x => x.top / x.rs)}");
             }
             foreach (var w in why) Console.WriteLine("  " + w);
         }

@@ -108,13 +108,27 @@ games).
 **The game's plan** (`StormGame.Adapt`, a game addition beside the port, user 2026-10-26): every varied storm the game
 draws (the test map, game mode, the checks that mirror them) goes through it before `StormLife` trims it; "web:" presets
 and parity keep the web build's plan. No multiple-vortex tornado: such a cycle becomes a wedge on a low base or a
-stovepipe on a high one (another shape when a neighbouring cycle already has it), at that shape's size; wedges keep
-their multiple-vortex start. A quicker build-up: the clear slot opening and the updraft wrapping round it take about
+stovepipe on a high one (another shape when a neighbouring cycle already has it), at that shape's size; wedges start
+as multiple vortices (below). No wedge on the first cycle (user, 2026-10-31: a wedge needs the storm's second cycle):
+the first cycle's wedge becomes a stovepipe or cone, as a multiple-vortex first cycle does, and a game's `Rate` raises a
+first-cycle tornado to EF5 as a drillbit, never a wedge. A wedge's tornado lives 30-45 min from touchdown to gone
+(`StormGame.WedgeLifeMin/Max`; the web build's 11-30, the longer draws the longer wedges), its milestones at a wedge's
+shares of that life (mature at 6 %, the rope-out from 72 %, the thin rope from 90 %), the fade and the next cycle that
+much later. A quicker build-up: the clear slot opening and the updraft wrapping round it take about
 1.5 storm min each (from about 4.5), the mature stage of a cycle without a tornado half as long, and everything after
-comes that much sooner (a mean plains storm runs 148 storm min instead of 170). `-- --runup` lists both per stage. The teaching sequence (varied off) is the
+comes that much sooner (a mean plains storm runs 156 storm min instead of 170, the wedges included). `-- --runup` lists both per stage. The teaching sequence (varied off) is the
 web build's and keeps its second tornado, which starts as multiple vortices and grows into a mile-wide wedge. No
 anticyclonic side (user, 2026-10-27, every game storm, the teaching sequence too): no anti-mesocyclone lowering at the
 surge's southern curl and no anticyclonic tornado; `-- --anti` checks that game plans have none.
+Each cycle's clear slot, horseshoe and wall cloud are sized to its tornado (`StormCycle.bigness`, `StormGame.Bigness`;
+user, 2026-10-31: various sizes, to the tornado's size): the web build gives every cycle after the first its violent
+second tornado's enlargement (surge radius x1.9, slot x1.8, wall cloud x1.5) whatever the cycle's tornado, so a
+second-cycle rope sat in a wedge's horseshoe. The size is in units of that enlargement, from the funnel's top radius at
+full size (0 at 0.3 km, the web build's first cycle: cones and stovepipes; 1 at 1.08 km, its mile-wide wedge; -0.3 to
+1.6): `Adapt` sets it from the web build's funnel, `StormTornadoes.Build` and `Rate` from the tornado the game draws,
+and `StormDesign.At` reads it in place of the enlargement (NaN, every web build plan, keeps the web build's). Ropes get
+a horseshoe of about 1.4 km in radius, cones and stovepipes 1.5-2 km, wedges 2.5-5 km under a 2.3-4.3 km wall cloud;
+`-- --slots` lists them per shape and fails if a funnel's top is over 0.8 of its wall cloud's radius.
 
 **Rotation** (`StormSpin`, a game addition beside the port): every turning cloud feature turns by an angle
 added up frame by frame, where the web build turns them by rate x wall clock. With a clock that has run for many minutes
@@ -272,18 +286,28 @@ Tornado (`tornado`):
   bands following the rotation, to 0.4 of the base (close and low round a wedge's envelope). Check close with
   `-slTornadoLife <preset> <seed> <cycle> sharp`.
   Sizes and ratings by shape (user, 2026-10-29; `StormTornadoes.MinWidthM/MaxWidthM/MinEf/MaxEf`, visible width at
-  the ground): wedges 750 yd to 2 mi and EF3 or more (EF5 from 1000 yd); cones at most 500 yd and EF4; stovepipes 250 yd
+  the ground): wedges 750 to 2000 yd (user, 2026-10-31) and EF3 or more (EF5 from 1000 yd); cones at most 500 yd and EF4; stovepipes 250 yd
   and EF4; ropes (and sidewinders) 100 yd and EF2; elephant trunks 200 yd and EF2; drillbits 300 yd, the one other shape
   that reaches EF5 (up to 750 yd then); dust whirls as drillbits in width, EF2 at most. A free storm's tornado is held to
   them after its proportions are drawn (its wind and rating follow the held width, then the rating is held to the shape's
   range); a game's `Rate` changes the shape first when its own cannot carry the rating (a wedge capped at EF2 becomes a
-  stovepipe, a rope raised to EF3-4 a cone, anything raised to EF5 a wedge on a low base or a drillbit on a high one),
-  then sizes it. `validation/parity/csharp -- --shapes` checks every tornado of 800 free storms and 300 games per setup.
+  stovepipe, a rope raised to EF3-4 a cone, anything raised to EF5 a wedge on a low base or a drillbit on a high one,
+  on the first cycle or on a cycle shorter than a wedge's 30 min), then sizes it. `validation/parity/csharp -- --shapes`
+  checks every tornado of 800 free storms and 300 games per setup (no wedge on a first cycle, free wedges 30-45 min).
   Wedges (a bigger web-build cycle is a wider wedge) have a smooth outline, and a wedge's (or multiple-vortex)
   envelope takes the light of the wall cloud it hangs from, so it is that cloud's colour in any light. Its sides slant
-  evenly out to a top 1.5-2.1 times as wide as its foot (user, 2026-10-26). As it
+  evenly out to a top 1.5-2.1 times as wide as its foot (user, 2026-10-26).
+  A wedge's life is its own (user, 2026-10-31; `StormTornadoes.Apply`, the stages drawn per tornado in
+  `DrawFormation`): it begins as a multiple-vortex tornado, four to six suction vortices orbiting a broad, dusty
+  circulation (`WedgeMultiR`, 0.3 of the wedge's foot) with hardly any condensation between them (`WedgeMultiHaze`),
+  for 8-14 % of its life (2.5-6 min); a central vortex then comes down as a drillbit (2.0's drillbit: a narrow, straight
+  funnel a tenth of the foot, flaring four times as wide into the base) as the circulation gathers in round it, draws the
+  vortices in and takes over, 1.5-4 min; the drillbit widens slowly into the wedge, its sides slanting out and its
+  central vortex growing with it, until 40-55 % of its life (12-25 min in); it holds its size, then as it
   ropes out it first narrows to 60 % of its width over 2 storm min, then its envelope breaks up into a scuddy collar from the ground up, whose ragged bottom lifts and rises into the
-  base over the rope-out while the central vortex inside narrows to a rope.
+  base over the rope-out while the central vortex inside narrows to a rope. The caption names the stages (multiple-vortex,
+  drillbit, drillbit widening into a wedge, wedge). The dust ratio slides from a narrow funnel's to a wide envelope's as
+  the drillbit condenses, and the march's `wedgeD` follows it smoothly (at a step the column's top and sheath jumped).
   Stovepipes are one laminar vortex, a quarter thinner than the website's, their top at least 1.3 times their foot, and
   their straight column curves out into the wall cloud from half way up (`TopFlare`, S_tor7.w: the march's trumpet
   collar begins lower and more gently than the top-quarter crown every funnel has; a cone's half as far, its top 15 %
@@ -291,8 +315,7 @@ Tornado (`tornado`):
   2026-10-30; `DrawFormation`): it comes down as a rope funnel 8-40 m in radius, each its own (how much it snakes,
   whether its condensation reaches the ground or hangs over its dust whirl, how long it stays one: a quarter to half of
   its formation), then fills out through a cone-like middle stage into its own shape, top first or foot first, over
-  12-30 % of its life in all; a wedge's rope is its central vortex, round which the envelope and suction vortices grow
-  in the middle stage. The caption names the stage (rope, cone, then the shape).
+  12-30 % of its life in all (every shape but the wedge, whose life is above). The caption names the stage (rope, cone, then the shape).
   `StormLabTests -slTornadoLife <preset> <seed> <cycle> [tag]` renders one tornado through its life (a tag with
   "early" shows its formation, "rope" its rope-out, "sharp" one unblended full-resolution frame from closer).
   Cost (user, 2026-10-27: frames dropped near tornadoes, more the bigger they were): the march steps through it at a
