@@ -189,6 +189,45 @@ public static class StormGameCheck
         var acts = lights.Select(l => l && l.Flashes.CurrentActivity.HasValue ? l.Flashes.CurrentActivity.Value.ToString() : "none").ToList();
         for (int i = 0; i < lights.Count; i++) rep.AppendLine($"  - storm {i + 1} lightning ({(lights[i] ? lights[i].BoundClock.ToString() : "-")} clock, at {game.StormMinutes(i):0.0} storm min): {acts[i]}");
         Check(lights.All(l => l && l.Storm == l.GetComponent<StormRenderer>() && l.Flashes.CurrentActivity.HasValue), "each storm's lightning runs on its own storm once mature");
+        // one storm's channels seen through the other's rain and cloud (user, 2026-10-31: the other storm's anvil crawlers
+        // showed through the rain and cloud overhead; each storm's lightning saw only its own volume): the transmittance
+        // the channel shader gives from the ground under each storm (its forward-flank core, its hail core, and 3 km down
+        // its motion from its updraft, under the main core) to where a crawler's legs hang under the other storm's anvil
+        // (four tower radii downwind, just below the anvil's bottom), through the far storm alone, through the near storm
+        // alone (its own lightning's occlusion) and through both as the far storm's channels are now hidden: the last must
+        // be the product of the first two (the near storm's wall cloud and tail taken from the volume's coarse copy instead
+        // of the march's analytic field, hence the tolerance), and from one of the three spots the near storm must hide
+        // the far storm's crawler
+        // the volumes as the storms stand now (the views below force the same before trusting a volume)
+        foreach (var r in game.Storms) r.StepTo(r.StormTime, r.Clock, true);
+        foreach (var x in Frames(4)) yield return x;
+        bool hideOk = true;
+        for (int i = 0; i < 2; i++)
+        {
+            var near = game.Storms[i]; var far = game.Storms[1 - i];
+            var N = near.Frame.param; var F = far.Frame.param;
+            float z = F[20] - 0.3f, R = Mathf.Max(F[9], 0.5f);   // S_anvil2.x the anvil's bottom, S_tower.y the tower's radius
+            var ad = new Vector2(F[16], F[17]); ad = ad.sqrMagnitude > 0.01f ? ad.normalized : Vector2.right;   // S_anvil xy
+            var c = new Vector2(F[64] + F[12] * (z - F[4]), F[65] + F[13] * (z - F[4])) + ad * (4f * R);   // S_up tilted up to z, out along the anvil
+            Vector3 crawler = far.StormToWorld(new Vector3(c.x, c.y, z));
+            var farBridge = lights[1 - i] ? lights[1 - i].Bridge : null; var nearBridge = lights[i] ? lights[i].Bridge : null;
+            var up = new Vector2(N[64], N[65]);   // S_up
+            var eyes = new (string name, Vector2 at)[] { ("forward-flank core", new Vector2(N[36], N[37])), ("hail core", new Vector2(N[40], N[41])), ("main core", up + new Vector2(N[0], N[1]) * 3f) };
+            float best = 1f;
+            foreach (var (name, at) in eyes)
+            {
+                Vector3 eye = near.StormToWorld(new Vector3(at.x, at.y, 0.002f));   // 2 m up
+                float farOnly = farBridge ? farBridge.ProbeTransmittance(eye, crawler, false) : float.NaN;
+                float nearOnly = nearBridge ? nearBridge.ProbeTransmittance(eye, crawler, false) : float.NaN;
+                float withBoth = farBridge ? farBridge.ProbeTransmittance(eye, crawler, true) : float.NaN;
+                float overhead = nearBridge ? nearBridge.ProbeTransmittance(eye, eye + Vector3.up * 12000f, false) : float.NaN;
+                bool product = Mathf.Abs(withBoth - farOnly * nearOnly) < 0.05f;
+                hideOk &= product; best = Mathf.Min(best, nearOnly);
+                rep.AppendLine($"  - storm {2 - i}'s crawler ({Vector3.Distance(eye, crawler) / 1000f:0.0} km off, {z:0.0} km up under its anvil) from under storm {i + 1}'s {name} ({Vector2.Distance(at, up):0.0} km from its updraft, transmittance straight up {overhead:0.000}): transmittance {farOnly:0.000} through storm {2 - i} alone, {nearOnly:0.000} through storm {i + 1} alone, {withBoth:0.000} through both as drawn{(product ? "" : " (NOT their product)")}");
+            }
+            hideOk &= best < 0.2f;
+        }
+        Check(hideOk, "a storm's channels are hidden by the other storm's rain and cloud as by their own (transmittance through both storms = the product of each alone, within 0.05, from three spots under the storm overhead; from one of them it hides the other storm's crawler, under 0.2)");
 
         // tornado wind, summed over the storms: next to the first tornado on the ground
         bool windOk = false; string windNote = "no tornado found on the ground";
