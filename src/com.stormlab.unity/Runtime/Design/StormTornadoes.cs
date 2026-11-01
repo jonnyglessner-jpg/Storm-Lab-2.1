@@ -5,6 +5,10 @@
 // trunk, dust whirl, sidewinder), per-tornado proportions and lean, the shapes it passes through in its life, its skin
 // (ragged, laminar or ghost), brightness, the soil it lofts, suction vortices for big ones and a satellite tornado. The
 // draws come from 2.0's generator (SplitMix64) on their own streams, so the web build's storm is unchanged.
+// A wedge's life is its own (user, 2026-10-31; Apply): it begins as a multiple-vortex tornado, a central vortex comes
+// down as a drillbit, takes over and widens slowly into the wedge, which holds, narrows and ropes out as before (its
+// envelope breaking up into a collar that lifts and reveals the central vortex). Wedges live 30-45 min (StormGame) and
+// come only from the storm's second cycle on; at the ground they are 750 to 2000 yd wide.
 //
 // Each frame, Apply writes the extra slots 2.0's tornado drawing reads (StormMarch.compute: S_tor6 .. S_tor11) and
 // adjusts the tornado slots the web build filled (shape, proportions, lean, suction vortices). Only the detailed
@@ -85,6 +89,10 @@ namespace StormLab
         /// as a rope (1: to the ground, less: a funnel aloft over its dust whirl); formTopLead how much sooner (+) or later
         /// (-) its top widens than its foot as it grows</summary>
         public double formFrac, formTopLead, ropeStage, ropeKm, ropeSinu, ropeCond;
+        /// <summary>a wedge's life (DrawFormation, Apply; user, 2026-10-31), shares of its life: until wedgeMultiEnd a
+        /// multiple-vortex tornado; by wedgeDrillEnd the central vortex has come down as a drillbit and taken over; by
+        /// wedgeGrown it has widened into the full wedge (held before the rope-out, ShrinkSpan)</summary>
+        public double wedgeMultiEnd, wedgeDrillEnd, wedgeGrown;
         public const double MorphFrac = 0.1;
         public double LifeMin => goneMin - formMin;
         /// <summary>wind at radius r km, m/s (Rankine vortex, peak at rc)</summary>
@@ -164,6 +172,7 @@ namespace StormLab
                     // milestones: start, +7, form, mature, (multi-vortex mid), rope, thin, gone, fade, end
                     int n = c.times.Length;
                     o[k] = Make(P, region, seed, k, c.shape, c.times[2], c.times[n - 5], c.times[n - 3], c.radius, c.radius * c.topRatio, c.dust);
+                    FitSlot(P, o[k]);
                 }
             }
             else
@@ -210,10 +219,13 @@ namespace StormLab
             // a shape the web build has keeps its top; one of 2.0's extra shapes takes 2.0's flare at the web build's width
             t.topKm = FromWeb(web) == main ? topKm : C.Clamp(top2 / g2 * groundKm, groundKm, 1.4);
             if (main == FunnelShape.DustWhirl) t.condReach = Math.Min(t.condReach, 0.3);
-            // suction vortices (2.0's ApplyShape): the multiple-vortex shape keeps them most of its life; big, strong wedges
-            // and stovepipes start as multiple vortices before a central vortex takes over
+            // suction vortices (2.0's ApplyShape): the multiple-vortex shape keeps them most of its life; every wedge starts
+            // as multiple vortices before a central vortex takes over (user, 2026-10-31; was 55 % of strong wedges and
+            // stovepipes, which took one draw more when they did: a wedge takes its two draws either way now). A wedge
+            // starts with 4-6 (the march draws at most 6; they pulse and gap, so with 3 one showed at a time)
             if (main == FunnelShape.MultiVortex) { t.subVortices = 3 + (int)(r.U() * 4); t.multiFrac = r.Range(0.6, 0.85); }
-            else if ((main == FunnelShape.Wedge || main == FunnelShape.Stovepipe) && t.ef >= 2 && r.U() < 0.55) { t.subVortices = 3 + (int)(r.U() * 3); t.multiFrac = r.Range(0.15, 0.3); }
+            else if (main == FunnelShape.Wedge) { t.subVortices = 4 + (int)(r.U() * 3); t.multiFrac = r.Range(0.15, 0.3); }
+            else if (main == FunnelShape.Stovepipe && t.ef >= 2 && r.U() < 0.55) { t.subVortices = 3 + (int)(r.U() * 3); t.multiFrac = r.Range(0.15, 0.3); }
             // a stovepipe is one smooth, laminar vortex all its life (user, 2026-10-26): it keeps the draws, not the vortices
             if (main == FunnelShape.Stovepipe) { t.subVortices = 0; t.multiFrac = 0; }
             t.collar = main == FunnelShape.Wedge && t.LifeMin > 10 && r.U() < 0.6;
@@ -235,14 +247,14 @@ namespace StormLab
         static double WindOf(double vTor, double widthM) => C.Clamp(Math.Max(vTor, 30) * Math.Pow(Math.Max(widthM, 40) / 250, 0.3), 29, 135);
 
         // Sizes and ratings by shape (user, 2026-10-29): what each shape can be, as its visible width at the ground and the
-        // EF ratings it can carry. A wedge is 750 yd to 2 mi wide and EF3 or more (EF5 only from 1000 yd); cones are at
+        // EF ratings it can carry. A wedge is 750 to 2000 yd wide and EF3 or more (EF5 only from 1000 yd); cones are at
         // most 500 yd and EF4, stovepipes 250 yd and EF4, ropes 100 yd and EF2, elephant trunks 200 yd and EF2, drillbits
         // 300 yd (the one other shape that reaches EF5, at up to 750 yd then). A sidewinder is a rope laid over, a dust
         // whirl a weak tornado without a funnel to the ground: both as ropes in rating, the dust whirl as wide as a drillbit.
         public const double Yd = 0.9144;
-        /// <summary>A wedge's visible width at the ground, m: 750 yd to two miles (user, 2026-10-29; was half a mile from
-        /// 2026-10-25), and the least an EF5 wedge is.</summary>
-        public const double WedgeMinM = 750 * Yd, WedgeMaxM = 2 * 1609.344, WedgeEf5MinM = 1000 * Yd;
+        /// <summary>A wedge's visible width at the ground, m: 750 yd to 2000 yd (user, 2026-10-31; two miles from 2026-10-29,
+        /// half a mile from 2026-10-25), and the least an EF5 wedge is.</summary>
+        public const double WedgeMinM = 750 * Yd, WedgeMaxM = 2000 * Yd, WedgeEf5MinM = 1000 * Yd;
         public const double ConeMaxM = 500 * Yd, StovepipeMaxM = 250 * Yd, RopeMaxM = 100 * Yd, TrunkMaxM = 200 * Yd;
         public const double DrillbitMaxM = 300 * Yd, DrillbitEf5MaxM = 750 * Yd;
         /// <summary>the least a shape's visible ground width may be, m (only a wedge has a floor above the funnel's own)</summary>
@@ -325,9 +337,9 @@ namespace StormLab
             BaseGeometry(s, t.widthM, big ? 0.5 : r.U(), out t.groundKm, out t.topKm, out t.profile, out t.sinuosity);
             if (s == FunnelShape.Stovepipe) t.topKm = Math.Max(t.topKm, t.groundKm * StovepipeTopMin);
             t.phases = new[] { new FunnelPhase { shape = s, startFrac = 0, groundKm = t.groundKm, topKm = t.topKm, profile = t.profile, sinuosity = t.sinuosity, cond = 1 } };
-            // vortices and collar as Make: a wedge may start as multiple vortices; a stovepipe never has them
+            // vortices and collar as Make: a wedge starts as multiple vortices; a stovepipe never has them
             t.subVortices = 0; t.multiFrac = 0;
-            if (s == FunnelShape.Wedge && r.U() < 0.55) { t.subVortices = 3 + (int)(r.U() * 3); t.multiFrac = r.Range(0.15, 0.3); }
+            if (s == FunnelShape.Wedge) { t.subVortices = 4 + (int)(r.U() * 3); t.multiFrac = r.Range(0.15, 0.3); }
             t.collar = s == FunnelShape.Wedge && t.LifeMin > 10 && r.U() < 0.6;
             // a wedge is loaded with rain and debris: its funnel reaches the ground
             if (big) t.condReach = Math.Max(t.condReach, 0.7);
@@ -399,7 +411,8 @@ namespace StormLab
             BaseGeometry(shape, widthM, shape == FunnelShape.Wedge || shape == FunnelShape.MultiVortex ? 0.5 : r.U(), out t.groundKm, out t.topKm, out t.profile, out t.sinuosity);
             if (shape == FunnelShape.DustWhirl) t.condReach = Math.Min(t.condReach, 0.3);
             if (shape == FunnelShape.MultiVortex) { t.subVortices = 3 + (int)(r.U() * 4); t.multiFrac = r.Range(0.6, 0.85); }
-            else if ((shape == FunnelShape.Wedge || shape == FunnelShape.Stovepipe) && ef >= 2 && r.U() < 0.55) { t.subVortices = 3 + (int)(r.U() * 3); t.multiFrac = r.Range(0.15, 0.3); }
+            else if (shape == FunnelShape.Wedge) { t.subVortices = 4 + (int)(r.U() * 3); t.multiFrac = r.Range(0.15, 0.3); }
+            else if (shape == FunnelShape.Stovepipe && ef >= 2 && r.U() < 0.55) { t.subVortices = 3 + (int)(r.U() * 3); t.multiFrac = r.Range(0.15, 0.3); }
             if (shape == FunnelShape.Stovepipe) { t.subVortices = 0; t.multiFrac = 0; }
             t.collar = shape == FunnelShape.Wedge && t.LifeMin > 10 && r.U() < 0.6;
             t.rainWrap = 0;
@@ -416,15 +429,19 @@ namespace StormLab
         /// strongest tornado looks the part. A shape that cannot carry the rating changes first (user, 2026-10-29): a wedge
         /// held below EF3 becomes a stovepipe (EF2) or a cone; a rope, elephant trunk, sidewinder or dust whirl raised to
         /// EF3-4 becomes a cone; anything but a wedge or drillbit raised to EF5 becomes a wedge on a low base or a drillbit
-        /// on a high one (StormGame's rule). Then the width is held within the shape's limits at that rating (an EF5 wedge at
-        /// least WedgeEf5MinM wide, an EF5 drillbit up to DrillbitEf5MaxM). P: the storm's plan (its median tornado wind vTor).
+        /// on a high one (StormGame's rule), and on the first cycle, or a cycle too short for a wedge's 30 min, always a
+        /// drillbit (no wedge before the storm's second cycle, user 2026-10-31). Then the width is held within the shape's limits at that rating (an EF5 wedge at least
+        /// WedgeEf5MinM wide, an EF5 drillbit up to DrillbitEf5MaxM), and the cycle's clear slot, horseshoe and wall cloud
+        /// are sized to it (FitSlot). P: the storm's plan (its median tornado wind vTor).
         /// </summary>
         public static void Rate(TornadoCharacter t, int ef, StormPlan P)
         {
             if (t == null) return;
             ef = Math.Max(0, Math.Min(ef, 5));
             if (ef < MinEf(t.shape)) Reshape(t, P, ef >= 2 ? FunnelShape.Stovepipe : FunnelShape.Cone);
-            else if (ef > MaxEf(t.shape)) Reshape(t, P, ef >= 5 ? (P.zb > 1.9 ? FunnelShape.Drillbit : FunnelShape.Wedge) : FunnelShape.Cone);
+            // (an EF5 wedge only where the cycle's life is a wedge's, StormGame.WedgeLifeMin: a cone's cycle raised to EF5 is
+            // too short for one and gets a drillbit; user, 2026-10-31: wedges go on for 30+ min)
+            else if (ef > MaxEf(t.shape)) Reshape(t, P, ef >= 5 ? (P.zb > 1.9 || t.cycle == 0 || t.LifeMin < StormGame.WedgeLifeMin - 1e-6 ? FunnelShape.Drillbit : FunnelShape.Wedge) : FunnelShape.Cone);
             double widthM = C.Clamp(250 * Math.Pow(EfGust[ef] / Math.Max(P.vTor, 30), 1 / 0.3), 40, 2600);
             double k = widthM / Math.Max(t.widthM, 1);
             t.ef = ef; t.vmax = EfGust[ef];
@@ -443,6 +460,20 @@ namespace StormLab
             t.widthM = 2 * t.groundKm / ShapeWidth(t.shape) * 1000;
             t.rcKm = C.Clamp(0.5 * t.widthM / 1000 * 29.0 / t.vmax, 0.012, 0.6);
             ClampPhases(t, ef);
+            FitSlot(P, t);
+        }
+
+        /// <summary>
+        /// (game) The cycle's clear slot, horseshoe and wall cloud sized to the tornado it draws (StormCycle.bigness from
+        /// its top radius, StormGame.Bigness; user, 2026-10-31: various sizes, to the tornado's size). A game plan only: one
+        /// StormGame.Adapt has marked (its cycles' bigness set); the web build's plans ("web:" presets, parity) keep NaN.
+        /// </summary>
+        static void FitSlot(StormPlan P, TornadoCharacter t)
+        {
+            if (P?.cycles == null || t == null || t.cycle < 0 || t.cycle >= P.cycles.Length) return;
+            var c = P.cycles[t.cycle];
+            if (double.IsNaN(c.bigness)) return;
+            c.bigness = StormGame.Bigness(t.topKm);
         }
 
         /// <summary>
@@ -459,7 +490,17 @@ namespace StormLab
             t.formFrac = r.Range(0.12, 0.3); t.formTopLead = r.Range(-0.3, 0.5);
             t.ropeKm = 0.008 * Math.Pow(5, r.U()); t.ropeSinu = r.Range(0.3, 0.9);
             t.ropeStage = r.Range(0.25, 0.55); t.ropeCond = r.U() < 0.5 ? 1 : r.Range(0.5, 0.9);
+            // a wedge's stages (user, 2026-10-31; drawn for every tornado, after the draws above, so those are unchanged):
+            // multiple vortices for 8-14 % of its life (2.5-6 min of 30-45), the drillbit's takeover over the next 5-9 %
+            // (1.5-4 min), the slow growth to its full width by 40-55 % (12-25 min in), then the wedge held
+            t.wedgeMultiEnd = r.Range(0.08, 0.14); t.wedgeDrillEnd = t.wedgeMultiEnd + r.Range(0.05, 0.09); t.wedgeGrown = r.Range(0.4, 0.55);
         }
+
+        /// <summary>a wedge's multiple-vortex circulation and its drillbit's foot, as shares of the wedge's ground radius;
+        /// the drillbit's top over its foot (2.0's drillbit geometry: 4 x + 0.08 km) and its profile</summary>
+        public const double WedgeMultiR = 0.3, WedgeDrillR = 0.1, DrillTopRatio = 4.0, DrillTopKm = 0.08, DrillProfile = 0.22;
+        /// <summary>how much condensation the multiple-vortex circulation shows between its vortices (its envelope's density)</summary>
+        public const double WedgeMultiHaze = 0.18;
 
         /// <summary>a wedge's narrowing before its rope-out: how far, and over how many storm minutes</summary>
         public const double WedgeShrink = 0.6, WedgeShrinkMin = 2;
@@ -518,7 +559,7 @@ namespace StormLab
             double u1 = r.U(), u2 = r.U(), u3 = r.U(), u4 = r.U();
             switch (t.shape)
             {
-                case FunnelShape.Wedge:         if (u1 < 0.55) pre = u2 < 0.5 ? FunnelShape.Cone : FunnelShape.Stovepipe; if (!t.collar && u3 < 0.35) post = FunnelShape.Stovepipe; break;
+                case FunnelShape.Wedge:         break;   // its life is its own (Apply: multiple vortices, a drillbit, the slow growth, the collar); the draws stay
                 case FunnelShape.MultiVortex:   if (u1 < 0.4) pre = FunnelShape.Cone; break;
                 case FunnelShape.Stovepipe:     if (u1 < 0.35) pre = FunnelShape.Cone; if (u3 < 0.3) post = u4 < 0.5 ? FunnelShape.Cone : FunnelShape.ElephantTrunk; break;
                 case FunnelShape.Cone:          if (u1 < 0.25) pre = FunnelShape.Drillbit; if (t.ef >= 2 && u3 < 0.3) post = FunnelShape.Stovepipe; else if (u3 < 0.25) post = FunnelShape.ElephantTrunk; break;
@@ -652,11 +693,61 @@ namespace StormLab
             double gScale = pg / Math.Max(tg.webGroundKm, 1e-3), tScale = pt / Math.Max(tg.webTopKm, 1e-3);
             bool webMulti = a[21 * 4 + 3] > 0.5;
             double ground, top, envelope;
+            // dust-cloud radius over the funnel's (S_tor6.w): a wide envelope's hugs it, a narrow funnel's is broader
+            double dustK = -1, subR = -1;
             if (webMulti)
             {
                 // the web build's second tornado: its takeover and collar already drawn; size it
                 ground = gWeb * gScale; top = tWeb * tScale; envelope = a[21 * 4 + 3] - 1;
                 a[21 * 4] *= (float)gScale;
+            }
+            else if (tg.shape == FunnelShape.Wedge)
+            {
+                // A wedge's life (user, 2026-10-31; before, it came down as a rope with the envelope and suction vortices
+                // growing round it over a quick takeover): it begins as a multiple-vortex tornado, several suction vortices
+                // orbiting a broad, dusty circulation (WedgeMultiR of the wedge's foot) with hardly any condensation between
+                // them (WedgeMultiHaze); a central vortex then comes down as a drillbit (a narrow, straight funnel, WedgeDrillR
+                // of the foot, flaring four times as wide into the base, 2.0's drillbit) as the circulation gathers in round
+                // it, draws the vortices in and takes over; the drillbit widens slowly into the wedge, its sides slanting out
+                // and its central vortex growing with it; it holds its size, narrows a little (WedgeShrink) and ropes out as
+                // before: the envelope breaks up into a scuddy collar that lifts and reveals the central vortex, which thins
+                // to a rope. The stages are wedgeMultiEnd, wedgeDrillEnd and wedgeGrown of its life (DrawFormation), held
+                // short of the rope-out.
+                double r0 = RopeStart(tg), gEnd = Math.Min(tg.wedgeGrown, r0 - ShrinkSpan(tg) - 0.04);
+                double dEnd = Math.Min(tg.wedgeDrillEnd, gEnd - 0.05), mEnd = Math.Min(tg.wedgeMultiEnd, dEnd - 0.03);
+                double take = Ramp(lifeFrac, mEnd, dEnd), grow = Ramp(lifeFrac, dEnd, gEnd);
+                // the circulation gathers in round the drillbit first, then the funnel condenses and the vortices go
+                double gather = Ramp(take, 0, 0.7), condense = Ramp(take, 0.35, 1);
+                double Rm = Math.Max(WedgeMultiR * pg, 0.06), gD = Math.Max(WedgeDrillR * pg, 0.04), tD = Math.Min(DrillTopRatio * gD + DrillTopKm, pt);
+                double g1 = C.Lerp(Rm, gD, gather), t1 = C.Lerp(Rm * 1.3, tD, gather), p1 = C.Lerp(0.9, DrillProfile, gather), s1 = C.Lerp(0.05, 0.15, gather);
+                ground = C.Lerp(g1, pg, grow); top = C.Lerp(t1, pt, grow);
+                profile = C.Lerp(p1, profile, grow); sinu = C.Lerp(s1, sinu, grow);
+                // the sub-vortices, from touchdown until the drillbit has drawn them in; the envelope is the haze between them,
+                // then the drillbit's funnel
+                double multi = Ramp(lifeFrac, 0, 0.02) * (1 - condense);
+                envelope = WedgeMultiHaze + (1 - WedgeMultiHaze) * condense;
+                // the central vortex: none until the drillbit comes down, then from the rope's radius (ropeKm) to the
+                // drillbit's core as it condenses, and to its full width with the growth
+                double coreFull = Math.Max(tg.rcKm * 1.6, 0.04), coreD = Math.Min(0.6 * gD, coreFull), coreStart = Math.Min(Math.Max(tg.ropeKm, 0.008), coreD);
+                double core = condense <= 0 ? 0 : coreStart * Math.Pow(coreD / coreStart, condense) * Math.Pow(coreFull / coreD, grow);
+                // the rope-out, as before: the collar over the whole of it, the core to a rope, the envelope about its width
+                double ropeOut = Ramp(lifeFrac, r0, r0 + 0.92 * tg.ropeFrac), breakdown = ropeOut;
+                if (rope > 0)
+                {
+                    double ropeR = C.Clamp(RopeCore * pg, 0.025, 0.06);
+                    if (core > ropeR) core = core * Math.Pow(ropeR / core, Ramp(rope, 0.0, 0.5));
+                    ground *= C.Lerp(1, 0.85, rope); top *= C.Lerp(1, 0.9, rope);
+                }
+                double narrow = C.Lerp(1, WedgeShrink, Ramp(lifeFrac, r0 - ShrinkSpan(tg), r0));
+                ground *= narrow; top *= narrow;
+                // the dust: the broad circulation's whirl, hugging the funnel once it has condensed (smoothly: at a step the
+                // column popped in and out, StormMarch's wedgeD follows it); the sub-vortices a fifth of the circulation (at
+                // 15 % they were 25 m tubes under a 160 m circulation, one thin streak from a few km)
+                dustK = C.Lerp(2.4, 1.35, Ramp(envelope, 0.2, 0.5));
+                subR = Math.Max(0.2 * ground, 0.03);
+                // what it is now, for the caption and the march
+                phaseShape = condense < 0.5 ? FunnelShape.MultiVortex : grow < 0.75 ? FunnelShape.Drillbit : FunnelShape.Wedge;
+                Set(21, core, multi, breakdown, 1 + envelope);
             }
             else
             {
@@ -747,14 +838,14 @@ namespace StormLab
             a[15 * 4 + 3] = tg.ef;
             // suction vortices: the orbit, their radius, how many (the web build's second tornado draws four), the bend
             a[22 * 4] = 0.9f;
-            if (!webMulti) a[22 * 4 + 1] = (float)Math.Max(0.07 * ground / 0.8, 0.025);
+            if (!webMulti) a[22 * 4 + 1] = (float)(subR > 0 ? subR : Math.Max(0.07 * ground / 0.8, 0.025));
             a[22 * 4 + 2] = tg.subVortices > 0 ? tg.subVortices : webMulti ? 4 : 0;
             a[22 * 4 + 3] = (float)sinu;
             // the funnel's surface turns at the wind there, v / r, capped so the texture does not alias
             double rv = Math.Max(ground, 0.01), form = Math.Min(1, amount * 1.2);
             double spin = C.Clamp(tg.WindAt(rv) / (rv * 1000), 0.05, 2.0) * (0.6 + 0.4 * form);
             double vmax = tg.vmax * (0.55 + 0.45 * form) * (1 - 0.5 * rope);
-            Set(Slot0, spin, vmax, tg.rcKm * (1 - 0.5 * rope), envelope > 0.3 ? 1.35 : 2.4);
+            Set(Slot0, spin, vmax, tg.rcKm * (1 - 0.5 * rope), dustK > 0 ? dustK : envelope > 0.3 ? 1.35 : 2.4);
             Set(Slot0 + 1, tg.rainWrap, (int)phaseShape, tg.ef, flare);
             Set(Slot0 + 2, tg.albedo, tg.roughness, tg.ghost, tg.striation);
             Set(Slot0 + 3, tg.soilR, tg.soilG, tg.soilB, tg.dirt * Ramp(lifeFrac, 0.02, 0.15));
@@ -775,6 +866,19 @@ namespace StormLab
             // the caption names the shape it has now, when that is one the web build would not have named
             if (amount > 0.15 && rope <= 0.4 && phaseShape != FromWeb(tg.webShape) && F.stage.EndsWith(" tornado") && !F.stage.StartsWith("Anticyclonic"))
                 F.stage = ShapeName[(int)phaseShape];
+            // a wedge's stages (its life is its own here)
+            if (tg.shape == FunnelShape.Wedge && !webMulti && amount > 0.15 && rope <= 0.4 && !F.stage.StartsWith("Anticyclonic"))
+            {
+                if (phaseShape == FunnelShape.MultiVortex)
+                    F.caption = "The tornado begins as several suction vortices orbiting a broad, dusty circulation, each spinning faster than the circulation as a whole, with little condensation between them.";
+                else if (phaseShape == FunnelShape.Drillbit)
+                {
+                    F.stage = a[14 * 4] < 0.6 * tg.groundKm ? "Drillbit tornado" : "Drillbit widening into a wedge";
+                    F.caption = "A single central vortex has come down as a narrow drillbit funnel, drawn the sub-vortices in and taken over. It widens slowly, its sides slanting out into the base, into a wedge.";
+                }
+                else if (F.stage == "Wedge tornado")
+                    F.caption = "The wedge is at its full size, dark with rain and debris and filling the horseshoe. It will hold for some minutes before its envelope breaks up and ropes out.";
+            }
         }
     }
 }

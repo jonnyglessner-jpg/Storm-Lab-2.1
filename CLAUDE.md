@@ -45,9 +45,18 @@ README.md has the layout, use, checks and known gaps.
   blend two of them into one angle (a lerp between the core's and the whirl's wound the dust up and snapped it every turn,
   user 2026-10-30); rotate by one and blend what is sampled. Run `TornadoFlowCheck` after touching how anything turns.
 - Tornado sizes and ratings by shape (user, 2026-10-29) live in `StormTornadoes` (`MinWidthM`, `MaxWidthM`, `MinEf`,
-  `MaxEf`; wedges 750 yd-2 mi and EF3+, EF5 only wedges from 1000 yd or drillbits, ropes/trunks EF2 at most, cones and
+  `MaxEf`; wedges 750-2000 yd (2026-10-31) and EF3+, EF5 only wedges from 1000 yd or drillbits, ropes/trunks EF2 at most, cones and
   stovepipes EF4). Free storms are held to them in `Constrain`, games in `Rate` (which changes the shape when it must).
   Run `validation/parity/csharp -- --shapes` after touching tornado sizes, ratings or the game's tiers.
+- Wedges (user, 2026-10-31): only from the storm's second cycle on (`StormGame.Adapt` reshapes a first-cycle wedge, `Rate`
+  gives a first cycle a drillbit instead), 30-45 storm min from touchdown to gone (`StormGame.WedgeLifeMin/Max`, the
+  cycle's milestones restretched in `Adapt`), and a life of their own in `StormTornadoes.Apply`: multiple vortices, a
+  drillbit central vortex that takes over and widens slowly into the wedge, then the collar breakdown and rope-out
+  (`wedgeMultiEnd` / `wedgeDrillEnd` / `wedgeGrown`, `DrawFormation`). Each cycle's clear slot, horseshoe and wall
+  cloud are sized to its tornado (`StormCycle.bigness`, `StormGame.Bigness`, set by `Adapt` and refined by
+  `StormTornadoes.Build` / `Rate`; `StormDesign.At` reads it in place of the web build's second-cycle enlargement, NaN
+  keeping the web build's). Check with `-- --shapes` and `-- --slots`, and a wedge's look with
+  `StormLabTests -slTornadoLife <preset> <seed> <cycle> [early|rope]`.
 - `Runtime/Lightning` (core) is 2.0's code but for its namespace, the `ThunderOverride` hook (2026-10-26, for
   `StormAudio`'s thunder), the 2026-10-30/31 bolt geometry in `LightningModel` (reaching ground bolts with a few calm
   branches and second contacts; crawlers that crawl: a trunk that forks into secondary trunks, every channel setting out

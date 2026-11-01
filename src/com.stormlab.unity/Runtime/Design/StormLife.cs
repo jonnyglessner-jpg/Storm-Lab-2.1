@@ -53,6 +53,7 @@ namespace StormLab
                     {
                         start = c.start, end = c.end, times = c.times, shape = c.shape, tornadic = c.tornadic && GoneMin(c) <= dieMin,
                         radius = c.radius, topRatio = c.topRatio, condensation = c.condensation, dust = c.dust, lean = c.lean, phase = c.phase,
+                        bigness = c.bigness,
                     };
                 }
             }

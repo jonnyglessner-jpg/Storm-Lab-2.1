@@ -190,7 +190,10 @@ namespace StormLab
                 // The second tornado cycle (from 68 min) is the violent one: a broader updraft, a much larger clear slot and
                 // horseshoe, and a bigger, longer-lived tornado. `big` eases all of that in as the second cycle begins.
                 double big = Ramp(t, secondStart - 4, secondStart + 8);
-                bigF = big;
+                // (game: a cycle's own size for its clear slot, horseshoe and wall cloud, StormCycle.bigness, in units of this
+                // enlargement, from its tornado's size; NaN, and so every web build plan, keeps `big`)
+                double bigC = cycle != null && !double.IsNaN(cycle.bigness) ? cycle.bigness : big;
+                bigF = bigC;
                 double towerR0 = P.R * (0.8 + 0.2 * Ramp(t, 4, 20) + 0.25 * Ramp(t, 16, 44)) * (1 + 0.18 * Ramp(t, 12, 40));
                 towerR = towerR0 * (1 + 0.35 * big);
                 towerAmt = 1;
@@ -233,7 +236,7 @@ namespace StormLab
                     wallSpin = P.spin;
                     tailCloud = wallAmt * Ramp(tau, 4, 10);
                     slot = P.slot * Ramp(tau, 8, 17) * (1 - Ramp(tau, fadeFrom, fadeTo));
-                    slotR = (P.Rw + 0.8 + 2.2 * Ramp(tau, 12, 30)) * (1 + 0.8 * big);
+                    slotR = (P.Rw + 0.8 + 2.2 * Ramp(tau, 12, 30)) * (1 + 0.8 * bigC);
                     rfdAmt = P.rfd * Ramp(tau, 7, 15);
                     if (cycle != null) rfdAmt *= 1 - Ramp(tau, fadeFrom, fadeTo);
                     // The surge, seen from below, is a horseshoe: the base's edge curls round the clear slot, closed on the east
@@ -248,7 +251,7 @@ namespace StormLab
                     var wcRaw = wc;
                     // The anticyclonic tornado keeps its size and timing but sits at the southern tip of the (now larger) horseshoe
                     {
-                        double tR = towerR, sc = 1 + 0.9 * big;
+                        double tR = towerR, sc = 1 + 0.9 * bigC;
                         double gR = Math.Min(Math.Min(P.Rw * sc * (0.55 + 0.198 * Ramp(tau, 9, 24)), tR * 0.462 * sc), Math.Max(tR * 0.9 - 0.85, 0.3)) * (0.2 + 0.8 * slotGrowth);
                         var rc = new Vec2(wcRaw.x - 0.88 * gR * dn.x, wcRaw.y - 0.88 * gR * dn.y);
                         // Keep the entire compact rim (including its lip) underneath the main updraft,
