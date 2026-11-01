@@ -455,12 +455,31 @@ float3 tornadoField(float3 q)
     float2 pr = rot2(dv, -S_spin.y) / max(rad, 0.02);
     float rm = max(0.5 * (S_tor2.x + S_tor2.y), 0.02);
     float zz = (q.z - clock * 0.02) / rm;
+    // The collar turns with the wall cloud it flares into, not with the funnel (user, 2026-10-31: at the skin's rate its
+    // lumps, a few funnel widths out, swept round at hundreds of m/s, read as cloud racing across the wall cloud at the
+    // tornado's speed, and seen from below their far side sank down the screen as they came round). Early in the flare,
+    // while the surface is still near the funnel's width, the skin's texture crossfades into the same fields in the
+    // junction's frame (S_spin4.y, the wall cloud's rate where the two meet), each frame rigid and the crossfade's lost
+    // contrast made up (CLAUDE.md: never a blended angle). The band is short: in a crossfade the tags fade between two
+    // patterns instead of travelling, and a stovepipe's collar starts half way up, so a blend over the whole flare left
+    // its upper half barely turning while the skin's 20 m/s rise still showed, a funnel rising out of the ground (user,
+    // 2026-10-31). The junction's frame rises at a quarter of that, so rotation leads there as it does on the funnel.
+    // The detailed tornado only; the web build's tornado keeps its one frame.
+    float cj = S_tor8.y > 0.0 ? ss(0.08, 0.35, collar) : 0.0;
+    float2 pj = rot2(dv, -S_spin4.y) / max(rad, 0.02);
+    float zzj = (q.z - clock * 0.005) / rm;
+    float gj = rsqrt(1.0 - 2.0 * cj * (1.0 - cj));
     // These coordinates are normalised by radius; filter in world units so small
     // funnels do not sparkle when their skin is smaller than a rendered pixel.
     float texFootprint = g_fp;
     g_fp /= max(min(rad, rm), 0.02);
     float n1 = n3k(float3(pr * 0.55, zz * 0.9), 1.0, 0.0);
     float n2 = n3k(float3(pr * 1.6, zz * 2.6), 1.0, float3(0.31, 0.77, 0.13));
+    if (cj > 0.0)
+    {
+        n1 = saturate(0.5 + (lerp(n1, n3k(float3(pj * 0.55, zzj * 0.9), 1.0, float3(0.41, 0.67, 0.19)), cj) - 0.5) * gj);
+        n2 = saturate(0.5 + (lerp(n2, n3k(float3(pj * 1.6, zzj * 2.6), 1.0, float3(0.83, 0.37, 0.59)), cj) - 0.5) * gj);
+    }
     g_fp = texFootprint;
     // the skin: torn (roughness ~1-1.5) or smooth and laminar (~0.2-0.35) with fine striations
     float roughK = S_tor8.y > 0.0 ? S_tor8.y : 1.0;
@@ -477,6 +496,7 @@ float3 tornadoField(float3 q)
     float streakK = 14.0;
     float streakFade = 1.0 - ss(0.15, 0.4, texFootprint * streakK / (6.2832 * rm));
     float streak = (n3k(float3(pr * 2.2, zz * 0.12), 1.0, float3(0.53, 0.21, 0.67)) - 0.5) * streakFade;
+    if (cj > 0.0 && S_tor8.w > 0.0) streak = lerp(streak, (n3k(float3(pj * 2.2, zzj * 0.12), 1.0, float3(0.23, 0.61, 0.87)) - 0.5) * streakFade, cj) * gj;
     rough += S_tor8.w * 0.006 * streak;
     float tone = 1.0 + S_tor8.w * 0.03 * streak + (n1 - 0.5) * 0.16 * saturate(roughK - 0.4);
     // Tags (user, 2026-10-30: the rotation was barely visible): torn lumps of condensation standing off the funnel's edge
@@ -484,6 +504,7 @@ float3 tornadoField(float3 q)
     // silhouette changes as they come round and the eye reads the spin; a little darker in tone. A laminar skin has a
     // quarter of them, a wedge's envelope a third (its outline stays smooth, user 2026-10-26).
     float tagN = n3k(float3(pr * 0.9, zz * 0.45), 1.0, float3(0.77, 0.29, 0.58));
+    if (cj > 0.0) tagN = saturate(0.5 + (lerp(tagN, n3k(float3(pj * 0.9, zzj * 0.45), 1.0, float3(0.17, 0.89, 0.38)), cj) - 0.5) * gj);
     float tag = ss(0.52, 0.8, tagN) * lerp(0.25, 1.0, saturate((roughK - 0.3) / 0.6)) * (S_tor4.w > 0.5 ? 0.35 : 1.0);
     rough -= 0.3 * tag;
     tone *= 1.0 - 0.12 * tag;
