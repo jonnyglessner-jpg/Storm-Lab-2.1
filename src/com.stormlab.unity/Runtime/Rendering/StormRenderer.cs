@@ -652,6 +652,16 @@ namespace StormLab
         }
 
         /// <summary>
+        /// <summary>The tangent of half the camera's vertical view, from the projection it really draws with, not from
+        /// fieldOfView: a physical camera with a horizontal gate fit (the chase game's photo camera, a 3:2 sensor on a
+        /// 21:9 screen) reports the sensor's vertical angle while the frame is cropped to a narrower one, and the storm
+        /// drew larger than the sky and ground it stands on and slid against them as the camera panned (user, 2026-11-02).</summary>
+        public static float TanHalfHeight(Camera cam)
+        {
+            float m11 = cam.projectionMatrix.m11;
+            return Mathf.Abs(m11) > 1e-6f && !cam.orthographic ? 1f / m11 : Mathf.Tan(cam.fieldOfView * 0.5f * Mathf.Deg2Rad);
+        }
+
         /// Record the ray-march and temporal resolve for one camera. depth: the camera's depth buffer (or null), not bound
         /// as a target; fullW x fullH: the viewport. Returns the resolved storm texture (rgb light, a transmittance), and in
         /// dist the distance along each ray where the storm hides half of what is behind it, km.
@@ -666,7 +676,7 @@ namespace StormLab
             st.Ensure(w, h);
             var tr = cam.transform;
             Vector3 pos = WorldToStorm(tr.position), fwd = WorldToStormDir(tr.forward), right = WorldToStormDir(tr.right), up = WorldToStormDir(tr.up);
-            float tanY = Mathf.Tan(cam.fieldOfView * 0.5f * Mathf.Deg2Rad), tanX = tanY * fullW / (float)fullH;
+            float tanY = TanHalfHeight(cam), tanX = tanY * fullW / (float)fullH;
             int kM = marchCs.FindKernel("March"), kR = marchCs.FindKernel("Resolve");
             cmd.BeginSample(MarchSampler);
             SetVariant(cmd);
@@ -838,7 +848,7 @@ namespace StormLab
             mpb.SetTexture("_ShaftTex", ownS ? ownS : Texture2D.blackTexture);
             mpb.SetTexture("_UnderShaftTex", underS ? underS : Texture2D.blackTexture);
             mpb.SetVector("_ShaftP", new Vector4(ownS ? 1 : 0, underS ? 1 : 0, underS && !under.toneMap ? under.Luminance : 0, 0));
-            float tanY = Mathf.Tan(cam.fieldOfView * 0.5f * Mathf.Deg2Rad);
+            float tanY = TanHalfHeight(cam);
             mpb.SetVector("_StormTan", new Vector4(tanY * w / (float)h, tanY, 0, 0));
             cmd.BeginSample(CompositeSampler);
             cmd.DrawProcedural(Matrix4x4.identity, compositeMat, 0, MeshTopology.Triangles, 3, 1, mpb);

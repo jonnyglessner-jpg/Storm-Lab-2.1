@@ -40,6 +40,11 @@ namespace StormLab.TestMap
         [Tooltip("a moon Light; one is made at Start when empty")]
         public Light moon;
         public bool show = true;
+        [Tooltip("the panel stays hidden and Tab does nothing (a chase: its storm controls would be cheating)")]
+        public bool locked;
+        [Tooltip("another script sets the scene's exposure (the photo camera's physical exposure); the panel still meters " +
+                 "the scene into ExposureEV but leaves the volume alone")]
+        public bool externalExposure;
 
         [Header("Clock")]
         [Tooltip("local solar time, hours: 12 is solar noon")]
@@ -149,8 +154,8 @@ namespace StormLab.TestMap
         void Update()
         {
             var kb = Keyboard.current;
-            if (kb != null && kb.tabKey.wasPressedThisFrame) show = !show;
-            if (kb != null && kb.f2Key.wasPressedThisFrame && storm)
+            if (kb != null && kb.tabKey.wasPressedThisFrame && !locked && !Game.ChaseGame.InputBlocked) show = !show;
+            if (kb != null && kb.f2Key.wasPressedThisFrame && storm && !Game.ChaseGame.InputBlocked)
                 SetPerformance(Tiers[(Array.IndexOf(Tiers, storm.performance) + 1) % Tiers.Length]);
             float dt = Time.unscaledDeltaTime * 1000f;
             frameMs = frameMs <= 0f ? dt : Mathf.Lerp(frameMs, dt, 0.05f);
@@ -201,7 +206,7 @@ namespace StormLab.TestMap
             float gain = storm.PhysicalSky ? sky.gain : 1f;
             float lift = storm.PhysicalSky ? TwilightLift(sky.level) : 0f;
             ExposureEV = autoExposure ? Mathf.Clamp(13.5f - Mathf.Log(Mathf.Max(gain, 1e-6f), 2f) - lift, -6f, 16f) - compensation : manualEV;
-            if (exposure) { exposure.mode.Override(ExposureMode.Fixed); exposure.fixedExposure.Override(ExposureEV); }
+            if (exposure && !externalExposure) { exposure.mode.Override(ExposureMode.Fixed); exposure.fixedExposure.Override(ExposureEV); }
             ApplySkyFill(s);
         }
 
@@ -255,7 +260,7 @@ namespace StormLab.TestMap
         // ------------------------------------------------------------------ the window
         void OnGUI()
         {
-            if (!show || (world && world.hudHidden) || !storm || storm.Plan == null) return;
+            if (!show || locked || (world && world.hudHidden) || !storm || storm.Plan == null) return;
             if (head == null)
             {
                 head = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold, fontSize = 14 };
@@ -309,7 +314,7 @@ namespace StormLab.TestMap
                 float t = (float)storm.StormTime;
                 GUILayout.Label($"Storm time {Mathf.FloorToInt(t)}:{Mathf.FloorToInt(t * 60 % 60):00} of {P.duration:0}:00   ·   {storm.Frame.stage}", small);
                 float nt = GUILayout.HorizontalSlider(t, 0f, (float)P.duration);
-                if (Mathf.Abs(nt - t) > 1e-4f) storm.StormTime = nt;
+                if (Mathf.Abs(nt - t) > 1e-4f && (nt > t || world == null || world.allowRewind)) storm.StormTime = nt;
                 GUILayout.BeginHorizontal();
                 foreach (var sp in Speeds)
                 {
@@ -323,7 +328,7 @@ namespace StormLab.TestMap
                 GUILayout.BeginHorizontal();
                 if (GUILayout.Button("next wall cloud")) Jump(c => c.wall, 0.2);
                 if (GUILayout.Button("next tornado")) Jump(c => c.tornado ? c.form : double.NaN, 0.3);
-                if (GUILayout.Button("-5 min")) storm.StormTime = Math.Max(0, storm.StormTime - 5);
+                if ((world == null || world.allowRewind) && GUILayout.Button("-5 min")) storm.StormTime = Math.Max(0, storm.StormTime - 5);
                 if (GUILayout.Button("+5 min")) storm.StormTime = Math.Min(P.duration, storm.StormTime + 5);
                 GUILayout.EndHorizontal();
                 GUILayout.BeginHorizontal();
@@ -479,7 +484,7 @@ namespace StormLab.TestMap
             float t = g.gameMinutes;
             GUILayout.Label($"Game time {Mathf.FloorToInt(t)}:{Mathf.FloorToInt(t * 60 % 60):00} of {g.gameLength:0}:00   ·   life cycles run {g.pace:0.#}x the game clock", small);
             float nt = GUILayout.HorizontalSlider(t, 0f, g.gameLength);
-            if (Mathf.Abs(nt - t) > 1e-4f) g.gameMinutes = nt;
+            if (Mathf.Abs(nt - t) > 1e-4f && (nt > t || world == null || world.allowRewind)) g.gameMinutes = nt;
             GUILayout.BeginHorizontal();
             foreach (var sp in Speeds)
             {
@@ -492,7 +497,7 @@ namespace StormLab.TestMap
             GUILayout.EndHorizontal();
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("next tornado")) NextGameTornado();
-            if (GUILayout.Button("-5 min")) g.gameMinutes = Mathf.Max(0f, g.gameMinutes - 5f);
+            if ((world == null || world.allowRewind) && GUILayout.Button("-5 min")) g.gameMinutes = Mathf.Max(0f, g.gameMinutes - 5f);
             if (GUILayout.Button("+5 min")) g.gameMinutes = Mathf.Min(g.gameLength, g.gameMinutes + 5f);
             if (GUILayout.Button("restart the game")) g.Spawn();
             GUILayout.EndHorizontal();

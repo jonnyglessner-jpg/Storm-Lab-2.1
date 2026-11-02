@@ -16,7 +16,7 @@ follows Supercell Lab 2.0 (`../supercell-lab-2`): the storm is the website's, no
 | `Runtime/Lightning` | 2.0's lightning core (own assembly `StormLab.Lightning`, unchanged but for its namespace) |
 | `Runtime/Lightning/Integration` | `StormLightning` (add to the storm), `LightningCloudBridge`, `StormLightningActivity` (flash rates from this storm's cycles) |
 | `Runtime/Audio` | the sound (assembly `StormLab.Audio`): `StormAudio` (tornado wind, rain and hail, thunder: recordings in `Resources/StormLab/Thunder`), `CountryAmbience` (breeze, birds), `ProceduralAudio`, `MasterLimiter` (a peak limiter on the final mix); the synths in `Synth/` are plain C# |
-| `tests/StormLabTest/` | Unity 6000.6.6f1 HDRP test project; the plains test map (`Assets/TestMap`) and the render checks (`Assets/Editor`) |
+| `tests/StormLabTest/` | Unity 6000.6.6f1 HDRP test project; the plains test map (`Assets/TestMap`), the chase game (`Assets/Game`, below) and the render checks (`Assets/Editor`) |
 | `tools/testmap/` | the test map's Python pipeline (from 2.0; README there) |
 | `validation/` | parity check, website captures and comparisons, reports |
 
@@ -171,6 +171,76 @@ The truck's lights (user, 2026-10-30): **L** cycles off, low beams, high beams w
 (`TestMapNightLights`; on low beams if the drive starts in the dark). Each beam's shape is a cookie made at Start: a sharp
 top edge, less light on the road nearer the truck, low beams lit to about 60 m, high beams to about 150 m, the bar a wide
 flood to about 80 m. They follow the exposure up to `headlightMaxEV` (11), so by day they are lamps, not floodlights.
+
+### The chase game (`Assets/Game`, namespace `StormLab.Game`, 2026-11-02)
+
+The maps are a game: every map scene opens on a main menu over the running map (`ChaseGame`, added by `TestMapWorld` at
+Start; `ChaseMenu`). **New chase** picks the map (plains, Dixie, Midwest: the scene loads if it is not the one open), the
+vehicle (half-ton pickup, heavy-duty dually, rally hatchback: mass, power, top speed and how much a tornado's wind pushes
+it, `ChaseVehicles` fits the scene's truck without a rebuild) and the gear owned (camera body, lens, whether the mesonet
+rides on the roof), and the game's seed; **Free roam** is the test map as it was, with the gear owned and nothing to earn.
+A chase is a `StormScenario` game (two storms, an hour of game time) played forward only: the sandbox keys are off
+(no jumps, no new storm, no `[`; `TestMapWorld.sandboxKeys`, `allowRewind`), the storm panel is locked, **T** speeds the
+clock up (1x / 10x / 30x / 60x), **P** pauses, **]** skips 5 min. When the hour is up the summary shows and the tally
+goes to the profile (`ChaseProfile`, JSON at `Application.persistentDataPath/StormLab/profile.json`: credits, gear
+owned, photos, best chase). **Esc** is the pause menu and the shop (`ChaseCatalog`: the mesonet 1500 cr, a laptop 350, a
+phone 200, the drone 1200 and its upgrades 450-900, a DSLR 600, a full-frame body 1800, a wide and a telephoto lens; the
+game's currency is credits; an upgrade needs what it builds on, `ChaseGear.requires`).
+
+**E** gets out of the truck when it is nearly stopped (`ChasePlayer`: first person, WASD, Shift runs, the mouse looks,
+the cursor locked; Alt frees it) and back in within reach of it; the tornado's wind pushes the walker as it pushes the
+truck. From the driver's seat the truck's glass boxes are hidden and a headliner is drawn under the cab roof (the cab is
+a box, culled from inside, so the light bar, mesonet and drone on the roof showed at the top of the frame; user,
+2026-11-02). A chase is first person (`TestMapCamera.Mode.Cab`, the driver's seat, mouse look) until gear is bought (user,
+2026-11-02): the **map** (bottom right) is put away (`TestMapMinimap.hidden`, `ChaseGame.MapAllowed`) until the chase
+laptop is owned (the map in the cab) or the smartphone (the map on foot); the **third-person view** (the chase camera
+behind the truck) is the drone's follow cam (`TestMapCamera.thirdPerson`), locked until the drone and its follow-cam
+upgrade are owned, while the truck's own roof camera locked on the tornado is always there (**C** cycles roof / cab, or
+chase / roof / cab with the follow cam). Free roam and the menu keep the sandbox's map and cameras. The chase's **time
+of day** comes from the seed (`ChaseSetup.StartHourFor`, user 2026-11-02): noon (11:30-13:30) half the time, afternoon
+(14:00-17:00) 35 %, dusk (18:00-19:30, running into night) 15 %; the panel's clock then follows the game clock, a
+minute of game a minute of day.
+
+The **drone** (`ChaseDrone`, once bought): a quadcopter docked on the roof beside the mesonet. **B** launches it and
+flies it in first person (WASD along the view, Q/E down and up, Shift fast, mouse look, 120 m ceiling), **X** takes
+photos from it (judged as any photo, with the drone's speed for the blur), **B** again brings it home on its own. It
+flies within a range of the controller (the truck, or the chaser on foot: 400 m stock, 1 km and 2.5 km with the link
+upgrades; a fence it stops at) on a battery (5 min stock, 10 and 18 with the battery packs): at a tenth it comes home by
+itself, flat it is simply back on the roof; it charges docked (1.5 flight times from flat). The tornado's wind pushes it
+(a third of the wind as drift, all of what is over its top speed). The follow cam (`drone_follow`) is the same drone
+flying itself behind the truck, on a quarter of the flight drain; a flat battery lands it and the view goes back to the
+cab until it has charged.
+
+**X** is the photo camera (`ChaseCamera`), a real camera on HDRP's physical camera: up/down the shutter (1/4000 to 30 s),
+left/right the aperture (f/1.4 to f/22, no wider than the lens), Q/E the ISO (within the body's range), scroll the focal
+length (within the lens), **A** auto shutter (a program mode: the shutter from the scene's meter, the storm panel's
+`ExposureEV`, raising the ISO when it would need more than 1/30). The settings set the scene's exposure
+(`ExposureMode.UsePhysicalCamera`: EV100 = log2(N^2 / t) - log2(ISO / 100), so a wrong exposure really comes out dark or
+blown), the aperture the physical depth of field (autofocus at the frame's centre) and the shutter the motion blur; the
+panel leaves the exposure alone meanwhile (`externalExposure`). The storm's rays follow the camera's real projection
+(`StormRenderer.TanHalfHeight`, from `projectionMatrix.m11`, not `fieldOfView`: the physical camera's 3:2 sensor is
+fitted to the frame's width, and on a 21:9 screen the vertical view is narrower than `fieldOfView` reports; the storm
+drew larger than the sky and slid against it as the camera panned, user 2026-11-02). A click (or Space) takes the photo: the HUD hides for the
+frame, the PNG goes to `persistentDataPath/StormLab/Photos`, and the shot is judged: a tornado in the frame (30 + 90 x
+how near, to 6 mi, x how much of the frame the funnel fills) or the storm's structure (12) or landscape (3), times the
+exposure (within half a stop full marks, three stops out 15 %), sharpness (the handheld rule 1 / focal length, tighter
+from a moving truck), noise (the body's top quarter of ISO), lit by lightning (x1.6), low light (x1.3), the body's payout
+(1 / 1.3 / 1.6), and 60 % again for each shot of the same tornado in the last 90 s. A chase pays the credits; free roam
+only saves the file.
+
+The mesonet (`ChaseMesonet`, once bought and mounted): a mast on the roof with anemometer, vane, shield and logger; it
+reads the storm every frame (the tornado's Rankine wind and pressure deficit, the inflow toward the updraft, the cold pool
+near the core, the standard atmosphere at the truck's elevation) into the bottom-left readout, and logs on its own
+within a mile of a tornado on the ground at 2 cr/s, double within half a mile (the user's rule).
+
+Check: **StormLab > Test Map > Chase Game Check** (`ChaseGameCheck.RunFromCommandLine`, about 2 min; it saves and
+restores the profile file): the menu, a chase from its choices, out and in, the camera's exposure and verdicts, the shop,
+the mesonet's rates at 0.8 / 0.35 / 1.6 mi, the map behind the laptop and phone, the views behind the follow cam, the
+drone (launch, drain, the range fence, a photo, the reserve's return, the upgrades), the hour's end, free roam. Report
+`validation/reports/ChaseGameCheck.md`. Two test-map bugs it found in `TestMapCar` (2026-11-02): `Teleport`'s ground
+ray landed on the truck's own roof, so a teleport to the same spot stacked it 3 m higher each time (`GroundUnder` skips
+the car's colliders), and it was cast from only 60 m above the point given, so a point carrying a storm-frame height
+under higher terrain left the truck beneath the ground, falling (it casts from 1.5 km now).
 
 Useful properties for a game: `Frame.stage` / `Frame.caption`, `TornadoAmount`, `TornadoGroundWorld`,
 `TornadoWindAt(world)` (a Rankine-vortex presentation wind), `UpdraftWorld(minutes)`.
@@ -390,7 +460,7 @@ meadowlark, red-winged blackbird, sparrows, mourning dove) calling from 20-140 m
 soon as the tornado wind is heard and come back 2 minutes after it has gone (`birdsReturnAfter`); `birdVolume` sets their
 level. On the test map `TestMapAudio` adds both, and `TestMapCarAudio` gives the truck a V8 on a six-speed automatic,
 tyre squeal when the tyres slide past their grip, road roar and suspension thumps; the wind and rain are taken at the
-truck (at the camera in free flight); **M** mutes. `dotnet run --project validation/audio` renders every synth to WAV in
+truck (at the camera in free flight); **0** mutes (M until 2026-11-02, when the user gave M to the map). `dotnet run --project validation/audio` renders every synth to WAV in
 `validation/audio/out/` (gitignored) and checks their levels; `python -I validation/audio/thunder/check.py` checks the
 thunder clips (`cut.py` remakes them from the raw recordings, `analyse.py` finds the events in them).
 
@@ -429,8 +499,8 @@ every repaint; `StormLightCheck -slLightFlicker` measures it: 11 % before, 0.02 
 rain and the light grids along the 25-minute view and renders the unified light's parts there.
 
 **Map and radar** (user, 2026-10-27). On the test map a map in the bottom-right corner (`TestMapMinimap`) follows the
-truck, heading up, with the roads, the radar and the next turn; click it to open it full screen (north up: drag to pan,
-scroll to zoom, click a road to drive there, Esc closes). The GPS (`TestMapRoads`) routes over the whole road network
+truck, heading up, with the roads, the radar and the next turn; **M** (or a click on it) opens it full screen (north up:
+drag to pan, scroll to zoom, click a road to drive there, M or Esc closes; user 2026-11-02, M was the mute). The GPS (`TestMapRoads`) routes over the whole road network
 (2,757 junctions and corners, every piece named: K-19, Rd 12, Ave 30), the fastest way by road class (state 65 mph,
 paved 55, gravel 45), with turn-by-turn steps, and plans again when the truck is 60 m off the route for 2.5 s. Its data
 is made by `tools/testmap/navmap.py` (the network from roads.py and a base map; gitignored with the rest of Generated/).
