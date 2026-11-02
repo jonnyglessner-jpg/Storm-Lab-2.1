@@ -236,17 +236,26 @@ public static class ChaseCareerCheck
             int onRoute = 0;
             foreach (var t in towns)
             {
-                float mu = 0.5f + t.centre.x / fc.MapSpan, mv = 0.5f + t.centre.z / fc.MapSpan;
+                float mu = 0.5f + (t.centre.x + 4000f) / fc.MapSpan, mv = 0.5f + t.centre.z / fc.MapSpan;   // 2.5 miles east along the highway, clear of the station squares
                 Color up = fc.MapImage.GetPixel((int)(mu * mrt.width), (int)(mv * mrt.height));
                 bool orange = up.r > 0.85f && up.g > 0.5f && up.g < 0.8f && up.b < 0.4f;
                 if (orange) onRoute++;
                 Note($"{t.name} (world {t.centre.x:0}, {t.centre.z:0}) at the drawn map's north-up pixel: {up} {(orange ? "(the state route)" : "")}");
             }
-            Check(onRoute == towns.Length, "the drawn map is north up: every crossing sits on its state route");
+            Check(onRoute == towns.Length, "the drawn map is north up: the highway runs east from every crossing");
             var north = fc.Outlooks.First(o => o.lane == "northern"); var south = fc.Outlooks.First(o => o.lane == "southern");
             float half = world.sizeM / 2f;
             float zN = north.entry.y + north.dir.y * (-north.entry.x / Mathf.Max(north.dir.x, 1e-3f)), zS = south.entry.y + south.dir.y * (-south.entry.x / Mathf.Max(south.dir.x, 1e-3f));
             Check(zN > zS, $"the northern storm's track crosses the map's middle north of the southern's ({zN / 1609.344f:0.0} vs {zS / 1609.344f:0.0} mi)");
+            {
+                // the entry square drawn into the map image: the storm's colour at the entry point's north-up pixel, nothing of it at the mirrored one
+                var img = fc.MapImage; int W = img.width, H = img.height;
+                int px = (int)(W * (0.5f + north.entry.x / fc.MapSpan)), py = (int)(H * (0.5f + north.entry.y / fc.MapSpan));
+                px = Mathf.Clamp(px, 2, W - 3); py = Mathf.Clamp(py, 2, H - 3);
+                Color at = img.GetPixel(px, py), mirror = img.GetPixel(px, Mathf.Clamp(H - 1 - py, 2, H - 3));
+                Note($"northern entry ({north.entry.x:0}, {north.entry.y:0}) -> image ({px}, {py}): {at}; mirrored row: {mirror}");
+                Check(at.r > 0.8f && at.g < 0.6f && !(mirror.r > 0.8f && mirror.g < 0.6f), "the northern storm's entry square is drawn where the storm enters, north up");
+            }
             Check(Mathf.Abs(Vector2.Angle(north.dir, new Vector2((float)fc.Preview.storms[north.index].plan.motion.x, (float)fc.Preview.storms[north.index].plan.motion.y))) < 0.5f, $"the drawn track follows the storm's motion (toward {north.motionDeg:0} deg)");
             Object.Destroy(mtex);
             foreach (var o in fc.Outlooks) Note($"{o.lane} storm: entry world ({o.entry.x:0}, {o.entry.y:0}), dir ({o.dir.x:0.00}, {o.dir.y:0.00}), toward {o.motionDeg:0} deg");

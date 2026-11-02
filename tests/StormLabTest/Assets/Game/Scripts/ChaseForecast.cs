@@ -125,6 +125,8 @@ namespace StormLab.Game
                 mm.RenderMap(rt, true);
                 mm.fullSpan = keepSpan; mm.showRadar = keepRadar;
             }
+            if (!line) { var sh = Shader.Find("Hidden/StormLab/TestMapMapDraw"); if (sh) line = new Material(sh) { hideFlags = HideFlags.HideAndDontSave }; }
+            DrawTracks(rt);
             if (!mapTex) mapTex = new Texture2D(rt.width, rt.height, TextureFormat.RGB24, false) { name = "forecast map" };
             var prev = RenderTexture.active; RenderTexture.active = rt;
             mapTex.ReadPixels(new Rect(0, 0, rt.width, rt.height), 0, 0); mapTex.Apply();
@@ -139,7 +141,7 @@ namespace StormLab.Game
             game.BeginDay(Choice);
         }
 
-        public void Choose(string townKey) { Choice = townKey; }
+        public void Choose(string townKey) { if (Choice == townKey) return; Choice = townKey; if (Showing) RenderMap(); }
 
         /// <summary>Put away without heading out (the menu, free roam).</summary>
         public void Close() { Showing = false; }
@@ -158,8 +160,6 @@ namespace StormLab.Game
             boxStyle = new GUIStyle(GUI.skin.box);
             title.normal.textColor = head.normal.textColor = body.normal.textColor = Color.white;
             small.normal.textColor = new Color(0.82f, 0.82f, 0.82f);
-            var sh = Shader.Find("Hidden/StormLab/TestMapMapDraw");
-            if (sh) line = new Material(sh) { hideFlags = HideFlags.HideAndDontSave };
         }
 
         Vector2 Pix(Vector2 w) => new Vector2(mapRect.x + mapRect.width * (0.5f + w.x / mapSpan), mapRect.y + mapRect.height * (0.5f - w.y / mapSpan));
@@ -200,7 +200,7 @@ namespace StormLab.Game
             foreach (var t in towns)
             {
                 if (t.gas == null) continue;
-                if (GUILayout.Button($"{t.gas.name}, {t.name}   (fuel {ChaseSetup.Vehicle.FuelName} {t.gas.Price(ChaseSetup.Vehicle.fuel):0.00})", Choice == t.key ? tabOn : tabOff)) Choice = t.key;
+                if (GUILayout.Button($"{t.gas.name}, {t.name}   (fuel {ChaseSetup.Vehicle.FuelName} {t.gas.Price(ChaseSetup.Vehicle.fuel):0.00})", Choice == t.key ? tabOn : tabOff)) Choose(t.key);
             }
             GUILayout.FlexibleSpace();
             GUILayout.BeginHorizontal();
@@ -216,7 +216,6 @@ namespace StormLab.Game
             mapRect = new Rect(r.xMax - 24 - mapSize, r.y + 18, mapSize, mapSize);
             if (mapTex) GUI.DrawTexture(mapRect, mapTex);
             var e = Event.current;
-            if (e.type == EventType.Repaint && line) DrawTracks();
             // the compass and the lanes' names on their tracks
             var compass = new GUIStyle(head) { alignment = TextAnchor.MiddleCenter };
             GUI.color = new Color(0f, 0f, 0f, 0.6f); GUI.DrawTexture(new Rect(mapRect.x + 8, mapRect.y + 8, 36, 36), Texture2D.whiteTexture); GUI.color = Color.white;
@@ -237,28 +236,39 @@ namespace StormLab.Game
                 var lr = new Rect(q.x - 90, q.y + 10, 180, 20);
                 GUI.color = new Color(0f, 0f, 0f, 0.6f); GUI.DrawTexture(lr, Texture2D.whiteTexture); GUI.color = Color.white;
                 GUI.Label(lr, $"{t.name}{(on ? "  ◄ start" : "")}", new GUIStyle(small) { alignment = TextAnchor.MiddleCenter, fontStyle = on ? FontStyle.Bold : FontStyle.Normal, normal = { textColor = on ? new Color(1f, 0.9f, 0.4f) : Color.white } });
-                if (e.type == EventType.MouseDown && e.button == 0 && Vector2.Distance(e.mousePosition, q) < 26f) { Choice = t.key; e.Use(); }
+                if (e.type == EventType.MouseDown && e.button == 0 && Vector2.Distance(e.mousePosition, q) < 26f) { Choose(t.key); e.Use(); }
             }
             GUI.Label(new Rect(mapRect.x + 8, mapRect.yMax - 26, mapRect.width - 16, 22), "Likely tracks: each storm from where it comes onto the map, with the forecast's spread  ·  click a station to start there", small);
         }
 
-        /// <summary>The storms' likely tracks over the map: a cone from each entry point along the motion, its centre line,
-        /// and the stations as squares.</summary>
-        void DrawTracks()
+        /// <summary>The storms' likely tracks drawn into the map's render texture (its GL pixel space, y up = north, the
+        /// convention the minimap draws the roads in, read back north up): a cone from each entry point along the motion,
+        /// its centre line and the entry point, then the stations as squares, the chosen one bigger. Drawn on the screen
+        /// instead (GL in OnGUI) they came out upside down against the map (user, 2026-11-02).</summary>
+        void DrawTracks(RenderTexture target)
         {
+            if (!line || !target) return;
+            var prev = RenderTexture.active; RenderTexture.active = target;
             line.mainTexture = Texture2D.whiteTexture;
             line.SetVector("_Grade", new Vector4(0, 1, 0, 0));
             line.SetPass(0);
             GL.PushMatrix();
-            GL.LoadPixelMatrix();
+            GL.LoadPixelMatrix(0, target.width, 0, target.height);
             bool linear = QualitySettings.activeColorSpace == ColorSpace.Linear;
             Color Lin(Color c) => linear ? c.linear : c;
-            Vector3 G(Vector2 s) => new Vector3(s.x, Screen.height - s.y, 0f);
-            void Seg(Vector2 a, Vector2 b, float wd)
+            float W = target.width, H = target.height;
+            float k = W / 480f;   // marks sized for the map as it is shown (about 480 px across)
+            Vector2 P(Vector2 w) => new Vector2(W * (0.5f + w.x / mapSpan), H * (0.5f + w.y / mapSpan));
+            Vector3 G(Vector2 q) => new Vector3(q.x, q.y, 0f);
+            void Seg(Vector2 a0, Vector2 b0, float wd)
             {
-                var d = b - a; float L = d.magnitude; if (L < 1e-3f) return;
+                var d = b0 - a0; float L = d.magnitude; if (L < 1e-3f) return;
                 d /= L; var n = new Vector2(-d.y, d.x) * (wd * 0.5f);
-                GL.Vertex(G(a + n)); GL.Vertex(G(b + n)); GL.Vertex(G(b - n)); GL.Vertex(G(a - n));
+                GL.Vertex(G(a0 + n)); GL.Vertex(G(b0 + n)); GL.Vertex(G(b0 - n)); GL.Vertex(G(a0 - n));
+            }
+            void Square(Vector2 q, float half)
+            {
+                GL.Vertex(G(q + new Vector2(-half, -half))); GL.Vertex(G(q + new Vector2(half, -half))); GL.Vertex(G(q + new Vector2(half, half))); GL.Vertex(G(q + new Vector2(-half, half)));
             }
             float reach = game.world.sizeM * 0.95f;
             foreach (var o in Outlooks)
@@ -266,35 +276,31 @@ namespace StormLab.Game
                 var c = StormColours[o.index % StormColours.Length];
                 var dirL = Rotate(o.dir, 12f); var dirR = Rotate(o.dir, -12f);
                 Vector2 e = o.entry, tip = e + o.dir * reach, tl = e + dirL * reach, tr = e + dirR * reach;
-                // the cone, faint
                 GL.Begin(GL.TRIANGLES); GL.Color(Lin(new Color(c.r, c.g, c.b, 0.18f)));
-                GL.Vertex(G(Pix(e))); GL.Vertex(G(Pix(tl))); GL.Vertex(G(Pix(tip)));
-                GL.Vertex(G(Pix(e))); GL.Vertex(G(Pix(tip))); GL.Vertex(G(Pix(tr)));
+                GL.Vertex(G(P(e))); GL.Vertex(G(P(tl))); GL.Vertex(G(P(tip)));
+                GL.Vertex(G(P(e))); GL.Vertex(G(P(tip))); GL.Vertex(G(P(tr)));
                 GL.End();
                 GL.Begin(GL.QUADS);
                 GL.Color(Lin(new Color(c.r, c.g, c.b, 0.9f)));
-                Seg(Pix(e), Pix(tip), 3f);
+                Seg(P(e), P(tip), 3f * k);
                 GL.Color(Lin(new Color(c.r, c.g, c.b, 0.5f)));
-                Seg(Pix(e), Pix(tl), 1.5f); Seg(Pix(e), Pix(tr), 1.5f);
-                // the entry point
-                var q = Pix(e); GL.Color(Lin(c));
-                GL.Vertex(G(q + new Vector2(-6, -6))); GL.Vertex(G(q + new Vector2(6, -6))); GL.Vertex(G(q + new Vector2(6, 6))); GL.Vertex(G(q + new Vector2(-6, 6)));
+                Seg(P(e), P(tl), 1.5f * k); Seg(P(e), P(tr), 1.5f * k);
+                GL.Color(Lin(c)); Square(P(e), 6f * k);
                 GL.End();
             }
-            // the stations
             GL.Begin(GL.QUADS);
             foreach (var t in towns)
             {
                 if (t.gas == null) continue;
-                var q = Pix(new Vector2(t.gas.x, t.gas.z));
+                var q = P(new Vector2(t.gas.x, t.gas.z));
                 bool on = t.key == Choice;
-                float s = on ? 9f : 6f;
-                GL.Color(Lin(Color.black)); GL.Vertex(G(q + new Vector2(-s - 2, -s - 2))); GL.Vertex(G(q + new Vector2(s + 2, -s - 2))); GL.Vertex(G(q + new Vector2(s + 2, s + 2))); GL.Vertex(G(q + new Vector2(-s - 2, s + 2)));
-                GL.Color(Lin(on ? new Color(1f, 0.9f, 0.3f) : new Color(1f, 0.8f, 0.2f, 0.85f)));
-                GL.Vertex(G(q + new Vector2(-s, -s))); GL.Vertex(G(q + new Vector2(s, -s))); GL.Vertex(G(q + new Vector2(s, s))); GL.Vertex(G(q + new Vector2(-s, s)));
+                float half = (on ? 9f : 6f) * k;
+                GL.Color(Lin(Color.black)); Square(q, half + 2f * k);
+                GL.Color(Lin(on ? new Color(1f, 0.9f, 0.3f) : new Color(1f, 0.8f, 0.2f, 0.85f))); Square(q, half);
             }
             GL.End();
             GL.PopMatrix();
+            RenderTexture.active = prev;
         }
 
         static Vector2 Rotate(Vector2 v, float deg)
