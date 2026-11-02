@@ -292,8 +292,8 @@ the truck has stopped ("you passed out."), waking at 8 am at half.
 
 **Dev mode** (**F3**, or the pause menu; user 2026-11-02): the sandbox keys back inside a career: **F** the free camera
 (**V** puts the truck under it), **1-9** jump to a spot, **N** new storms, **T / P / [ ]** the clock (rewinding too),
-**G** game mode, **Tab** the storm and lighting panel, whose clock slider and time-of-day buttons move the day's clock
-(`ChaseSetup.devMode`, `ChaseGame.SetDevMode`). Fuel, wear and sanity keep running; the HUD shows DEV.
+**G** game mode, **Tab** the storm and lighting panel, whose clock slider and time-of-day buttons move the day's clock,
+and **M** the map whether or not the laptop or phone is owned (`ChaseSetup.devMode`, `ChaseGame.SetDevMode`). Fuel, wear and sanity keep running; the HUD shows DEV.
 
 Check: **StormLab > Test Map > Chase Career Check** (`ChaseCareerCheck.RunFromCommandLine`, about 5 min): the places
 and the rig (lights cycling, 12 marked spots), pictures of Haskett (`Screenshots/town_*.png`), a career's morning, the

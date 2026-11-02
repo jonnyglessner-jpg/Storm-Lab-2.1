@@ -227,7 +227,7 @@ namespace StormLab.Game
             ChaseSetup.devMode = on;
             ApplyDevMode();
             if (!on && world.cameraRig && world.cameraRig.mode == TestMapCamera.Mode.Free) world.cameraRig.DropTruck();
-            Say(on ? "DEV MODE: F free camera, V truck here, 1-9 spots, N new storms, T / P / [ ] clock, G game mode, Tab panel" : "Dev mode off");
+            Say(on ? "DEV MODE: F free camera, V truck here, 1-9 spots, N new storms, T / P / [ ] clock, G game mode, Tab panel, M map" : "Dev mode off");
         }
 
         void ApplyDevMode()
@@ -243,7 +243,7 @@ namespace StormLab.Game
         {
             get
             {
-                if (!InChase) return true;
+                if (!InChase || ChaseSetup.devMode) return true;   // (dev mode: the map whatever is owned)
                 bool onFoot = Player && Player.OnFoot;
                 return ChaseProfile.Current.Owns(onFoot ? "phone" : "laptop");
             }

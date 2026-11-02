@@ -266,7 +266,7 @@ namespace StormLab.Game
             {
                 GUILayout.Space(6);
                 if (GUILayout.Button(ChaseSetup.devMode ? "Dev mode: on  (F3)" : "Dev mode: off  (F3)", button, GUILayout.Width(300))) game.SetDevMode(!ChaseSetup.devMode);
-                if (ChaseSetup.devMode) GUILayout.Label("F free camera (V puts the truck under it), 1-9 jump to a spot, N new storms, T / P / [ ] the clock, G game mode, Tab the storm and lighting panel (its clock slider moves the day).", small);
+                if (ChaseSetup.devMode) GUILayout.Label("F free camera (V puts the truck under it), 1-9 jump to a spot, N new storms, T / P / [ ] the clock, G game mode, Tab the storm and lighting panel (its clock slider moves the day), M the map without the laptop or phone.", small);
             }
             GUILayout.Space(6);
             if (GUILayout.Button(ChaseSetup.state == ChaseSetup.State.Chase ? "Leave the day: main menu" : "Main menu", button, GUILayout.Width(300)))

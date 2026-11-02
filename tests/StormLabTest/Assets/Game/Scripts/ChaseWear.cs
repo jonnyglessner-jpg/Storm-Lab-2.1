@@ -16,7 +16,7 @@ namespace StormLab.Game
         public float wearPaved = 0.0004f, wearGravel = 0.0012f, wearOffRoad = 0.0036f;
         [Tooltip("tornado wind over this, m/s, wears the truck: per second, (over / 40) x rate")]
         public float windWearMps = 25f, windWearRate = 0.012f;
-        [Tooltip("a collision's wear: (change of speed / 10 m/s)^1.5 x this")]
+        [Tooltip("a collision's wear: (closing speed / 10 m/s)^1.5 x this, for closing speeds over 3 m/s (7 mph)")]
         public float impactWear = 0.06f;
         [Tooltip("how near the service bay's mark the truck must be, m, and how slow, mph")]
         public float bayReachM = 5f, bayMph = 2f;
@@ -81,7 +81,7 @@ namespace StormLab.Game
                 {
                     lastImpactSeen = car.LastImpactTime;
                     float iw = Mathf.Pow(car.LastImpact / 10f, 1.5f) * impactWear;
-                    if (car.LastImpact > 2f) { ImpactWear += iw; s.condition -= iw; if (iw > 0.02f) game.Say($"That hit cost {iw * 100f:0} % of the truck"); }
+                    if (car.LastImpact > 3f) { ImpactWear += iw; s.condition -= iw; if (iw > 0.02f) game.Say($"That hit cost {iw * 100f:0} % of the truck"); }
                 }
                 s.condition = Mathf.Clamp01(s.condition);
                 if (Limping && !saidLimp) { saidLimp = true; game.Say("The truck is worn out: it can only limp. Find a mechanic."); }

@@ -260,6 +260,8 @@ public static class ChaseCareerCheck
             game.SetDevMode(true);
             foreach (var x in PlayerFrames(2)) yield return x;
             Check(ChaseSetup.devMode && world.sandboxKeys && world.allowRewind && !panel.locked, "F3: the sandbox keys, rewinding and the panel are back");
+            var mm0 = world.GetComponent<TestMapMinimap>();
+            Check(mm0 && !mm0.hidden && game.MapAllowed && !ChaseProfile.Current.Owns("laptop"), "the map shows in dev mode without the laptop");
             float h0 = ChaseSetup.hour;
             panel.hour = Mathf.Repeat(h0 + 2f, 24f);
             foreach (var x in PlayerFrames(2)) yield return x;
@@ -270,22 +272,23 @@ public static class ChaseCareerCheck
             Check(Mathf.Abs(Mathf.Repeat(h1 - ChaseSetup.hour + 24f, 24f) - 5f / 60f) < 0.05f, $"rewinding the game clock five minutes takes the day back with it ({ChaseSetup.ClockText(ChaseSetup.hour)})");
             game.SetDevMode(false);
             foreach (var x in PlayerFrames(2)) yield return x;
-            Check(!ChaseSetup.devMode && !world.sandboxKeys && !world.allowRewind && panel.locked, "off again: locked down");
+            Check(!ChaseSetup.devMode && !world.sandboxKeys && !world.allowRewind && panel.locked && mm0.hidden, "off again: locked down, the map away");
         }
 
         rep.AppendLine().AppendLine("## Fuel").AppendLine();
         var fuel = game.Fuel; var v = ChaseSetup.Vehicle;
         Check(v.fuel == FuelGrade.Diesel && Mathf.Approximately(fuel.Gallons, v.tankGal), $"the dually starts with a full tank of {v.FuelName} ({fuel.Gallons:0.0} / {v.tankGal:0} gal)");
         {
-            car.acceptInput = false;
+            car.acceptInput = false; car.testThrottle = 1f;
             float g0 = fuel.Gallons;
             float t0 = Time.unscaledTime;
-            while (Time.unscaledTime - t0 < 1.5f) { car.Step(1f, 0f, 0f, false, Time.deltaTime); yield return null; }
+            while (Time.unscaledTime - t0 < 1.5f) yield return null;
             Note($"burn under full throttle: {fuel.BurnGph:0.00} gal/h (idle {v.idleGph}, full {v.fullGph}), load {car.EngineLoad:0.00}, {car.SpeedKph:0} km/h");
             Check(fuel.BurnGph > v.idleGph && fuel.Gallons < g0, $"the tank burns under load ({g0 - fuel.Gallons:0.0000} gal in 1.5 s)");
-            car.Step(0f, 0f, 1f, true, Time.deltaTime);
-            car.acceptInput = true;
-            foreach (var x in Seconds(1.5f)) yield return x;
+            car.testThrottle = 0f; car.testBrake = 1f;
+            foreach (var x in Seconds(1.0f)) yield return x;
+            car.testBrake = 0f; car.acceptInput = true;
+            foreach (var x in Seconds(1.0f)) yield return x;
             Check(fuel.BurnGph > 0f && fuel.BurnGph <= v.idleGph + 0.01f, $"idling burns the idle rate ({fuel.BurnGph:0.00} gal/h)");
             fuel.TestSetGallons(0f);
             foreach (var x in PlayerFrames(2)) yield return x;
@@ -313,7 +316,7 @@ public static class ChaseCareerCheck
 
         rep.AppendLine().AppendLine("## Wear and repairs").AppendLine();
         var wear = game.Wear;
-        Note($"wear so far: road {wear.RoadWear:P3} ({wear.Surface}), wind {wear.WindWear:P3}, impacts {wear.ImpactWear:P3}; odometer {car.OdometerM:0} m");
+        Note($"wear so far: road {wear.RoadWear:P3} ({wear.Surface}), wind {wear.WindWear:P3}, impacts {wear.ImpactWear:P3}; odometer {car.OdometerM:0} m; collisions {car.Impacts}: {string.Join(" | ", car.ImpactLog)}; truck at {car.transform.position}, now t {Time.time:0.00}");
         Check(wear.Condition > 0.999f && wear.PowerScale > 0.999f, $"a new truck at 100 % ({wear.Condition:P2} after the metres driven at the pump)");
         wear.TestSetCondition(0.5f);
         foreach (var x in PlayerFrames(2)) yield return x;
@@ -439,23 +442,23 @@ public static class ChaseCareerCheck
             foreach (var x in PlayerFrames(3)) yield return x;
             // the truck rolling: the chaser has to stop first
             int day0 = p.day; var drone0 = game.Drone;
-            car.acceptInput = false;
+            car.acceptInput = false; car.testThrottle = 1f;
             // rolling first, then the moment comes (while still: it passes out at once, as it should)
             float t0 = Time.unscaledTime;
-            while (Time.unscaledTime - t0 < 1.0f) { car.Step(1f, 0f, 0f, false, Time.deltaTime); yield return null; }
+            while (Time.unscaledTime - t0 < 1.5f) yield return null;
             san.TestSetAwake(33f); san.TestPassOutNow();
             t0 = Time.unscaledTime;
-            while (Time.unscaledTime - t0 < 1.0f) { car.Step(1f, 0f, 0f, false, Time.deltaTime); yield return null; }
+            while (Time.unscaledTime - t0 < 1.0f) yield return null;
             Note($"rolling: passingOut {san.PassingOut}, warning '{san.Warning}', passOutAt {san.PassOutAt:0.00}, awake {san.AwakeHours:0.00}, phase {san.Phase}, sleep busy {sleep.Busy} (forced {sleep.LastForced}, sleeps {sleep.Sleeps}), speed {car.SpeedKph:0.0} km/h, morning {ChaseSetup.morning}, on foot {game.Player.OnFoot}, drone {drone0.Flying}");
             Check(san.PassingOut && san.Warning.Contains("STOP") && !sleep.Busy && car.SpeedKph > 3f, $"rolling at {car.SpeedKph:0} km/h: told to stop, still awake");
+            car.testThrottle = 0f; car.testBrake = 1f;
             car.Body.linearVelocity = Vector3.zero; car.Body.angularVelocity = Vector3.zero;
-            car.Step(0f, 0f, 1f, true, Time.deltaTime);
             foreach (var x in PlayerFrames(4)) yield return x;
             Check(sleep.Busy && sleep.LastForced && sleep.LastQuote == "you passed out.", "stopped: out cold, \"you passed out.\"");
             t0 = Time.unscaledTime;
             while (sleep.Busy && Time.unscaledTime - t0 < 20f) yield return null;
             Check(p.day == day0 + 1 && Mathf.Approximately(p.sanity, 0.5f) && p.passOuts == 1 && fc.Showing, $"woke on day {p.day} at half, the forecast up");
-            car.acceptInput = true;
+            car.testBrake = 0f; car.acceptInput = true;
             // the drone must come home first
             fc.Confirm();
             foreach (var x in PlayerFrames(3)) yield return x;
