@@ -224,6 +224,33 @@ public static class ChaseCareerCheck
             Check(o.count == 0 ? o.pTornado < 35 : o.pTornado >= 70, $"{o.lane}: the tornado chance follows the day's real storm");
         }
         Check(fc.Outlooks.Count(o => o.lane == "northern") == 1 && fc.Outlooks.Count(o => o.lane == "southern") == 1, "one northern and one southern storm");
+        {
+            // the map's orientation: where a town's lawn lands in the rendered map (north up means its row is above the middle for a northern town)
+            var mrt = fc.MapTexture;
+            var prev = RenderTexture.active; RenderTexture.active = mrt;
+            var mtex = new Texture2D(mrt.width, mrt.height, TextureFormat.RGB24, false); mtex.ReadPixels(new Rect(0, 0, mrt.width, mrt.height), 0, 0); mtex.Apply();
+            RenderTexture.active = prev;
+            File.WriteAllBytes(Path.Combine(ShotDir, "forecast_map.png"), mtex.EncodeToPNG());
+            // north up: every town's crossing lands on the orange state route in the drawn image's own rows (row 0 south),
+            // which is the texture the screen gets (not the render texture, which an IMGUI draw flips on Direct3D)
+            int onRoute = 0;
+            foreach (var t in towns)
+            {
+                float mu = 0.5f + t.centre.x / fc.MapSpan, mv = 0.5f + t.centre.z / fc.MapSpan;
+                Color up = fc.MapImage.GetPixel((int)(mu * mrt.width), (int)(mv * mrt.height));
+                bool orange = up.r > 0.85f && up.g > 0.5f && up.g < 0.8f && up.b < 0.4f;
+                if (orange) onRoute++;
+                Note($"{t.name} (world {t.centre.x:0}, {t.centre.z:0}) at the drawn map's north-up pixel: {up} {(orange ? "(the state route)" : "")}");
+            }
+            Check(onRoute == towns.Length, "the drawn map is north up: every crossing sits on its state route");
+            var north = fc.Outlooks.First(o => o.lane == "northern"); var south = fc.Outlooks.First(o => o.lane == "southern");
+            float half = world.sizeM / 2f;
+            float zN = north.entry.y + north.dir.y * (-north.entry.x / Mathf.Max(north.dir.x, 1e-3f)), zS = south.entry.y + south.dir.y * (-south.entry.x / Mathf.Max(south.dir.x, 1e-3f));
+            Check(zN > zS, $"the northern storm's track crosses the map's middle north of the southern's ({zN / 1609.344f:0.0} vs {zS / 1609.344f:0.0} mi)");
+            Check(Mathf.Abs(Vector2.Angle(north.dir, new Vector2((float)fc.Preview.storms[north.index].plan.motion.x, (float)fc.Preview.storms[north.index].plan.motion.y))) < 0.5f, $"the drawn track follows the storm's motion (toward {north.motionDeg:0} deg)");
+            Object.Destroy(mtex);
+            foreach (var o in fc.Outlooks) Note($"{o.lane} storm: entry world ({o.entry.x:0}, {o.entry.y:0}), dir ({o.dir.x:0.00}, {o.dir.y:0.00}), toward {o.motionDeg:0} deg");
+        }
         Check(fc.Discussion.Contains("Towering cumulus") && fc.Discussion.Length > 200, "the discussion reads");
 
         rep.AppendLine().AppendLine("## Heading out").AppendLine();

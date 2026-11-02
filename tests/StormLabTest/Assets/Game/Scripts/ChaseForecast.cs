@@ -30,16 +30,22 @@ namespace StormLab.Game
         }
         public Outlook[] Outlooks { get; private set; } = new Outlook[0];
         public string Discussion { get; private set; } = "";
+        /// <summary>the rendered map and the metres it spans (for the checks)</summary>
+        public RenderTexture MapTexture => rt;
+        /// <summary>the map as drawn: a plain texture read back from the render (north up, row 0 at the south), since an IMGUI
+        /// draw of a render texture comes out upside down on Direct3D (user, 2026-11-02: the tracks ran the wrong way over it)</summary>
+        public Texture2D MapImage => mapTex;
+        public float MapSpan => mapSpan;
 
         PlaceTown[] towns = new PlaceTown[0];
-        RenderTexture rt; Material line;
+        RenderTexture rt; Texture2D mapTex; Material line;
         GUIStyle title, head, body, small, button, tabOn, tabOff, boxStyle;
         Rect mapRect; float mapSpan;
         static readonly Color[] StormColours = { new Color(1f, 0.45f, 0.2f), new Color(0.35f, 0.75f, 1f) };
 
         void Start() { towns = TestMapPlaces.Load(game && game.world ? game.world.navResource : "TestMapNav"); }
 
-        void OnDestroy() { if (rt) rt.Release(); if (line) Destroy(line); }
+        void OnDestroy() { if (rt) rt.Release(); if (line) Destroy(line); if (mapTex) Destroy(mapTex); }
 
         /// <summary>The morning: build the day's outlook and show it.</summary>
         public void Open()
@@ -119,6 +125,10 @@ namespace StormLab.Game
                 mm.RenderMap(rt, true);
                 mm.fullSpan = keepSpan; mm.showRadar = keepRadar;
             }
+            if (!mapTex) mapTex = new Texture2D(rt.width, rt.height, TextureFormat.RGB24, false) { name = "forecast map" };
+            var prev = RenderTexture.active; RenderTexture.active = rt;
+            mapTex.ReadPixels(new Rect(0, 0, rt.width, rt.height), 0, 0); mapTex.Apply();
+            RenderTexture.active = prev;
         }
 
         /// <summary>Head out: the day's storms from this seed, the truck at the chosen station.</summary>
@@ -204,9 +214,20 @@ namespace StormLab.Game
             // the map, right
             float mapSize = Mathf.Min(r.height - 36, r.width - textW - 72);
             mapRect = new Rect(r.xMax - 24 - mapSize, r.y + 18, mapSize, mapSize);
-            if (rt) GUI.DrawTexture(mapRect, rt);
+            if (mapTex) GUI.DrawTexture(mapRect, mapTex);
             var e = Event.current;
             if (e.type == EventType.Repaint && line) DrawTracks();
+            // the compass and the lanes' names on their tracks
+            var compass = new GUIStyle(head) { alignment = TextAnchor.MiddleCenter };
+            GUI.color = new Color(0f, 0f, 0f, 0.6f); GUI.DrawTexture(new Rect(mapRect.x + 8, mapRect.y + 8, 36, 36), Texture2D.whiteTexture); GUI.color = Color.white;
+            GUI.Label(new Rect(mapRect.x + 8, mapRect.y + 8, 36, 36), "N\n▲", compass);
+            foreach (var o in Outlooks)
+            {
+                var mid = Pix(o.entry + o.dir * (game.world.sizeM * 0.45f));
+                var ls = new GUIStyle(small) { alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold, normal = { textColor = StormColours[o.index % StormColours.Length] } };
+                GUI.color = new Color(0f, 0f, 0f, 0.55f); GUI.DrawTexture(new Rect(mid.x - 60, mid.y - 10, 120, 20), Texture2D.whiteTexture); GUI.color = Color.white;
+                GUI.Label(new Rect(mid.x - 60, mid.y - 10, 120, 20), $"{o.lane} storm", ls);
+            }
             // the stations: labels, and a click picks one
             foreach (var t in towns)
             {
