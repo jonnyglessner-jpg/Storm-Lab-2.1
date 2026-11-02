@@ -242,6 +242,60 @@ ray landed on the truck's own roof, so a teleport to the same spot stacked it 3 
 the car's colliders), and it was cast from only 60 m above the point given, so a point carrying a storm-frame height
 under higher terrain left the truck beneath the ground, falling (it casts from 1.5 km now).
 
+
+### Never Stop Chasing: the towns and the career (2026-11-02)
+
+The game's name is **Never Stop Chasing** (the menu's title, the project's product name). The plains map has four small
+towns, one at each state-route crossing (`tools/testmap/towns.py`, laid out after the user's Scott City references):
+Haskett (K-283 / K-19), Ravanna (K-183 / K-19), Lanark (K-283 / K-156) and Eldora, three miles east of the K-183 / K-156
+crossing on K-156 (the Pawnee runs near the crossing), where Main Street is the section road Ave 39. Each has a Main
+Street with two blocks of brick storefronts and a bank on the corner, a traffic light at the crossing (`TestMapTownRig`,
+built at Start from the places data: mast arms on the four corners, three-lamp heads, Main on the long green), a grid of
+residential blocks (100 x 140 m, 17 m lots, gabled houses behind lawns with driveways, garages, sidewalks, parkway and
+yard trees), the grain elevator on Main at the edge of town, a church with a steeple, the school, a park, the water
+tower, and on the highway strip a truck stop (a Love's-style canopy over three pump islands, diesel lanes under their
+own canopy, the store, the price sign), a motel (two storeys under hip roofs, a porte-cochere, parking) and a mechanic
+(a blue steel building on a gravel lot with cars outside). Every town is under a square mile. The streets are a road
+class of their own (`street`: 30 ft of plain asphalt, no ditches through town, 30 mph in the GPS), the ground under a
+town is smoothed and the paved lots flattened before the roads are graded, and the places (`TestMapData/places.json`,
+copied to `Resources/TestMapPlaces.json`: each town's extent, light, truck stop with its pumps, diesel lanes, overnight
+spot and prices, motel with its guest spot and rate, mechanic with its service bay) are read at play time by
+`TestMapPlaces`. The map shows the towns by name with their truck stop (yellow), motel (blue) and mechanic (white), and
+the HUD names the street in town. The towns glow at night like the real ones round the map.
+
+The chase is a **career** (`ChaseGame`, `ChaseSetup.DaySeed`): **New career** picks the map, vehicle, gear and the
+career's seed; every day's storms come from the seed and the day. A day opens at **8 am on the morning forecast**
+(`ChaseForecast`): the day's outlook over the map (when towering cumulus is expected, each storm's lane, mode (classic
+or HP), likely track drawn as a cone from where it comes onto the map, and its tornado probabilities: any, EF2+, EF4+,
+read from the day's real storms with a forecaster's spread) and the choice of truck stop to start from (click a station
+or its button). **Head out** fast-forwards to the first towering cumulus with the truck parked there; the two storms
+cross the map over the game hour, then the clock keeps running (T speeds it) and the chaser drives to a motel or a
+truck stop and **sleeps** on the marked, signed space (F; `ChaseSleep`): the screen fades to black, a quote fades in,
+holds five seconds and fades out, and the chaser wakes at 8 am next day with a fade from black and the next forecast.
+Sleeping saves the career (`ChaseProfile`: day, credits, sanity, each vehicle's fuel and condition); leaving a day from
+the pause menu goes back to its morning. A motel night costs the town's rate (84-104 cr) and rests to 100 %; car camping
+on the truck stop's lot a third of it, to 75 %.
+
+**Fuel** (`ChaseFuel`): the half-ton burns regular unleaded (26 gal tank), the dually diesel (34), the rally hatchback
+premium only (14); the engine burns at idle and more under load and at speed (`ChaseVehicle.idleGph` / `fullGph`), and
+an empty tank stops it. Every truck stop sells all three grades at Kansas prices (state averages of 29 Sep 2026, AAA via
+Gasolytics / Fuelwide: regular 4.13, premium 4.84, diesel 6.15 $/gal, each station within 15 cents; `world.FUEL_BASE`):
+stop beside a pump island and hold **F**; the credits go as the gallons come. **Wear** (`ChaseWear`): the condition falls
+with the miles (three times as fast on gravel, nine off the road), with every collision and with time in a tornado's
+wind over about 55 mph; a worn engine gives less power, under 12 % the truck limps; stop in the mechanic's bay and press
+**F** for the bill (the missing points at the vehicle's rate, 4-6 cr a point, and the shop's). **Sanity**
+(`ChaseSanity`): the bar drains with the day's hours awake (half gone at 12 h, a quarter left at 20, empty at 32), half
+again as fast within half a mile of a tornado (counting toward the same clock); at each phase the chaser walks, runs
+and drives at 50 / 25 / 10 % and everything pays 25 / 50 / 75 % more; with the bar empty the chaser passes out at a
+random moment within eight hours: on foot right there, flying the drone once it has been brought home, driving once
+the truck has stopped ("you passed out."), waking at 8 am at half.
+
+Check: **StormLab > Test Map > Chase Career Check** (`ChaseCareerCheck.RunFromCommandLine`, about 5 min): the places
+and the rig (lights cycling, 12 marked spots), pictures of Haskett (`Screenshots/town_*.png`), a career's morning, the
+forecast, heading out, the day's clock, fuel (burn, an empty tank, the pump and its bill), wear and repairs, every sanity
+phase and the drain by a tornado, a motel night, car camping, passing out three ways, continuing a career. Report
+`validation/reports/ChaseCareerCheck.md`.
+
 Useful properties for a game: `Frame.stage` / `Frame.caption`, `TornadoAmount`, `TornadoGroundWorld`,
 `TornadoWindAt(world)` (a Rankine-vortex presentation wind), `UpdraftWorld(minutes)`.
 

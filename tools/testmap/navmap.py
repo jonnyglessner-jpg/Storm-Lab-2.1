@@ -31,7 +31,7 @@ import map_config as cfg
 OUT = cfg.UNITY_GEN / "Resources"
 NAME = {"dixie": "DixieMapNav", "midwest": "MidwestMapNav"}.get(cfg.MAP, "TestMapNav")
 RES = 2048
-CLASSES = {"state": 0, "paved": 1, "gravel": 2}
+CLASSES = {"state": 0, "paved": 1, "gravel": 2, "street": 3}
 # WSR-88D KDDC (Dodge City, KS): 37.7608 N, 99.9689 W, the site about 789 m above sea level (NWS site list); the
 # antenna is taken 20 m up its tower
 RADAR = dict(name="KDDC", lat=37.76083, lon=-99.96889, elev=789.0 + 20.0)
@@ -91,7 +91,7 @@ def graph(net):
             seg = pts[ia:ib + 1]
             if len(seg) < 2:
                 continue
-            if st["cls"] == "state" or cfg.MAP != "plains":
+            if st["cls"] in ("state", "street") or cfg.MAP != "plains":
                 pieces = [(na, nb, seg, st["name"])]
             else:
                 # split at the corners where a grid road turns from one section line onto the next

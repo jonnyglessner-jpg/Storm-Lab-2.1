@@ -19,6 +19,21 @@ the scripts in [real/](real/README.md) with this folder's road, profile, mesh an
 | Roads | Designed (real roads have dead ends and correction-line jogs). |
 | Farmsteads, trees, power lines | Placed by rules from the reference photos. |
 
+## Towns
+
+Four small towns (`towns.py`, user 2026-11-02, after Scott City references), one at each state-route crossing: Haskett
+(K-283 / K-19), Ravanna (K-183 / K-19), Lanark (K-283 / K-156) and Eldora (three miles east of the K-183 / K-156 crossing
+on K-156, the Pawnee being near the crossing; its Main Street is the section road Ave 39, which stops at the edge of
+town). Each: a Main Street with storefronts and a traffic light at the crossing, residential blocks 100 x 140 m with 17 m
+lots (houses, garages, driveways, sidewalks, parkway and yard trees), the elevator on Main at the edge, a church, the
+school, a park, the water tower, and on the highway strip the truck stop, the motel and the mechanic, each with its
+marked space for the game. `roads.py` takes the streets (class `street`: 30 ft, plain asphalt, rank with the paved
+county roads, 8 m corners, double yellow on the highways through town), `world.py` smooths the ground under each town,
+flattens the paved lots, lays lawns over the blocks, builds the sidewalks, driveways and lots as meshes, adds the
+buildings (new kinds for `TestMapBuilder`: store, box, canopy, pump, sign, motel, silo, watertower, steeple, car) and
+trees, keeps farmsteads, windbreaks and power poles out, and writes `places.json` (also to
+`Assets/TestMap/Generated/Resources/TestMapPlaces.json`). `python -I tools/testmap/towns.py` prints each town's size.
+
 ## Road rules
 
 - A gravel county road on every section line, both ways (24 ft, crowned 3 %), the whole map.

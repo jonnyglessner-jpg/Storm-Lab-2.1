@@ -95,6 +95,8 @@ namespace StormLab.TestMap
             if (!GetComponent<TestMapAudio>()) gameObject.AddComponent<TestMapAudio>().world = this;
             // the GPS and radar map
             if (!GetComponent<TestMapMinimap>()) gameObject.AddComponent<TestMapMinimap>().world = this;
+            // the towns' traffic lights and marked parking spots (TestMapPlaces)
+            if (!GetComponent<TestMapTownRig>()) gameObject.AddComponent<TestMapTownRig>().world = this;
             if (gameMode) SetGameMode(true);
             // the chase game: main menu, walking, the camera, credits and the mesonet (StormLab.Game)
             if (!GetComponent<Game.ChaseGame>()) gameObject.AddComponent<Game.ChaseGame>().world = this;
@@ -284,6 +286,14 @@ namespace StormLab.TestMap
                 }
                 return $"{near}   ({x / Mile:0.0} mi E, {z / Mile:0.0} mi N)";
             }
+            // in a town: the street by name (the towns' streets are in the GPS data)
+            var town = TestMapPlaces.TownAt(TestMapPlaces.Load(navResource), p, 40f);
+            if (town != null)
+            {
+                var roads = GetComponent<TestMapMinimap>()?.Roads;
+                var s = roads != null ? roads.Nearest(new Vector2(p.x, p.z)) : default;
+                if (roads != null && s.edge >= 0 && s.off < 60f) return $"{roads.edges[s.edge].name}, {town.name}   ({x / Mile:0.0} mi E, {z / Mile:0.0} mi N)";
+            }
             int ix = Mathf.RoundToInt(x / Mile - 0.5f), iz = Mathf.RoundToInt(z / Mile - 0.5f);
             float dx = Mathf.Abs(x - (ix + 0.5f) * Mile), dz = Mathf.Abs(z - (iz + 0.5f) * Mile);
             string road = dx < dz ? $"Ave {ix}" : $"Rd {iz}";
@@ -392,6 +402,7 @@ namespace StormLab.TestMap
                 help = "W/S or arrows  throttle / brake / reverse    A/D  steer    Space  handbrake    R  reset car    L  lights\n" +
                        "E  get out / get in (walk: WASD, Shift runs)    " + (follow ? "C  camera (drone follow cam / roof / cab; hold right mouse to look)" : "C  camera (roof, locked on the tornado / cab; the drone's follow cam adds the view from behind)") + "\n" +
                        "X  photo camera (arrows: shutter and aperture, Q/E ISO, scroll zooms, click shoots)    B  drone (WASD, Q/E down / up, B home)\n" +
+                       "F  at a pump: hold to fuel up    F  in a mechanic's bay: repairs    F  on a marked space at a motel or truck stop: sleep (saves the day)\n" +
                        "T  clock speed (1x / 10x / 30x / 60x)    P  pause    ]  +5 min (no going back)    H  hide help (F1: all HUD)    0  sound    F2  storm quality\n" +
                        "Esc  menu and shop    M  map open / close (with the laptop in the cab, the phone on foot; click a road on it to get directions)";
             }

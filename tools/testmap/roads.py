@@ -27,6 +27,7 @@ from shapely.geometry import LineString, Point
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import map_config as cfg
 from terrain import resample
+import towns as TN
 
 MILE = cfg.MILE
 S = cfg.SIZE_M
@@ -38,6 +39,8 @@ CLASSES = {
     "state": dict(half=3.66 + 1.83, edge=0.9, rank=3),
     "paved": dict(half=3.35, edge=0.9, rank=2),
     "gravel": dict(half=3.66, edge=0.0, rank=1),
+    # town streets (towns.py): 30 ft of asphalt, no shoulders, no curbs
+    "street": dict(half=TN.STREET_HALF, edge=0.0, rank=2),
 }
 
 
@@ -134,7 +137,7 @@ DESIGN = {
     "sparse_bridges": {"Arkansas River": 6.5, "Pawnee River": 3.2},     # km between county bridges
     "min_bridge_angle": 55.0,  # county bridges only where the road crosses the river this squarely or better
     "bridge_da_km2": 100.0,    # creeks draining more than this are bridged; smaller ones run through culverts
-    "corner_radius": {"gravel": 150.0, "paved": 250.0, "state": 400.0},
+    "corner_radius": {"gravel": 150.0, "paved": 250.0, "state": 400.0, "street": 8.0},
 }
 
 
@@ -145,6 +148,9 @@ def build_network(streams, design=DESIGN):
         pts, cov = route_points(dict(axis=axis, legs=legs))
         roads.append(dict(name=name, cls="state", pts=pts))
         covered += cov
+    # the towns: where a town's Main Street is a section road (Eldora), the gravel stops at the edge of town
+    for t in TN.TOWNS:
+        covered += TN.covered(t)
 
     # the section grid, minus what the state routes took over
     for axis in ("x", "z"):
@@ -159,6 +165,10 @@ def build_network(streams, design=DESIGN):
                     roads.append(dict(name=f"{'Rd' if axis == 'x' else 'Ave'} {i}", cls=cls,
                                       pts=a if axis == "x" else a[:, ::-1]))
                 u0 = max(u0, hi)
+    # the towns' streets: every block edge that is not a highway, from grid node to grid node
+    for t in TN.TOWNS:
+        for name, a, b in TN.street_segments(t):
+            roads.append(dict(name=name, cls="street", pts=np.array([a, b], float)))
     return roads
 
 
@@ -441,7 +451,8 @@ def report(nodes, stks, deg, radii, streams):
                  f"{len(dead)}; corners rounded: {len(radii)} (radius {min(radii, default=0):.0f}-"
                  f"{max(radii, default=0):.0f} m)")
     from scipy.spatial import cKDTree
-    J = nodes[deg >= 3]
+    # (the towns' street crossings are 100-140 m apart by design: left out of the spacing check)
+    J = np.array([n for n in nodes[deg >= 3] if TN.inside(n, 50.0) is None])
     d, _ = cKDTree(J).query(J, k=2)
     lines.append(f"closest junctions {d[:, 1].min():.0f} m apart; closer than {NEAR_NODE:.0f} m: "
                  f"{int((d[:, 1] < NEAR_NODE).sum())}")
@@ -489,7 +500,7 @@ def preview(stks, streams, path):
         p = np.asarray(st["pts"])
         if bridged(st):
             ax.plot(p[:, 0], p[:, 1], color="#1060ff", lw=2.5 if st["kind"] == "river" else 1.0)
-    col = {"state": ("#d01010", 2.2), "paved": ("#202020", 1.4), "gravel": ("#f0f0f0", 0.6)}
+    col = {"state": ("#d01010", 2.2), "paved": ("#202020", 1.4), "gravel": ("#f0f0f0", 0.6), "street": ("#a0a0a0", 0.5)}
     for st in stks:
         c, w = col[st["cls"]]
         ax.plot(st["pts"][:, 0], st["pts"][:, 1], color=c, lw=w)

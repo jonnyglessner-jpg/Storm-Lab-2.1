@@ -20,16 +20,25 @@ namespace StormLab.Game
         public static int chaseCredits, chasePhotos; public static double chaseMesonetSeconds;
         /// <summary>a chase that ended (the summary shows it until the menu is used again)</summary>
         public static bool chaseOver;
+        /// <summary>the clock of day in the chase, hours (the morning forecast holds it at 8; the day's storms set it to startHour)</summary>
+        public static float hour = 8f;
+        /// <summary>the morning: the forecast is up and the day's storms are not out yet</summary>
+        public static bool morning;
+        /// <summary>the day's storms were spawned (and have been chased, or missed)</summary>
+        public static bool dayStarted;
+
+        /// <summary>The seed of a career day's storms.</summary>
+        public static int DaySeed(int careerSeed, int day) => (careerSeed * 131 + day * 7919) % 999983 + 1;
 
         /// <summary>Start the chase the menu set up (the caller loads the map's scene when it is not the one open).</summary>
         public static void BeginChase()
         {
-            state = State.Chase; chaseOver = false;
+            state = State.Chase; chaseOver = false; morning = true; dayStarted = false; hour = 8f;
             chaseCredits = 0; chasePhotos = 0; chaseMesonetSeconds = 0;
             if (!ChaseCatalog.GearItem(cameraBody)?.Owned ?? true) cameraBody = "cam_compact";
             if (!ChaseCatalog.GearItem(lens)?.Owned ?? true) lens = "lens_kit";
             if (!ChaseProfile.Current.Owns("mesonet")) mountMesonet = false;
-            startHour = StartHourFor(seed);
+            startHour = StartHourFor(DaySeed(ChaseProfile.Current.careerSeed, ChaseProfile.Current.day));
             ChaseProfile.Current.chases++;
         }
 

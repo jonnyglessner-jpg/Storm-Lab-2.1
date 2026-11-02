@@ -62,7 +62,7 @@ public static class TestMapBuilder
         public SpawnMeta[] spawns;
         public RouteMeta[] routes;
     }
-    [Serializable] class Building { public string kind; public float x, y, z, yaw, w, l, h, roof; public float[] wall, roofc; }
+    [Serializable] class Building { public string kind, tag; public float x, y, z, yaw, w, l, h, roof; public float[] wall, roofc; }
     [Serializable] class Buildings { public Building[] items; }
     [Serializable] class PowerLine { public bool three; public float[] poles; }
     [Serializable] class Power { public PowerLine[] lines; }
@@ -645,6 +645,11 @@ public static class TestMapBuilder
         var fixture = Lit("yard_fixture", null, new Color(0.10f, 0.17f, 0.12f), 0.6f);
         var bulbMat = Lit("yard_bulb", null, new Color(1f, 0.95f, 0.85f), 0.9f);
         var yardLights = new List<(Vector3 pos, Quaternion q)>();
+        // the towns' extra materials (tools/testmap/towns.py: storefronts, the truck stop, the motel, the water tower)
+        var glassMat = Lit("town_glass", null, new Color(0.08f, 0.10f, 0.12f), 0.9f);
+        var islandMat = Lit("town_concrete", null, new Color(0.72f, 0.71f, 0.68f), 0.3f);
+        var roofSlab = Lit("town_roof", null, new Color(0.30f, 0.30f, 0.31f), 0.2f);
+        var canopyLights = new List<Vector3>();
         foreach (var tile in items.GroupBy(b => (Mathf.FloorToInt((b.x + meta.sizeM / 2) / meta.tileM), Mathf.FloorToInt((b.z + meta.sizeM / 2) / meta.tileM))))
         {
             var origin = new Vector3(tile.Key.Item1 * meta.tileM - meta.sizeM / 2, 0, tile.Key.Item2 * meta.tileM - meta.sizeM / 2);
@@ -653,7 +658,8 @@ public static class TestMapBuilder
             int Sub(Material m) { int i = mats.IndexOf(m); if (i < 0) { mats.Add(m); b.AddSub(); i = mats.Count - 1; } return i; }
             foreach (var it in tile)
             {
-                var p = new Vector3(it.x, it.y - 0.3f, it.z) - origin;
+                // buildings are sunk 0.3 m into the ground; what sits on a paved pad (pumps, cars) stands on it
+                var p = new Vector3(it.x, it.y - (it.kind == "pump" || it.kind == "car" ? -0.02f : 0.3f), it.z) - origin;
                 var q = Quaternion.Euler(0, it.yaw, 0);
                 int wall = Sub(ColourMat(cache, it.wall, it.kind == "house" ? 0.2f : 0.45f));
                 int roof = Sub(ColourMat(cache, it.roofc, 0.5f));
@@ -687,6 +693,106 @@ public static class TestMapBuilder
                         b.Frustum(wall, p, q, 1.6f, 0.25f, it.h);
                         b.Disc(roof, p + Vector3.up * (it.h + 0.3f) + q * Vector3.forward * 0.4f, q, 1.5f, 16);
                         break;
+                    case "store":
+                    {
+                        // a flat-roofed storefront (downtown brick rows, the truck stop's store): walls, a dark roof slab,
+                        // a parapet along the street face (-forward, toward the street) and glass bands on that face
+                        b.Box(wall, p + Vector3.up * (it.h * 0.5f), q, new Vector3(it.w, it.h, it.l));
+                        b.Box(Sub(roofSlab), p + Vector3.up * (it.h + 0.04f), q, new Vector3(it.w - 0.2f, 0.08f, it.l - 0.2f));
+                        b.Box(wall, p + q * new Vector3(0f, it.h + 0.3f, -it.l / 2f + 0.15f), q, new Vector3(it.w, 0.6f, 0.3f));
+                        b.Box(roof, p + q * new Vector3(0f, it.h + 0.62f, -it.l / 2f + 0.15f), q, new Vector3(it.w + 0.06f, 0.08f, 0.36f));
+                        int glass = Sub(glassMat);
+                        float gh = Mathf.Min(2.6f, it.h - 0.9f);
+                        b.Box(glass, p + q * new Vector3(0f, 0.45f + gh / 2f, -it.l / 2f - 0.03f), q, new Vector3(it.w - 1.0f, gh, 0.05f));
+                        if (it.h > 6.2f) b.Box(glass, p + q * new Vector3(0f, it.h - 2.1f, -it.l / 2f - 0.03f), q, new Vector3(it.w - 1.6f, 1.5f, 0.05f));
+                        break;
+                    }
+                    case "box":
+                        // a plain flat-roofed block (the school, the elevator's headhouse, a dumpster)
+                        b.Box(wall, p + Vector3.up * (it.h * 0.5f), q, new Vector3(it.w, it.h, it.l));
+                        if (it.h > 3f) b.Box(Sub(roofSlab), p + Vector3.up * (it.h + 0.03f), q, new Vector3(it.w - 0.2f, 0.06f, it.l - 0.2f));
+                        break;
+                    case "canopy":
+                    {
+                        // the fuel canopy (or a motel's porte-cochere): a slab on columns, its fascia in the brand's colours,
+                        // lit from underneath at night
+                        b.Box(wall, p + Vector3.up * (it.h + 0.45f), q, new Vector3(it.w, 0.9f, it.l));
+                        b.Box(roof, p + Vector3.up * (it.h + 0.18f), q, new Vector3(it.w + 0.06f, 0.3f, it.l + 0.06f));
+                        int cols = it.l > 24f ? 3 : 2;
+                        int col = Sub(fixture);
+                        for (int ci = 0; ci < cols; ci++)
+                        {
+                            float zc = cols == 1 ? 0f : -it.l / 2f + 1.5f + (it.l - 3f) * ci / (cols - 1);
+                            foreach (float sx in new[] { -1f, 1f })
+                                b.Cylinder(col, p + q * new Vector3(sx * (it.w / 2f - 1.2f), 0f, zc), 0.22f, 0.22f, it.h, 10);
+                        }
+                        int nl = Mathf.Max(1, Mathf.RoundToInt(it.l / 10f));
+                        for (int li = 0; li < nl; li++)
+                            canopyLights.Add(origin + p + q * new Vector3(0f, it.h - 0.1f, -it.l / 2f + it.l * (li + 0.5f) / nl));
+                        break;
+                    }
+                    case "pump":
+                        // a pump island: the raised kerb, the dispenser and its brand band
+                        b.Box(Sub(islandMat), p + Vector3.up * 0.08f, q, new Vector3(1.4f, 0.16f, it.l + 1.4f));
+                        b.Box(wall, p + Vector3.up * (0.16f + it.h * 0.5f), q, new Vector3(it.w, it.h, it.l));
+                        b.Box(roof, p + Vector3.up * (0.16f + it.h - 0.15f), q, new Vector3(it.w + 0.03f, 0.3f, it.l + 0.03f));
+                        break;
+                    case "sign":
+                        // a sign on a pole: the board (l tall, w wide) at the top, its face in the wall colour
+                        b.Cylinder(Sub(fixture), p, 0.32f, 0.26f, it.h - it.l, 10);
+                        b.Box(roof, p + Vector3.up * (it.h - it.l / 2f), q, new Vector3(it.w, it.l, 0.3f));
+                        b.Box(wall, p + q * new Vector3(0f, it.h - it.l / 2f, 0.18f), q, new Vector3(it.w * 0.92f, it.l * 0.78f, 0.05f));
+                        b.Box(wall, p + q * new Vector3(0f, it.h - it.l / 2f, -0.18f), q, new Vector3(it.w * 0.92f, it.l * 0.78f, 0.05f));
+                        break;
+                    case "motel":
+                    {
+                        // two storeys of rooms under a hip roof, a walkway slab along both long sides, windows in rows
+                        b.Box(wall, p + Vector3.up * (it.h * 0.5f), q, new Vector3(it.w, it.h, it.l));
+                        b.Hipped(roof, p + Vector3.up * it.h, q, it.w, it.l, it.w * 0.26f, 0.6f);
+                        b.Box(Sub(islandMat), p + Vector3.up * (it.h * 0.5f), q, new Vector3(it.w + 2.4f, 0.22f, it.l));
+                        int glass = Sub(glassMat);
+                        int rooms = Mathf.Max(1, Mathf.RoundToInt(it.l / 4.2f));
+                        for (int ri = 0; ri < rooms; ri++)
+                        {
+                            float zc = -it.l / 2f + it.l * (ri + 0.5f) / rooms;
+                            foreach (float sx in new[] { -1f, 1f })
+                                for (int fl = 0; fl < 2; fl++)
+                                    b.Box(glass, p + q * new Vector3(sx * (it.w / 2f + 0.03f), 1.3f + fl * it.h * 0.5f, zc), q, new Vector3(0.05f, 1.3f, 1.6f));
+                        }
+                        break;
+                    }
+                    case "silo":
+                        b.Cylinder(wall, p, it.w / 2f, it.w / 2f, it.h, 18);
+                        b.Disc(wall, p + Vector3.up * it.h, Quaternion.LookRotation(Vector3.up), it.w / 2f, 18);
+                        break;
+                    case "watertower":
+                    {
+                        // the town's water tower: a tank (l tall, w across) on a central riser and six legs, a shallow cone top
+                        float tankBase = it.h - it.l, ring = it.w * 0.5f;
+                        int steel = wall;
+                        b.Cylinder(steel, p, 0.7f, 0.55f, tankBase, 12);
+                        for (int li = 0; li < 6; li++)
+                        {
+                            float a = li * 60f * Mathf.Deg2Rad;
+                            var g = p + new Vector3(Mathf.Cos(a) * (ring + 1.2f), 0f, Mathf.Sin(a) * (ring + 1.2f));
+                            var t = p + new Vector3(Mathf.Cos(a) * ring * 0.8f, tankBase, Mathf.Sin(a) * ring * 0.8f);
+                            b.Box(steel, (g + t) * 0.5f, Quaternion.LookRotation(t - g), new Vector3(0.3f, 0.3f, (t - g).magnitude));
+                        }
+                        b.Cylinder(steel, p + Vector3.up * tankBase, ring, ring, it.l, 24);
+                        b.Disc(steel, p + Vector3.up * tankBase, Quaternion.LookRotation(Vector3.down), ring, 24);
+                        b.ConeSmooth(steel, p + Vector3.up * it.h, ring + 0.2f, ring * 0.35f, 24);
+                        break;
+                    }
+                    case "steeple":
+                        b.Frustum(wall, p, q, it.w * 1.4f, it.w * 1.0f, it.h * 0.42f);
+                        b.ConeSmooth(roof, p + Vector3.up * (it.h * 0.42f), it.w * 0.5f, it.h * 0.58f, 8);
+                        break;
+                    case "car":
+                        b.Box(wall, p + Vector3.up * (0.35f + 0.3f), q, new Vector3(it.w, 0.6f, it.l));
+                        b.Box(Sub(glassMat), p + Vector3.up * (0.95f + 0.28f), q, new Vector3(it.w - 0.3f, 0.56f, it.l * 0.5f));
+                        foreach (float sx in new[] { -1f, 1f }) foreach (float sz in new[] { -1f, 1f })
+                            b.Box(Sub(fixture), p + q * new Vector3(sx * (it.w / 2f - 0.2f), 0.33f, sz * it.l * 0.32f), q, new Vector3(0.24f, 0.66f, 0.66f));
+                        break;
                     default:
                         b.Gabled(wall, roof, p, q, it.w, it.l, it.h, it.roof * it.w / 2);
                         break;
@@ -713,7 +819,13 @@ public static class TestMapBuilder
             var l = Spot("Yard light", lroot, pos, Quaternion.LookRotation(dir), 4000f, 140f, 70f, 45f, new Color(1f, 0.86f, 0.68f), 1500f);
             l.gameObject.SetActive(false);   // (TestMapNightLights activates those near the camera at night)
         }
-        Debug.Log($"[TestMap] {yardLights.Count} barns, each with a door and a yard light");
+        // the fuel canopies' lights: straight down from the slab, white, so the forecourt is lit at night
+        foreach (var pos in canopyLights)
+        {
+            var l = Spot("Canopy light", lroot, pos, Quaternion.LookRotation(Vector3.down), 9000f, 150f, 100f, 28f, new Color(1f, 0.97f, 0.92f), 1500f);
+            l.gameObject.SetActive(false);
+        }
+        Debug.Log($"[TestMap] {yardLights.Count} barns, each with a door and a yard light; {canopyLights.Count} canopy lights");
     }
 
     /// <summary>An HDRP spot light: its luminous flux (lm) aimed into its cone, no shadows, culled past fade m.</summary>
@@ -1099,6 +1211,28 @@ public class MeshBuilder
             var up = (Y * hw + X * sx * rise).normalized;
             Quad(roof, P(sx * (hw + o), h - dy, -hl - o), P(0, h + rise, -hl - o), P(0, h + rise, hl + o), P(sx * (hw + o), h - dy, hl + o), up);
             Quad(roof, P(sx * (hw + o), h - dy - 0.05f, -hl - o), P(0, h + rise - 0.05f, -hl - o), P(0, h + rise - 0.05f, hl + o), P(sx * (hw + o), h - dy - 0.05f, hl + o), -up);
+        }
+    }
+
+    /// <summary>A hip roof over a w (across) x l (along q's forward) footprint, eaves at b, the ridge `rise` above them,
+    /// overhanging `o`: two trapezoids along the length and a triangle at each end.</summary>
+    public void Hipped(int s, Vector3 b, Quaternion q, float w, float l, float rise, float o)
+    {
+        Vector3 X = q * Vector3.right, Z = q * Vector3.forward, Y = Vector3.up;
+        float hw = w / 2 + o, hl = l / 2 + o, dy = rise * o / (w / 2);
+        Vector3 P(float x, float y, float z) => b + X * x + Y * y + Z * z;
+        float r = Mathf.Max(0f, hl - hw);
+        Vector3 ra = P(0, rise, -r), rb = P(0, rise, r);
+        foreach (float sx in new[] { 1f, -1f })
+        {
+            var up = (Y * hw + X * sx * rise).normalized;
+            Quad(s, P(sx * hw, -dy, -hl), P(sx * hw, -dy, hl), rb, ra, up);
+        }
+        foreach (float sz in new[] { 1f, -1f })
+        {
+            var up = (Y * hl + Z * sz * rise).normalized;
+            int i0 = Vert(P(-hw, -dy, sz * hl), up), i1 = Vert(P(hw, -dy, sz * hl), up), i2 = Vert(sz > 0 ? rb : ra, up);
+            Tri(s, i0, i1, i2, up);
         }
     }
 

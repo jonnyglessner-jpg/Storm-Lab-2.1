@@ -1,10 +1,18 @@
 // The chase game on a map (added to the world by TestMapWorld at Start): puts the menu's set-up into effect (ChaseSetup:
-// the vehicle, the gear, the game's storms from the seed, the sandbox keys and rewinding off), owns the chaser on foot
-// (ChasePlayer), the photo camera (ChaseCamera), the mesonet (ChaseMesonet) and the drone (ChaseDrone), keeps the
-// credits (ChaseProfile), puts the map away until its screen is owned (MapAllowed) and ends the chase when the game
-// clock runs out. Free roam is the test map as it was, with the gear owned and no credits.
+// the vehicle, the gear, the sandbox keys and rewinding off), owns the chaser on foot (ChasePlayer), the photo camera
+// (ChaseCamera), the mesonet (ChaseMesonet), the drone (ChaseDrone), the tank (ChaseFuel), the truck's condition
+// (ChaseWear), the chaser's sanity (ChaseSanity), sleeping (ChaseSleep) and the morning forecast (ChaseForecast), keeps
+// the credits (ChaseProfile) and puts the map away until its screen is owned (MapAllowed). Free roam is the test map as
+// it was, with the gear owned and no credits.
 //
-//   Esc  menu and shop    E  get out / in    X  photo camera    B  drone    T / P / ]  clock speed, pause, +5 min (no rewind in a chase)
+// A career (user, 2026-11-02) runs day by day: every day opens at 8 am on the forecast, the chaser picks a truck stop to
+// start from, the day fast-forwards to the first towering cumulus (the storms' initiation hour) and the day's two storms
+// (ChaseSetup.DaySeed) cross the map over the game hour; when they are gone the clock keeps running and the chaser drives
+// to a motel or a truck stop and sleeps, which saves the career and brings the next morning. Fuel burns, the truck wears,
+// and the sanity bar drains with the hours awake.
+//
+//   Esc  menu and shop    E  get out / in    X  photo camera    B  drone    F  fuel / repairs / sleep at a marked spot
+//   T / P / ]  clock speed, pause, +5 min (no rewind in a chase)
 using System.Collections.Generic;
 using StormLab.TestMap;
 using UnityEngine;
@@ -21,20 +29,32 @@ namespace StormLab.Game
         public ChaseCamera Photo { get; private set; }
         public ChaseMesonet Mesonet { get; private set; }
         public ChaseDrone Drone { get; private set; }
+        public ChaseFuel Fuel { get; private set; }
+        public ChaseWear Wear { get; private set; }
+        public ChaseSanity Sanity { get; private set; }
+        public ChaseSleep Sleep { get; private set; }
+        public ChaseForecast Forecast { get; private set; }
 
         static ChaseGame instance;
         TestMapMinimap minimap;
-        /// <summary>a menu is up: the map's keys and the car ignore the keyboard</summary>
-        public static bool InputBlocked => instance && instance.Menu && instance.Menu.Showing;
-        /// <summary>photos and mesonet data pay: in a running chase only</summary>
-        public bool EarnsCredits => ChaseSetup.state == ChaseSetup.State.Chase && !ChaseSetup.chaseOver;
+        /// <summary>a menu, the forecast or a night is up: the map's keys and the car ignore the keyboard</summary>
+        public static bool InputBlocked => instance && ((instance.Menu && instance.Menu.Showing) || (instance.Forecast && instance.Forecast.Showing) || (instance.Sleep && instance.Sleep.Busy));
+        /// <summary>photos and mesonet data pay: in a running chase day only</summary>
+        public bool EarnsCredits => ChaseSetup.state == ChaseSetup.State.Chase && !ChaseSetup.chaseOver && !ChaseSetup.morning;
         public bool InChase => ChaseSetup.state == ChaseSetup.State.Chase;
+        /// <summary>how far the day's clock went this frame, hours (the sanity's clock)</summary>
+        public float ClockDeltaHours { get; private set; }
+        /// <summary>the day's storms have come and gone (the game hour is up)</summary>
+        public bool StormsDone { get; private set; }
+        /// <summary>yesterday's tally for the morning forecast</summary>
+        public int LastDay { get; set; } public int LastDayCredits { get; set; } public int LastDayPhotos { get; set; }
 
         struct Toast { public string text; public float until; }
         readonly List<Toast> toasts = new List<Toast>();
         float flashAmount, flashUntil;
-        GUIStyle big, small, mid;
+        GUIStyle big, small, mid, tiny;
         TestMapStormPanel panel;
+        bool saidDone;
 
         void Awake() { instance = this; }
 
@@ -47,6 +67,11 @@ namespace StormLab.Game
             Photo = gameObject.AddComponent<ChaseCamera>(); Photo.game = this;
             Mesonet = gameObject.AddComponent<ChaseMesonet>(); Mesonet.game = this;
             Drone = gameObject.AddComponent<ChaseDrone>(); Drone.game = this;
+            Fuel = gameObject.AddComponent<ChaseFuel>(); Fuel.game = this;
+            Wear = gameObject.AddComponent<ChaseWear>(); Wear.game = this;
+            Sanity = gameObject.AddComponent<ChaseSanity>(); Sanity.game = this;
+            Sleep = gameObject.AddComponent<ChaseSleep>(); Sleep.game = this;
+            Forecast = gameObject.AddComponent<ChaseForecast>(); Forecast.game = this;
             minimap = GetComponent<TestMapMinimap>();
             Time.timeScale = 1f;
             ApplyState();
@@ -54,8 +79,8 @@ namespace StormLab.Game
 
         void OnDestroy() { if (instance == this) instance = null; Time.timeScale = 1f; }
 
-        /// <summary>Put ChaseSetup.state into effect on this map: a chase starts (or restarts) from the menu's choices, free
-        /// roam is the sandbox with the gear owned, the menu shows over whatever the map is doing.</summary>
+        /// <summary>Put ChaseSetup.state into effect on this map: a chase (a career day) starts at its morning, free roam is
+        /// the sandbox with the gear owned, the menu shows over whatever the map is doing.</summary>
         public void ApplyState()
         {
             if (!panel) panel = GetComponent<TestMapStormPanel>();
@@ -67,17 +92,20 @@ namespace StormLab.Game
                     if (panel) { panel.locked = false; panel.show = true; }
                     ChaseVehicles.Apply(world.car, world, ChaseSetup.Vehicle);
                     Mesonet.SetMounted(ChaseProfile.Current.Owns("mesonet"));
+                    if (Forecast) Forecast.Close();
                     if (Menu) Menu.Close();
                     break;
                 default:
                     // the menu over the map: the sandbox storm keeps going behind it
                     world.sandboxKeys = true; world.allowRewind = true;
                     if (panel) { panel.locked = false; panel.show = false; }
+                    if (Forecast) Forecast.Close();
                     if (Menu) Menu.ShowMain();
                     break;
             }
         }
 
+        /// <summary>A career day's morning: the truck fitted and parked at the last station, no storms out, 8 am, the forecast up.</summary>
         void StartChaseHere()
         {
             var map = ChaseSetup.Map;
@@ -86,33 +114,94 @@ namespace StormLab.Game
             ChaseVehicles.Apply(world.car, world, ChaseSetup.Vehicle);
             world.sandboxKeys = false; world.allowRewind = false; world.showHelp = true;
             if (panel) { panel.locked = true; panel.show = false; }
-            // the game's two storms from the chase's seed, at real time, the truck at the map's first spot
+            // game mode without storms until the chaser heads out (BeginDay)
             if (!world.gameMode) world.SetGameMode(true);
-            if (world.game)
-            {
-                world.game.preset = map.preset; world.game.seed = ChaseSetup.seed;
-                world.game.Spawn(); world.game.playing = true;
-            }
+            if (world.game) { world.game.preset = map.preset; world.game.Clear(); world.game.playing = true; }
             world.SetClockSpeed(0);
-            // the time of day from the seed (noon, afternoon or dusk), run on by the game clock (Update)
-            if (panel) { panel.clockRuns = false; panel.hour = ChaseSetup.startHour; panel.Apply(); }
-            if (world.spots.Length > 0) world.TeleportTo(0);
+            ChaseSetup.morning = true; ChaseSetup.dayStarted = false; ChaseSetup.hour = 8f; StormsDone = false; saidDone = false;
+            if (panel) { panel.clockRuns = false; panel.hour = 8f; panel.Apply(); }
+            // parked at the last station (or the first town's)
+            var towns = TestMapPlaces.Load(world.navResource);
+            var t = TestMapPlaces.TownOf(towns, ChaseProfile.Current.spawnTown);
+            if (t != null && t.gas?.sleep != null) world.car.Teleport(t.gas.sleep.Position, Quaternion.Euler(0f, t.gas.sleep.yaw, 0f));
+            else if (world.spots.Length > 0) world.TeleportTo(0);
             // first person from the driver's seat; the view from behind the truck is the drone's follow cam
             if (world.cameraRig) { world.cameraRig.mode = ChaseProfile.Current.Owns("drone_follow") ? TestMapCamera.Mode.Chase : TestMapCamera.Mode.Cab; world.cameraRig.held = false; }
             Mesonet.SetMounted(ChaseSetup.mountMesonet && ChaseProfile.Current.Owns("mesonet"));
             Drone.ResetForChase();
             if (Menu) Menu.Close();
             toasts.Clear();
-            Say($"Chase on: {map.name}, {ChaseSetup.Vehicle.name}, game {ChaseSetup.seed}, {ChaseSetup.ClockText(ChaseSetup.startHour)} ({ChaseSetup.TimeOfDayName(ChaseSetup.startHour)})");
+            Sanity.Refill(ChaseProfile.Current.sanity);   // (the bar as saved; the clock behind it)
+            Forecast.Open();
+        }
+
+        /// <summary>Head out (the forecast's choice): the day's storms from the day's seed at their initiation hour, the truck
+        /// parked at the chosen town's truck stop.</summary>
+        public void BeginDay(string townKey)
+        {
+            var p = ChaseProfile.Current;
+            var map = ChaseSetup.Map;
+            int seed = ChaseSetup.DaySeed(p.careerSeed, p.day);
+            if (!world.gameMode) world.SetGameMode(true);
+            if (world.game)
+            {
+                world.game.preset = map.preset; world.game.seed = seed;
+                world.game.Spawn(); world.game.playing = true; world.game.gameMinutes = 0f; world.game.Apply();
+            }
+            world.SetClockSpeed(0);
+            ChaseSetup.seed = seed;
+            ChaseSetup.startHour = ChaseSetup.StartHourFor(seed);
+            ChaseSetup.hour = ChaseSetup.startHour; ChaseSetup.morning = false; ChaseSetup.dayStarted = true; StormsDone = false; saidDone = false;
+            if (panel) { panel.clockRuns = false; panel.hour = ChaseSetup.hour; panel.Apply(); }
+            var towns = TestMapPlaces.Load(world.navResource);
+            var t = TestMapPlaces.TownOf(towns, townKey);
+            if (t != null && t.gas?.sleep != null)
+            {
+                if (Player && Player.OnFoot) Player.GetIn();
+                world.car.Teleport(t.gas.sleep.Position, Quaternion.Euler(0f, t.gas.sleep.yaw, 0f));
+                p.spawnTown = t.key;
+            }
+            world.car.acceptInput = !(Player && Player.OnFoot) && !(Photo && Photo.Active) && !(Drone && Drone.Flying);
+            Drone.ResetForChase();
+            p.Save();
+            Say($"Day {p.day}: {ChaseSetup.ClockText(ChaseSetup.hour)}, towering cumulus to the west. {(t != null ? t.gas.name + ", " + t.name : map.name)}, {ChaseSetup.Vehicle.name}");
         }
 
         void Update()
         {
-            if (InChase && !ChaseSetup.chaseOver && world.game && world.game.Scenario != null && world.game.gameMinutes >= world.game.gameLength - 1e-3f)
-                EndChase();
-            // the clock of day keeps the game's time: a minute of game is a minute of day, at whatever speed T sets
-            if (InChase && panel && world.game) { panel.clockRuns = false; panel.hour = Mathf.Repeat(ChaseSetup.startHour + world.game.gameMinutes / 60f, 24f); }
+            ClockDeltaHours = 0f;
+            if (InChase && world.game)
+            {
+                // the day's clock: with the game clock while the storms are out, then on at the same speed (T sets it)
+                if (!ChaseSetup.morning && !(Sleep && Sleep.Busy) && Time.timeScale > 0f && world.game.playing)
+                {
+                    float speed = world.game.minutesPerSecond * 60f;
+                    float before = ChaseSetup.hour;
+                    if (world.game.Scenario != null && world.game.gameMinutes < world.game.gameLength - 1e-3f)
+                        ChaseSetup.hour = Mathf.Repeat(ChaseSetup.startHour + world.game.gameMinutes / 60f, 24f);
+                    else ChaseSetup.hour = Mathf.Repeat(ChaseSetup.hour + Time.deltaTime * speed / 3600f, 24f);
+                    ClockDeltaHours = Mathf.Repeat(ChaseSetup.hour - before + 24f, 24f);
+                    if (ClockDeltaHours > 12f) ClockDeltaHours = 0f;
+                }
+                if (panel) { panel.clockRuns = false; panel.hour = ChaseSetup.hour; }
+                bool done = ChaseSetup.dayStarted && world.game.Scenario != null && world.game.gameMinutes >= world.game.gameLength - 1e-3f;
+                if (done && !saidDone) { saidDone = true; Say("The storms have moved off the map. Find a motel or a truck stop and sleep to save the day."); }
+                StormsDone = done;
+            }
             if (minimap) minimap.hidden = !MapAllowed;
+        }
+
+        void LateUpdate()
+        {
+            if (!world || !world.car) return;
+            if (InChase)
+            {
+                world.car.powerScale = Fuel.PowerScale * Wear.PowerScale;
+                world.car.speedScale = Sanity.SpeedScale;
+                // the forecast and a night take the wheel away
+                if ((Forecast && Forecast.Showing) || (Sleep && Sleep.Busy)) world.car.acceptInput = false;
+            }
+            else { world.car.powerScale = 1f; world.car.speedScale = 1f; if (Player) Player.speedScale = 1f; }
         }
 
         /// <summary>The map (bottom right) is a screen the chaser must own (user, 2026-11-02): the laptop shows it in the
@@ -127,7 +216,8 @@ namespace StormLab.Game
             }
         }
 
-        /// <summary>The hour is up: the tally goes to the profile and the summary comes up.</summary>
+        /// <summary>The career is abandoned for now (the pause menu): the tally goes to the profile and the summary comes up.
+        /// The day itself is not saved: a career resumes at the morning of the day last slept into.</summary>
         public void EndChase()
         {
             if (ChaseSetup.chaseOver) return;
@@ -139,14 +229,16 @@ namespace StormLab.Game
             if (Menu) Menu.ShowSummary();
         }
 
-        /// <summary>Credits earned (a chase only; the caller checks EarnsCredits). why null: quietly (the mesonet's stream).</summary>
+        /// <summary>Credits earned (a chase only; the caller checks EarnsCredits), times the sanity's bonus. why null: quietly (the mesonet's stream).</summary>
         public void Earn(int amount, string why)
         {
             if (amount <= 0 || !EarnsCredits) return;
-            ChaseProfile.Current.Earn(amount);
-            ChaseSetup.chaseCredits += amount;
-            flashAmount += amount; flashUntil = Time.unscaledTime + 1.5f;
-            if (why != null) Say($"{why}   +{amount} cr");
+            float mult = Sanity ? Sanity.ProfitMultiplier : 1f;
+            int paid = Mathf.Max(1, Mathf.RoundToInt(amount * mult));
+            ChaseProfile.Current.Earn(paid);
+            ChaseSetup.chaseCredits += paid;
+            flashAmount += paid; flashUntil = Time.unscaledTime + 1.5f;
+            if (why != null) Say($"{why}   +{paid} cr{(mult > 1.01f ? $" (x{mult:0.00} sleepless)" : "")}");
             if (ChaseSetup.chaseCredits % 50 == 0 || why != null) ChaseProfile.Current.Save();
         }
 
@@ -160,16 +252,17 @@ namespace StormLab.Game
                 big = new GUIStyle(GUI.skin.label) { fontSize = 24, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
                 mid = new GUIStyle(GUI.skin.label) { fontSize = 16, alignment = TextAnchor.MiddleCenter };
                 small = new GUIStyle(GUI.skin.label) { fontSize = 14, alignment = TextAnchor.MiddleCenter };
-                big.normal.textColor = mid.normal.textColor = small.normal.textColor = Color.white;
+                tiny = new GUIStyle(GUI.skin.label) { fontSize = 13 };
+                big.normal.textColor = mid.normal.textColor = small.normal.textColor = tiny.normal.textColor = Color.white;
             }
             float W = Screen.width, H = Screen.height;
             if (ChaseSetup.state != ChaseSetup.State.Menu)
             {
-                // the credits, top centre, with what this chase has earned
+                // the credits, top centre, with what this day has earned
                 var r = new Rect(W * 0.5f - 130, 16, 260, 50);
                 GUI.Box(r, GUIContent.none);
                 GUI.Label(new Rect(r.x, r.y + 2, r.width, 30), $"{ChaseProfile.Current.credits:n0} credits", big);
-                string sub = InChase ? $"this chase +{ChaseSetup.chaseCredits:n0}" : "free roam: nothing to earn";
+                string sub = InChase ? $"today +{ChaseSetup.chaseCredits:n0}" : "free roam: nothing to earn";
                 if (Time.unscaledTime < flashUntil && flashAmount > 0) sub = $"+{flashAmount:n0}";
                 else flashAmount = 0;
                 GUI.Label(new Rect(r.x, r.y + 28, r.width, 20), sub, small);
@@ -180,11 +273,12 @@ namespace StormLab.Game
                 {
                     float a = Mathf.Clamp01((t.until - Time.unscaledTime) / 0.8f);
                     GUI.color = new Color(1f, 1f, 1f, a);
-                    var tr = new Rect(W * 0.5f - 260, y, 520, 26);
+                    var tr = new Rect(W * 0.5f - 300, y, 600, 26);
                     GUI.Box(tr, GUIContent.none); GUI.Label(tr, t.text, mid);
                     GUI.color = Color.white; y += 28;
                 }
             }
+            if (InChase) CareerBox(H);
             // getting in and out, the drone
             if (Player && !(Photo && Photo.Active) && !(Drone && Drone.Flying))
             {
@@ -195,6 +289,35 @@ namespace StormLab.Game
                 if (Drone && Drone.Owned && !Drone.Following && Drone.Battery > 0.05f) hint = (hint != null ? hint + "      " : "") + "B  launch the drone";
                 if (hint != null) GUI.Label(new Rect(W * 0.5f - 300, H - 36, 600, 24), hint, small);
             }
+        }
+
+        /// <summary>The day, the clock, the tank, the truck's condition and the sanity bar, beside the speed box.</summary>
+        void CareerBox(float H)
+        {
+            var p = ChaseProfile.Current; var v = ChaseSetup.Vehicle;
+            var r = new Rect(452, H - 132, 380, 116);
+            GUI.Box(r, GUIContent.none);
+            float x = r.x + 12, y = r.y + 6;
+            string where = "";
+            var town = TestMapPlaces.TownAt(TestMapPlaces.Load(world.navResource), world.car.transform.position, 200f);
+            if (town != null) where = "  ·  " + town.name;
+            GUI.Label(new Rect(x, y, 360, 20), $"Day {p.day}  ·  {ChaseSetup.ClockText(ChaseSetup.hour)}{(ChaseSetup.morning ? "  ·  morning" : StormsDone ? "  ·  storms gone: sleep to save" : "")}{where}", tiny); y += 22;
+            float gal = Fuel.Gallons, tank = Fuel.TankGal;
+            Bar(new Rect(x, y + 3, 110, 12), gal / Mathf.Max(tank, 1f), gal / Mathf.Max(tank, 1f) > 0.15f ? new Color(0.95f, 0.75f, 0.2f) : new Color(1f, 0.35f, 0.3f));
+            GUI.Label(new Rect(x + 118, y - 2, 250, 20), $"Fuel {gal:0.0} / {tank:0} gal {v.FuelName}{(Fuel.Empty ? "  ·  EMPTY" : Fuel.BurnGph > 0.01f ? $"  ·  {Fuel.BurnGph:0.0} gal/h" : "")}", tiny); y += 22;
+            float c = Wear.Condition;
+            Bar(new Rect(x, y + 3, 110, 12), c, c > 0.4f ? new Color(0.4f, 0.8f, 0.4f) : c > 0.12f ? new Color(0.95f, 0.75f, 0.2f) : new Color(1f, 0.35f, 0.3f));
+            GUI.Label(new Rect(x + 118, y - 2, 250, 20), $"Truck {c:P0}{(Wear.Limping ? "  ·  LIMPING" : "")}  ·  {Wear.Surface}", tiny); y += 22;
+            float s = Sanity.Sanity; int ph = Sanity.Phase;
+            Bar(new Rect(x, y + 3, 110, 12), s, ph == 0 ? new Color(0.5f, 0.75f, 1f) : ph == 1 ? new Color(0.95f, 0.75f, 0.2f) : new Color(1f, 0.35f, 0.3f));
+            GUI.Label(new Rect(x + 118, y - 2, 260, 20), $"Sanity {s:P0}  ·  awake {Sanity.AwakeHours:0.0} h{(ph > 0 ? $"  ·  pays x{Sanity.ProfitMultiplier:0.00}, speed {Sanity.SpeedScale:P0}" : "")}{(Sanity.NearTornado ? "  ·  near a tornado" : "")}", tiny);
+        }
+
+        static void Bar(Rect r, float f, Color c)
+        {
+            GUI.color = new Color(0f, 0f, 0f, 0.6f); GUI.DrawTexture(r, Texture2D.whiteTexture);
+            GUI.color = c; GUI.DrawTexture(new Rect(r.x + 1, r.y + 1, (r.width - 2) * Mathf.Clamp01(f), r.height - 2), Texture2D.whiteTexture);
+            GUI.color = Color.white;
         }
     }
 }

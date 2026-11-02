@@ -25,7 +25,7 @@ from roads import CLASSES
 MAT = ["road_state", "road_state_nopass", "road_county", "road_gravel", "plain_asphalt", "plain_gravel", "concrete",
        "water"]
 M_STATE, M_NOPASS, M_COUNTY, M_GRAVEL, M_PASPHALT, M_PGRAVEL, M_CONCRETE, M_WATER = range(8)
-FILLET = {"state": 15.0, "paved": 12.0, "gravel": 10.0}
+FILLET = {"state": 15.0, "paved": 12.0, "gravel": 10.0, "street": 7.0}
 SKIRT_OUT, SKIRT_DOWN = 0.8, 0.4
 CHUNK_M = 300.0
 REPEAT = 12.192
@@ -126,6 +126,8 @@ def ribbon_material(prof, i, on_bridge):
         return M_NOPASS if prof["nopass"] is not None and prof["nopass"][i] else M_STATE
     if cls == "paved":
         return M_COUNTY
+    if cls == "street":
+        return M_PASPHALT          # town streets: plain asphalt, no markings
     return M_CONCRETE if on_bridge else M_GRAVEL
 
 
@@ -455,6 +457,51 @@ def build_roads(tm, profs, degree, nodes):
             a = max(a, c1)
     add_polys(tm, polys)
     return len(polys)
+
+
+# ----------------------------------------------------------------------------------------------- towns: pads, strips
+
+def add_strip(tm, a, b, width, mat, ground, lift=0.04, step=8.0):
+    """A flat strip on the ground (a sidewalk, a driveway) from a to b, rows every `step` m, `lift` m over the terrain."""
+    a, b = np.asarray(a, float), np.asarray(b, float)
+    L = np.linalg.norm(b - a)
+    if L < 0.5:
+        return
+    u = (b - a) / L
+    n = np.array([-u[1], u[0]])
+    rows = max(2, int(L / step) + 1)
+    V, UV, T = [], [], []
+    for k in range(rows):
+        p = a + u * L * k / (rows - 1)
+        for o in (-width / 2, width / 2):
+            q = p + n * o
+            V.append([q[0], ground(q[0], q[1]) + lift, q[1]])
+            UV.append([q[0] / 4.0, q[1] / 4.0])
+    for k in range(rows - 1):
+        T += [(2 * k, 2 * k + 1, 2 * k + 2), (2 * k + 1, 2 * k + 3, 2 * k + 2)]
+    tm.add(tm.bucket(a[0], a[1], "roads"), mat, V, UV, T)
+
+
+def add_pad(tm, pts, mat, ground, lift=0.03, cell=8.0):
+    """A paved pad (a parking lot, a yard) over an axis-aligned rectangle: a grid of quads on the ground (the terrain under
+    it is flattened by world.grade_towns before the roads are graded, and the grid follows what is left)."""
+    P = np.asarray(pts, float)
+    x0, z0 = P.min(0)
+    x1, z1 = P.max(0)
+    nx, nz = max(1, int((x1 - x0) / cell) + 1), max(1, int((z1 - z0) / cell) + 1)
+    xs = np.linspace(x0, x1, nx + 1)
+    zs = np.linspace(z0, z1, nz + 1)
+    V, UV, T = [], [], []
+    for j, z in enumerate(zs):
+        for i, x in enumerate(xs):
+            V.append([x, ground(x, z) + lift, z])
+            UV.append([x / 8.0, z / 8.0])
+    for j in range(nz):
+        for i in range(nx):
+            a = j * (nx + 1) + i
+            b, c, d = a + 1, a + nx + 1, a + nx + 2
+            T += [(a, b, c), (b, d, c)]
+    tm.add(tm.bucket(float(P[:, 0].mean()), float(P[:, 1].mean()), "roads"), mat, V, UV, T)
 
 
 # --------------------------------------------------------------------------------------------------------- bridges
