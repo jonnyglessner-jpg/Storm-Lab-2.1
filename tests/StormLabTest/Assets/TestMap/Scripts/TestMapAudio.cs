@@ -1,6 +1,6 @@
 // The test map's sound: the storms' tornado wind, rain, hail and thunder (StormAudio) at the truck, or at the camera in
 // free flight; the truck's engine and tyres (TestMapCarAudio); the plains ambience, breeze and birds (CountryAmbience).
-// TestMapWorld adds it at Start. M mutes and unmutes everything.
+// TestMapWorld adds it at Start. 0 mutes and unmutes everything.
 using StormLab.Audio;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -32,8 +32,9 @@ namespace StormLab.TestMap
             // the wind and rain at the truck, or where the free camera is
             var rig = world.cameraRig;
             Storm.player = rig && rig.mode == TestMapCamera.Mode.Free ? rig.transform : world.car ? world.car.transform : null;
-            var kb = Keyboard.current;
-            if (kb != null && kb.mKey.wasPressedThisFrame) AudioListener.volume = AudioListener.volume > 0f ? 0f : 1f;
+            // 0 mutes (M was the mute until 2026-11-02; the user gave M to the map)
+            var kb = Game.ChaseGame.InputBlocked ? null : Keyboard.current;
+            if (kb != null && kb.digit0Key.wasPressedThisFrame) AudioListener.volume = AudioListener.volume > 0f ? 0f : 1f;
         }
     }
 }

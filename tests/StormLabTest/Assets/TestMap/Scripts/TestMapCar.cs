@@ -114,15 +114,30 @@ namespace StormLab.TestMap
             var fwd = Vector3.ProjectOnPlane(transform.forward, Vector3.up);
             if (fwd.sqrMagnitude < 0.01f) fwd = Vector3.forward;
             var pos = transform.position;
-            if (Physics.Raycast(pos + Vector3.up * 50f, Vector3.down, out var hit, 200f, ~0, QueryTriggerInteraction.Ignore)) pos = hit.point;
+            if (GroundUnder(pos + Vector3.up * 50f, 200f, out var hit)) pos = hit.point;
             Teleport(pos, Quaternion.LookRotation(fwd.normalized, Vector3.up));
         }
 
-        /// <summary>Put the car on the ground at groundPos (found by a raycast down from above it), facing rot.</summary>
+        /// <summary>The ground straight down from `from`, skipping the car's own colliders (a ray from above the car's own
+        /// spot used to land on its roof, so each teleport to the same spot stacked it 3 m higher; 2026-11-02).</summary>
+        public bool GroundUnder(Vector3 from, float length, out RaycastHit ground)
+        {
+            ground = default; float best = float.MaxValue;
+            foreach (var h in Physics.RaycastAll(from, Vector3.down, length, ~0, QueryTriggerInteraction.Ignore))
+            {
+                if (h.collider.transform.IsChildOf(transform) || h.distance >= best) continue;
+                best = h.distance; ground = h;
+            }
+            return best < float.MaxValue;
+        }
+
+        /// <summary>Put the car on the ground at groundPos (found by a raycast down from well above it: the point given may
+        /// carry a storm-frame height, far from the terrain's; a cast from 60 m up missed terrain above it and left the car
+        /// under the ground, falling, 2026-11-02), facing rot.</summary>
         public void Teleport(Vector3 groundPos, Quaternion rot)
         {
             var body = Body;
-            if (Physics.Raycast(groundPos + Vector3.up * 60f, Vector3.down, out var hit, 200f, ~0, QueryTriggerInteraction.Ignore))
+            if (GroundUnder(groundPos + Vector3.up * 1500f, 6000f, out var hit))
                 groundPos = hit.point;
             body.linearVelocity = Vector3.zero; body.angularVelocity = Vector3.zero;
             transform.SetPositionAndRotation(groundPos + Vector3.up * 0.6f, rot);

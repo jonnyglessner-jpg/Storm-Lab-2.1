@@ -7,10 +7,13 @@
 //   C  camera (chase: hold the right mouse button to look round, it eases back 0.5 s after letting go; roof)     F  free flight (V puts the truck under the camera)    R  reset the car upright
 //   G  game mode: a StormScenario's two storms on one hour-long game clock (StormScenarioRunner) in place of the test
 //      storm; T, P, [ ] and N then work on the game clock and the game's seed
-//   M  sound on / off (TestMapAudio: tornado wind, rain, thunder, the truck, birds)
+//   0  sound on / off (TestMapAudio: tornado wind, rain, thunder, the truck, birds; M until 2026-11-02)
 //   F1  hide all the HUD (the readouts, help, the Tab panel and the map), for clean views and screenshots
-//   the map (TestMapMinimap, bottom right): GPS and the KDDC radar; click it to open it full screen, click a road there
-//      to drive to it (turn-by-turn directions), Esc closes
+//   the map (TestMapMinimap, bottom right): GPS and the KDDC radar; M (or a click) opens it full screen, click a road
+//      there to drive to it (turn-by-turn directions), M or Esc closes
+//   The chase game (Assets/Game, StormLab.Game; ChaseGame is added at Start): the main menu over the map at start-up
+//   (map, vehicle, gear), E to get out and walk / get back in, X the photo camera, Esc the menu and shop, the credits
+//   and the mesonet readout. A chase turns off the sandbox keys (sandboxKeys) and turning the clock back (allowRewind).
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -61,6 +64,13 @@ namespace StormLab.TestMap
         public bool hudHidden;
         [Tooltip("push the car with the tornadoes' wind (drag on a car-sized body)")]
         public bool tornadoWind = true;
+        [Tooltip("the car's side-on drag area the tornado's wind pushes on, m^2 (a pickup about 3.2; the chase's vehicle sets it)")]
+        public float windAreaM2 = 3.2f;
+        [Tooltip("the sandbox keys work: 1-9 jump to a spot, N a new storm, G game mode on / off, [ the clock back 5 min. " +
+                 "A chase (ChaseGame) turns them off: it is played forward from where the truck is")]
+        public bool sandboxKeys = true;
+        [Tooltip("the storm or game clock may be turned back ([ and the panel's slider); a chase only fast-forwards")]
+        public bool allowRewind = true;
         public int startSpot;
         [Header("Game mode")]
         [Tooltip("play a game (two storms on an hour-long clock, StormScenario) instead of the single test storm")]
@@ -86,6 +96,8 @@ namespace StormLab.TestMap
             // the GPS and radar map
             if (!GetComponent<TestMapMinimap>()) gameObject.AddComponent<TestMapMinimap>().world = this;
             if (gameMode) SetGameMode(true);
+            // the chase game: main menu, walking, the camera, credits and the mesonet (StormLab.Game)
+            if (!GetComponent<Game.ChaseGame>()) gameObject.AddComponent<Game.ChaseGame>().world = this;
         }
 
         /// <summary>Game mode on: the test storm is switched off and a new game laid out from the game's seed, its storms
@@ -128,35 +140,47 @@ namespace StormLab.TestMap
 
         bool InGame => gameMode && game && game.Scenario != null;
 
+        /// <summary>The clock speeds T cycles through, as multiples of real time.</summary>
+        public static float[] ClockSpeeds => Timelapses;
+        /// <summary>Set the storm or game clock to one of ClockSpeeds (the chase starts at real time).</summary>
+        public void SetClockSpeed(int index)
+        {
+            timelapseIndex = Mathf.Clamp(index, 0, Timelapses.Length - 1);
+            if (InGame) game.minutesPerSecond = Timelapses[timelapseIndex] / 60f;
+            else if (storm) storm.minutesPerSecond = Timelapses[timelapseIndex] / 60f;
+        }
+
         void Update()
         {
             var kb = Keyboard.current;
-            if (kb != null)
+            // a menu over the game takes the keys (ChaseGame)
+            if (kb != null && !Game.ChaseGame.InputBlocked)
             {
-                for (int i = 0; i < Mathf.Min(9, spots.Length); i++)
-                    if (kb[(Key)((int)Key.Digit1 + i)].wasPressedThisFrame) TeleportTo(i);
+                if (sandboxKeys)
+                    for (int i = 0; i < Mathf.Min(9, spots.Length); i++)
+                        if (kb[(Key)((int)Key.Digit1 + i)].wasPressedThisFrame) TeleportTo(i);
                 if (kb.hKey.wasPressedThisFrame) showHelp = !showHelp;
                 if (kb.f1Key.wasPressedThisFrame) hudHidden = !hudHidden;
-                if (kb.gKey.wasPressedThisFrame) SetGameMode(!gameMode);
+                if (kb.gKey.wasPressedThisFrame && sandboxKeys) SetGameMode(!gameMode);
                 if (InGame)
                 {
                     if (kb.tKey.wasPressedThisFrame) { timelapseIndex = (timelapseIndex + 1) % Timelapses.Length; game.minutesPerSecond = Timelapses[timelapseIndex] / 60f; }
                     if (kb.pKey.wasPressedThisFrame) game.playing = !game.playing;
                     if (kb.rightBracketKey.wasPressedThisFrame) game.gameMinutes = Mathf.Min(game.gameMinutes + 5f, game.gameLength);
-                    if (kb.leftBracketKey.wasPressedThisFrame) game.gameMinutes = Mathf.Max(game.gameMinutes - 5f, 0f);
-                    if (kb.nKey.wasPressedThisFrame) { game.seed++; game.Spawn(); }
+                    if (kb.leftBracketKey.wasPressedThisFrame && allowRewind) game.gameMinutes = Mathf.Max(game.gameMinutes - 5f, 0f);
+                    if (kb.nKey.wasPressedThisFrame && sandboxKeys) { game.seed++; game.Spawn(); }
                 }
                 else if (storm && storm.Plan != null)
                 {
                     if (kb.tKey.wasPressedThisFrame) { timelapseIndex = (timelapseIndex + 1) % Timelapses.Length; storm.minutesPerSecond = Timelapses[timelapseIndex] / 60f; }
                     if (kb.pKey.wasPressedThisFrame) storm.playing = !storm.playing;
                     if (kb.rightBracketKey.wasPressedThisFrame) storm.stormMinutes = Mathf.Min(storm.stormMinutes + 5f, (float)storm.Plan.duration);
-                    if (kb.leftBracketKey.wasPressedThisFrame) storm.stormMinutes = Mathf.Max(storm.stormMinutes - 5f, 0f);
-                    if (kb.nKey.wasPressedThisFrame) { storm.seed++; storm.Replan(); SpawnStorm(); }
+                    if (kb.leftBracketKey.wasPressedThisFrame && allowRewind) storm.stormMinutes = Mathf.Max(storm.stormMinutes - 5f, 0f);
+                    if (kb.nKey.wasPressedThisFrame && sandboxKeys) { storm.seed++; storm.Replan(); SpawnStorm(); }
                 }
             }
             var gp = Gamepad.current;
-            if (gp != null && spots.Length > 0)
+            if (gp != null && spots.Length > 0 && sandboxKeys)
             {
                 if (gp.dpad.right.wasPressedThisFrame) TeleportTo((lastSpot + 1) % spots.Length);
                 if (gp.dpad.left.wasPressedThisFrame) TeleportTo((lastSpot + spots.Length - 1) % spots.Length);
@@ -234,8 +258,8 @@ namespace StormLab.TestMap
             var wind = InGame ? game.TornadoWindAt(car.transform.position) : storm && storm.isActiveAndEnabled ? storm.TornadoWindAt(car.transform.position) : Vector3.zero;
             if (wind.sqrMagnitude < 1f) return;
             var rel = wind - Vector3.ProjectOnPlane(car.Body.linearVelocity, Vector3.up);
-            const float rho = 1.1f, cdA = 3.2f;     // side-on drag area of a pickup, m^2
-            car.externalForce += 0.5f * rho * cdA * rel.magnitude * rel;
+            const float rho = 1.1f;
+            car.externalForce += 0.5f * rho * windAreaM2 * rel.magnitude * rel;
         }
 
         public void TeleportTo(int i)
@@ -351,11 +375,26 @@ namespace StormLab.TestMap
             }
 
             if (!showHelp) return;
-            string help = "W/S or arrows  throttle / brake / reverse    A/D  steer\nSpace  handbrake    R  reset car    L  lights (off / low / high + light bar)    C  camera (chase / roof; hold right mouse to look)    F  free flight (V: truck here)\n" +
-                          "T  storm clock speed    P  pause    [ ]  -/+ 5 min    N  new storm    H  hide help (F1: all HUD)    M  sound on / off\n" +
-                          "Tab  storm and lighting panel (24 hour clock)    G  game mode (two storms, one hour)    F2  storm quality\n" +
-                          "Map (bottom right): click to open, click a road to get directions, Esc closes\n";
-            for (int i = 0; i < Mathf.Min(9, spots.Length); i++) help += $"\n{i + 1}  {spots[i].name}";
+            string help;
+            if (sandboxKeys)
+            {
+                help = "W/S or arrows  throttle / brake / reverse    A/D  steer\nSpace  handbrake    R  reset car    L  lights (off / low / high + light bar)    C  camera (chase / roof / cab; hold right mouse to look)    F  free flight (V: truck here)\n" +
+                       "E  get out / get in (walk: WASD, Shift runs)    X  photo camera    Esc  menu and shop\n" +
+                       "T  storm clock speed    P  pause    [ ]  -/+ 5 min    N  new storm    H  hide help (F1: all HUD)    0  sound on / off\n" +
+                       "Tab  storm and lighting panel (24 hour clock)    G  game mode (two storms, one hour)    F2  storm quality\n" +
+                       "M  map (bottom right) open / close; click a road on it to get directions\n";
+                for (int i = 0; i < Mathf.Min(9, spots.Length); i++) help += $"\n{i + 1}  {spots[i].name}";
+            }
+            else
+            {
+                // a chase: no jumps, no new storms, no turning the clock back
+                bool follow = cameraRig && cameraRig.thirdPerson;
+                help = "W/S or arrows  throttle / brake / reverse    A/D  steer    Space  handbrake    R  reset car    L  lights\n" +
+                       "E  get out / get in (walk: WASD, Shift runs)    " + (follow ? "C  camera (drone follow cam / roof / cab; hold right mouse to look)" : "C  camera (roof, locked on the tornado / cab; the drone's follow cam adds the view from behind)") + "\n" +
+                       "X  photo camera (arrows: shutter and aperture, Q/E ISO, scroll zooms, click shoots)    B  drone (WASD, Q/E down / up, B home)\n" +
+                       "T  clock speed (1x / 10x / 30x / 60x)    P  pause    ]  +5 min (no going back)    H  hide help (F1: all HUD)    0  sound    F2  storm quality\n" +
+                       "Esc  menu and shop    M  map open / close (with the laptop in the cab, the phone on foot; click a road on it to get directions)";
+            }
             float ph = small.CalcHeight(new GUIContent(help), 450) + 12;
             GUI.Box(new Rect(16, 16, 470, ph), GUIContent.none);
             GUI.Label(new Rect(28, 22, 450, ph), help, small);

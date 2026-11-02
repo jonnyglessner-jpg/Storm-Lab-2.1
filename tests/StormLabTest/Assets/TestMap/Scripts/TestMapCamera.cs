@@ -11,7 +11,8 @@ namespace StormLab.TestMap
 {
     public class TestMapCamera : MonoBehaviour
     {
-        public enum Mode { Chase, Storm, Free }
+        // Cab (2026-11-02, the chase game): first person from the driver's seat, the mouse looks round without a button
+        public enum Mode { Chase, Storm, Free, Cab }
 
         public TestMapCar car;
         public StormRenderer storm;
@@ -26,6 +27,12 @@ namespace StormLab.TestMap
         public float recentreDelay = 0.5f, recentreRate = 4f;
         [Tooltip("the roof camera, in the truck's frame: above the cab roof (its top is about 2 m up)")]
         public Vector3 roofMount = new Vector3(0f, 2.3f, 0.35f);
+        [Tooltip("the driver's eye, in the truck's frame (the cab's floor is at about 1.1 m, its roof at 2 m; the eye sits a near-clip length under the headliner, so looking up does not cut it)")]
+        public Vector3 cabSeat = new Vector3(-0.4f, 1.64f, 0.55f);
+        [Tooltip("another script drives the camera (walking about on foot, the photo camera): the modes do nothing")]
+        public bool held;
+        [Tooltip("the chase view behind the truck is allowed; off, C cycles roof / cab only (the chase game, 2026-11-02: that view is the drone's follow cam, until it is owned)")]
+        public bool thirdPerson = true;
 
         Vector3 smoothedForward = Vector3.forward;
         Vector2 flyAngles;
@@ -34,15 +41,30 @@ namespace StormLab.TestMap
         Mode lastCarMode = Mode.Chase;
 
         public string ModeName => mode == Mode.Storm ? "Roof" : mode.ToString();
+        // the truck's glass panels (the builder's dark opaque boxes), hidden from the driver's seat: seen from behind they
+        // are a black wall across the view (found by the chase game's photo check, 2026-11-02); and a headliner under the
+        // roof, shown only from the seat
+        Renderer[] glass; bool glassHidden; GameObject headliner;
+        /// <summary>where the cab camera looks, yaw (+ right) and pitch (+ up) from the truck's heading, degrees</summary>
+        public Vector2 CabLook => look;
 
         void LateUpdate()
         {
             if (!car) return;
-            var kb = Keyboard.current;
+            HideGlass(!held && mode == Mode.Cab);
+            if (held) return;
+            var kb = Game.ChaseGame.InputBlocked ? null : Keyboard.current;
             bool cycle = (kb != null && kb.cKey.wasPressedThisFrame) || (Gamepad.current != null && Gamepad.current.rightShoulder.wasPressedThisFrame);
-            if (kb != null && kb.fKey.wasPressedThisFrame) SetFree(mode != Mode.Free);
+            if (kb != null && kb.fKey.wasPressedThisFrame && (world == null || world.sandboxKeys)) SetFree(mode != Mode.Free);
             if (kb != null && kb.vKey.wasPressedThisFrame && mode == Mode.Free) DropTruck();
-            if (cycle && mode != Mode.Free) { mode = mode == Mode.Chase ? Mode.Storm : Mode.Chase; look = Vector2.zero; }
+            // C: chase / roof / cab; without the third-person view (the drone's follow cam) roof / cab, since the roof
+            // camera is the truck's own, locked on the tornado (user, 2026-11-02: bring the snap camera back)
+            if (cycle && mode != Mode.Free)
+            {
+                mode = mode == Mode.Chase ? Mode.Storm : mode == Mode.Storm ? Mode.Cab : thirdPerson ? Mode.Chase : Mode.Storm;
+                look = Vector2.zero;
+            }
+            if (!thirdPerson && mode == Mode.Chase) { mode = Mode.Cab; look = Vector2.zero; }
             float k = 1f - Mathf.Exp(-sharpness * Time.deltaTime);
             var target = car.transform;
             var fwd = Vector3.ProjectOnPlane(target.forward, Vector3.up);
@@ -75,10 +97,65 @@ namespace StormLab.TestMap
                     transform.rotation = Quaternion.LookRotation(dir, Vector3.up);
                     break;
                 }
+                case Mode.Cab:
+                {
+                    // the driver's seat: the mouse looks round (no button; the cursor is locked by ChasePlayer), as far as
+                    // a driver can turn, and the view turns with the truck
+                    CabLookInput();
+                    transform.position = target.TransformPoint(cabSeat);
+                    var heading = Quaternion.LookRotation(smoothedForward.sqrMagnitude > 0.001f ? smoothedForward : Vector3.forward, Vector3.up);
+                    // the cab's pitch and roll too, damped (a truck on a gravel road shakes the view otherwise)
+                    var cab = Quaternion.Slerp(heading, target.rotation, 0.5f);
+                    transform.rotation = cab * Quaternion.Euler(-look.y, look.x, 0f);
+                    break;
+                }
                 case Mode.Free:
                     Fly(kb);
                     break;
             }
+        }
+
+        void HideGlass(bool hide)
+        {
+            if (hide == glassHidden) return;
+            var body = car.transform.Find("Body");
+            if (glass == null)
+            {
+                var list = new System.Collections.Generic.List<Renderer>();
+                if (body) foreach (var n in new[] { "Windscreen", "Side windows" }) { var t = body.Find(n); if (t && t.TryGetComponent<Renderer>(out var r)) list.Add(r); }
+                glass = list.ToArray();
+            }
+            foreach (var r in glass) if (r) r.enabled = !hide;
+            // the headliner: the cab is a box seen from inside, so its roof is culled and whatever sits on it (the light
+            // bar, the mesonet, the drone) showed at the top of the frame (user, 2026-11-02); a dark ceiling just under the
+            // roof, drawn only from the seat (from outside it is inside the cab box)
+            if (!headliner && body)
+            {
+                headliner = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                headliner.name = "Headliner";
+                Destroy(headliner.GetComponent<Collider>());
+                headliner.transform.SetParent(body, false);
+                headliner.transform.localPosition = new Vector3(0f, 1.955f, 0.35f);   // the cab box: centre 1.55 m, 0.85 m tall, 2.5 m long
+                headliner.transform.localScale = new Vector3(1.88f, 0.02f, 2.48f);
+                var mr = headliner.GetComponent<MeshRenderer>();
+                mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                var sh = Shader.Find("HDRP/Lit");
+                if (sh) mr.sharedMaterial = new Material(sh) { name = "headliner", color = new Color(0.16f, 0.16f, 0.17f), hideFlags = HideFlags.DontSave };
+            }
+            if (headliner) headliner.SetActive(hide);
+            glassHidden = hide;
+        }
+
+        void OnDisable() { HideGlass(false); }
+
+        void CabLookInput()
+        {
+            var mouse = Mouse.current; var pad = Gamepad.current;
+            var d = Vector2.zero;
+            if (mouse != null && (Cursor.lockState == CursorLockMode.Locked || mouse.rightButton.isPressed)) d += mouse.delta.ReadValue() * lookSensitivity;
+            if (pad != null) { var st = pad.rightStick.ReadValue(); if (st.sqrMagnitude > 0.01f) d += st * (stickLookSpeed * Time.unscaledDeltaTime); }
+            look.x = Mathf.Clamp(look.x + d.x, -160f, 160f);
+            look.y = Mathf.Clamp(look.y + d.y, -60f, 75f);
         }
 
         /// <summary>Chase free look: the right mouse button held turns it with the mouse (and the right stick turns it

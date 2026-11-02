@@ -372,8 +372,10 @@ namespace StormLab.Lightning
                 var channel = visual.flash.Channels[i];
                 var midpoint = channel.points[channel.points.Length / 2];
                 float depth = Math.Max(1, Vector3.Dot(ToUnity(midpoint) - camera.transform.position, camera.transform.forward));
+                // the half-height tangent from the projection (a physical camera's gate fit can crop the view narrower than fieldOfView says)
+                float m11 = camera.projectionMatrix.m11;
                 float metresPerPixel = camera.orthographic ? 2 * camera.orthographicSize / camera.pixelHeight :
-                    2 * depth * Mathf.Tan(camera.fieldOfView * Mathf.Deg2Rad * .5f) / camera.pixelHeight;
+                    2 * depth * (Mathf.Abs(m11) > 1e-6f ? 1 / m11 : Mathf.Tan(camera.fieldOfView * Mathf.Deg2Rad * .5f)) / camera.pixelHeight;
                 float core = Math.Max(channelWidthM * (channel.main ? 1 : .4f), metresPerPixel * minimumPixelWidth);
                 visual.lines[i].widthMultiplier = core * 6;
             }

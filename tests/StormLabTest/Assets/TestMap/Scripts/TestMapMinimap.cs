@@ -1,8 +1,8 @@
 // The test map's GPS and radar map (user, 2026-10-27). A small map in the bottom-right corner follows the truck (heading
 // up) with the roads, the KDDC radar's reflectivity (StormRadar) and, when a route is set, the route and the next turn.
-// Clicking it opens it full screen (north up): drag to pan, scroll to zoom, click a road to drive there; the route is
-// the fastest by road class (TestMapRoads), with turn-by-turn steps, and is planned again when the truck leaves it.
-// Esc (or the close button) puts it back in the corner. F1 hides it with the rest of the HUD.
+// Clicking it (or M) opens it full screen (north up): drag to pan, scroll to zoom, click a road to drive there; the route
+// is the fastest by road class (TestMapRoads), with turn-by-turn steps, and is planned again when the truck leaves it.
+// Esc, M or the close button puts it back in the corner. F1 hides it with the rest of the HUD.
 //
 // The map is drawn with GL in OnGUI: the base map (Resources/TestMapNavBase.png, tools/testmap/navmap.py), the radar
 // image, the roads as lines, the route, the radar's sweep and the truck.
@@ -31,6 +31,8 @@ namespace StormLab.TestMap
         public bool showStormMarkers;
         [Tooltip("the map full screen")]
         public bool expanded;
+        [Tooltip("the map is put away (the chase game: no map in the cab until the laptop is owned, none on foot until the phone is; 2026-11-02)")]
+        public bool hidden;
         [Tooltip("metres across the full-screen map (the mouse wheel zooms it)")]
         public float fullSpan = 30000f;
         [Tooltip("metres off the route, for longer than offRouteSeconds, before the route is planned again")]
@@ -88,6 +90,13 @@ namespace StormLab.TestMap
         {
             var kb = Keyboard.current;
             if (kb != null && kb.escapeKey.wasPressedThisFrame && expanded) expanded = false;
+            // M opens and closes it (user, 2026-11-02), as clicking the corner map does
+            if (kb != null && kb.mKey.wasPressedThisFrame && !hidden && !Game.ChaseGame.InputBlocked && !(world && world.hudHidden))
+            {
+                expanded = !expanded;
+                if (expanded) { follow = true; fullCentre = TruckXZ; }
+            }
+            if (hidden) { expanded = false; anim = 0f; }
             anim = Mathf.MoveTowards(anim, expanded ? 1f : 0f, Time.unscaledDeltaTime * 5f);
             if (follow) fullCentre = TruckXZ;
 
@@ -425,7 +434,7 @@ namespace StormLab.TestMap
 
         void OnGUI()
         {
-            if (world && world.hudHidden) return;
+            if (hidden || (world && world.hudHidden)) return;
             canvasW = Screen.width; canvasH = Screen.height;
             Styles();
             GUI.depth = expanded || anim > 0f ? -100 : 0;
@@ -449,7 +458,7 @@ namespace StormLab.TestMap
                 GUI.Label(new Rect(bar.x + 52 * k, bar.y + 2 * k, bar.width - 60 * k, 34 * k), head, big);
                 GUI.Label(new Rect(bar.x + 52 * k, bar.y + 34 * k, bar.width - 60 * k, 28 * k), arrivedAt >= 0f ? "" : TestMapRoads.Say(step.turn, step.road), mid);
             }
-            else GUI.Label(new Rect(bar.x + 8 * k, bar.y + 2 * k, bar.width - 16 * k, barH), full ? "Click a road to drive there  ·  drag to pan  ·  scroll to zoom  ·  Esc closes" : (showRadar ? ProductName : "Map") + "  ·  click to open", small);
+            else GUI.Label(new Rect(bar.x + 8 * k, bar.y + 2 * k, bar.width - 16 * k, barH), full ? "Click a road to drive there  ·  drag to pan  ·  scroll to zoom  ·  M or Esc closes" : (showRadar ? ProductName : "Map") + "  ·  M or click to open", small);
 
             // time and distance left, along the bottom
             if (Route != null && arrivedAt < 0f)
@@ -486,7 +495,7 @@ namespace StormLab.TestMap
             x += 156 * k;
             if (GUI.Button(new Rect(x, y, 130 * k, h), follow ? "Following" : "Follow truck", button)) follow = true; x += 136 * k;
             if (Route != null && GUI.Button(new Rect(x, y, 130 * k, h), "Clear route", button)) ClearRoute();
-            if (GUI.Button(new Rect(r.xMax - 16 * k - 110 * k, y, 110 * k, h), "Close (Esc)", button)) expanded = false;
+            if (GUI.Button(new Rect(r.xMax - 16 * k - 110 * k, y, 110 * k, h), "Close (M)", button)) expanded = false;
 
             // the steps of the route, down the left
             if (Route != null)

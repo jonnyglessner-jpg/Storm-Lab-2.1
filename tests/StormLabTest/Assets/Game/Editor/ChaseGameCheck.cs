@@ -1,0 +1,455 @@
+// Play-mode check of the chase game (StormLab.Game) on the plains map: the main menu comes up over the map; a chase set
+// up from the menu's choices fits the vehicle, locks the sandbox keys and rewinding, lays out the game from its seed and
+// mounts the mesonet; the chaser gets out, walks and gets back in; the photo camera takes HDRP's physical exposure
+// (the settings' EV100 against the scene's meter), judges a photo with a tornado in the frame and pays credits, and
+// saves the PNG; the mesonet logs within a mile of a tornado at the right rate and double within half a mile, and not
+// beyond; the shop sells with credits and keeps the gear in the profile; the map is put away until the laptop (cab) or
+// phone (on foot) is owned; the third-person views are locked until the drone's follow cam is; the drone launches,
+// drains, stops at its range fence, takes a photo, comes home on its reserve, and its upgrades take; the chase ends
+// with the summary when the hour is up. Writes validation/reports/ChaseGameCheck.md. The profile used is a scratch one (ChaseProfile.Reset at the start
+// and the end): run it with the editor closed, and the user's own profile is not touched because it is reloaded from
+// disk when the game next starts... but it is the same file, so the check saves the user's file first and puts it back.
+//   StormLab > Test Map > Chase Game Check
+// Batch: -executeMethod ChaseGameCheck.RunFromCommandLine (never with -nographics)
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text;
+using StormLab;
+using StormLab.Game;
+using StormLab.TestMap;
+using UnityEditor;
+using UnityEditor.SceneManagement;
+using UnityEngine;
+using UnityEngine.Rendering.HighDefinition;
+using Object = UnityEngine.Object;
+
+[InitializeOnLoad]
+public static class ChaseGameCheck
+{
+    const string Key = "ChaseGameCheck.Active", BatchKey = "ChaseGameCheck.Batch", CodeKey = "ChaseGameCheck.Code";
+    static string ReportDir => Path.Combine(StormLabTestKit.ProjectDir, "..", "..", "validation", "reports");
+    static string ShotDir => Path.Combine(StormLabTestKit.ProjectDir, "Screenshots");
+
+    static ChaseGameCheck() { if (SessionState.GetBool(Key, false)) EditorApplication.playModeStateChanged += OnState; }
+
+    [MenuItem("StormLab/Test Map/Chase Game Check")]
+    public static void RunMenu() => Begin(false);
+    public static void RunFromCommandLine() => Begin(true);
+
+    static void Begin(bool batch)
+    {
+        EditorSceneManager.OpenScene(TestMapBuilder.ScenePath, OpenSceneMode.Single);
+        SessionState.SetBool(Key, true); SessionState.SetBool(BatchKey, batch);
+        EditorApplication.playModeStateChanged -= OnState;
+        EditorApplication.playModeStateChanged += OnState;
+        EditorApplication.EnterPlaymode();
+    }
+
+    static IEnumerator<object> routine; static readonly StringBuilder rep = new StringBuilder(); static bool ok; static int errors;
+    static readonly List<string> errorLines = new List<string>();
+    static string savedProfile;
+
+    static void OnState(PlayModeStateChange s)
+    {
+        if (s == PlayModeStateChange.EnteredPlayMode)
+        {
+            rep.Clear(); ok = true; errors = 0; errorLines.Clear();
+            Application.logMessageReceived += OnLog;
+            routine = Run().GetEnumerator();
+            EditorApplication.update += Tick;
+        }
+        else if (s == PlayModeStateChange.EnteredEditMode && SessionState.GetBool(Key, false))
+        {
+            SessionState.SetBool(Key, false);
+            EditorApplication.playModeStateChanged -= OnState;
+            if (SessionState.GetBool(BatchKey, false)) EditorApplication.Exit(SessionState.GetInt(CodeKey, 1));
+        }
+    }
+
+    static void OnLog(string msg, string stack, LogType t)
+    {
+        if (t != LogType.Error && t != LogType.Exception && t != LogType.Assert) return;
+        if (stack != null && stack.Contains("UnityEditor.Search")) return;
+        errors++; if (errorLines.Count < 10) errorLines.Add($"{t}: {msg.Split('\n')[0]}");
+    }
+
+    static void Tick()
+    {
+        if (!EditorApplication.isPlaying) return;
+        bool more;
+        try { more = routine.MoveNext(); }
+        catch (Exception e) { Debug.LogException(e); ok = false; more = false; }
+        if (more) return;
+        EditorApplication.update -= Tick;
+        Application.logMessageReceived -= OnLog;
+        // the user's profile back
+        try
+        {
+            if (savedProfile != null) File.WriteAllText(ChaseProfile.Path, savedProfile);
+            else if (File.Exists(ChaseProfile.Path)) File.Delete(ChaseProfile.Path);
+        }
+        catch (Exception e) { rep.AppendLine($"- WARN: could not restore the profile: {e.Message}"); }
+        rep.AppendLine().AppendLine($"Errors logged: {errors}");
+        foreach (var l in errorLines) rep.AppendLine($"- {l}");
+        ok &= errors == 0;
+        rep.Insert(0, $"# Chase game check: {(ok ? "PASS" : "FAIL")}\n\nGenerated by `ChaseGameCheck` on {DateTime.Now:yyyy-MM-dd HH:mm}, {SystemInfo.graphicsDeviceName}.\n\n");
+        Directory.CreateDirectory(ReportDir);
+        File.WriteAllText(Path.Combine(ReportDir, "ChaseGameCheck.md"), rep.ToString());
+        Debug.Log($"[ChaseGame] {(ok ? "PASS" : "FAIL")}");
+        SessionState.SetInt(CodeKey, ok ? 0 : 1);
+        EditorApplication.ExitPlaymode();
+    }
+
+    static IEnumerable<object> Frames(int n) { for (int i = 0; i < n; i++) yield return null; }
+    static IEnumerable<object> PlayerFrames(int n) { int f0 = Time.frameCount; while (Time.frameCount < f0 + n) yield return null; }
+    // batch player frames run at thousands a second: what settles over time (camera easing, the mesonet's stream) waits on the clock
+    static IEnumerable<object> Seconds(float s) { float t0 = Time.unscaledTime; while (Time.unscaledTime - t0 < s) yield return null; }
+    static void Check(bool pass, string what) { ok &= pass; rep.AppendLine($"- {(pass ? "PASS" : "FAIL")}: {what}"); }
+    /// <summary>The line from a to b crosses the headliner slab (a thin box with no collider) within its extent, in its parent's frame.</summary>
+    static bool Occludes(Transform slab, Vector3 a, Vector3 b)
+    {
+        var p = slab.parent; var la = p.InverseTransformPoint(a); var lb = p.InverseTransformPoint(b);
+        float y = slab.localPosition.y; var s = slab.localScale; var c = slab.localPosition;
+        if ((la.y - y) * (lb.y - y) >= 0f) return false;
+        float t = (y - la.y) / (lb.y - la.y); var hit = la + (lb - la) * t;
+        return Mathf.Abs(hit.x - c.x) <= s.x * 0.5f && Mathf.Abs(hit.z - c.z) <= s.z * 0.5f;
+    }
+    static void Note(string what) { rep.AppendLine($"- {what}"); }
+
+    static IEnumerable<object> Run()
+    {
+        foreach (var x in PlayerFrames(5)) yield return x;
+        // a scratch profile (the user's saved and restored in Tick)
+        savedProfile = File.Exists(ChaseProfile.Path) ? File.ReadAllText(ChaseProfile.Path) : null;
+        ChaseProfile.Reset();
+
+        var world = Object.FindAnyObjectByType<TestMapWorld>();
+        var panel = world ? world.GetComponent<TestMapStormPanel>() : null;
+        var cam = Camera.main;
+        var game = world ? world.GetComponent<ChaseGame>() : null;
+        CharacterController cc0() => Object.FindAnyObjectByType<CharacterController>();
+        if (!world || !panel || !cam || !game) { Check(false, $"world {world}, panel {panel}, camera {cam}, ChaseGame {game}"); yield break; }
+        panel.hour = 17f; panel.clockRuns = false; panel.Apply();
+
+        rep.AppendLine("## Menu").AppendLine();
+        Check(game.Menu && game.Menu.page == ChaseMenu.Page.Main, $"the main menu is up at start ({(game.Menu ? game.Menu.page.ToString() : "no menu")})");
+        Check(ChaseGame.InputBlocked, "the map's keys are blocked while the menu is up");
+        Check(world.sandboxKeys && world.allowRewind, "the sandbox keys and rewinding are on under the menu");
+        Check(Mathf.Approximately(Time.timeScale, 1f), "the map runs behind the main menu");
+
+        rep.AppendLine().AppendLine("## A chase from the menu").AppendLine();
+        ChaseSetup.map = "plains"; ChaseSetup.vehicle = "dually"; ChaseSetup.seed = 7; ChaseSetup.mountMesonet = true;   // not owned yet: must not mount
+        game.Menu.StartChase();
+        foreach (var x in PlayerFrames(3)) yield return x;
+        Check(ChaseSetup.state == ChaseSetup.State.Chase && !game.Menu.Showing, "the chase started on this map and the menu closed");
+        {
+            // the start hour from the seed, and its spread: noon 50 %, afternoon 35 %, dusk 15 % (user, 2026-11-02)
+            float h7 = ChaseSetup.StartHourFor(7);
+            Check(Mathf.Approximately(ChaseSetup.startHour, h7) && Mathf.Abs(panel.hour - h7) < 0.01f && !panel.clockRuns, $"the chase starts at the seed's hour ({ChaseSetup.ClockText(h7)}, {ChaseSetup.TimeOfDayName(h7)}; panel {panel.hour:0.00})");
+            int noon = 0, aft = 0, dusk = 0, n = 4000; bool inRange = true;
+            for (int s = 1; s <= n; s++)
+            {
+                float h = ChaseSetup.StartHourFor(s);
+                if (h >= 11.5f && h <= 13.5f) noon++; else if (h >= 14f && h <= 17f) aft++; else if (h >= 18f && h <= 19.5f) dusk++; else inRange = false;
+            }
+            Note($"start hours over {n} seeds: noon {noon / (float)n:P1}, afternoon {aft / (float)n:P1}, dusk {dusk / (float)n:P1}");
+            Check(inRange && Mathf.Abs(noon / (float)n - 0.5f) < 0.03f && Mathf.Abs(aft / (float)n - 0.35f) < 0.03f && Mathf.Abs(dusk / (float)n - 0.15f) < 0.03f, "the spread is noon 50 / afternoon 35 / dusk 15 within 3 points");
+            // the game clock runs the day on: 30 game minutes is half an hour of daylight
+            float g1 = world.game.gameMinutes; world.game.gameMinutes = g1 + 30f; world.game.Apply();
+            foreach (var x in PlayerFrames(2)) yield return x;
+            Check(Mathf.Abs(panel.hour - (h7 + (g1 + 30f) / 60f)) < 0.02f, $"the clock of day follows the game clock ({panel.hour:0.00} h at {world.game.gameMinutes:0} min)");
+            world.game.gameMinutes = g1; world.game.Apply();   // the field is free (the keys are not); the checks below go on from the start
+            // the check's photos are judged in daylight: the rest runs at 17 h
+            ChaseSetup.startHour = 17f;
+            foreach (var x in PlayerFrames(2)) yield return x;
+            Check(Mathf.Abs(panel.hour - (17f + g1 / 60f)) < 0.02f, "the check's chase is moved to 17 h for the photos");
+        }
+        Check(!world.sandboxKeys && !world.allowRewind, "the sandbox keys and rewinding are off in a chase");
+        Check(panel.locked && !panel.show, "the storm panel is locked in a chase");
+        Check(world.gameMode && world.game && world.game.Scenario != null && world.game.seed == 7 && world.game.preset == "plains", $"the game is laid out from the chase's seed ({(world.game ? world.game.seed : -1)}, {(world.game ? world.game.preset : "")})");
+        Check(Mathf.Approximately(world.car.Body.mass, 3600f) && Mathf.Approximately(world.windAreaM2, 3.8f), $"the dually is fitted: mass {world.car.Body.mass}, wind area {world.windAreaM2}");
+        Check(!game.Mesonet.Mounted, "no mesonet is mounted when none is owned");
+        Check(world.game.minutesPerSecond * 60f < 1.01f, $"the game clock starts at real time ({world.game.minutesPerSecond * 60f:0}x)");
+        float g0 = world.game.gameMinutes;
+        world.game.gameMinutes = Mathf.Max(0f, g0 - 5f);   // what [ would do: the key path checks allowRewind, the field is free; just confirm the flag
+        world.game.gameMinutes = g0;
+
+        rep.AppendLine().AppendLine("## On foot").AppendLine();
+        Note($"time: scale {Time.timeScale}, dt {Time.deltaTime:0.0000}, unscaled dt {Time.unscaledDeltaTime:0.0000}, menu page {game.Menu.page}, game playing {world.game.playing}");
+        var carPos = world.car.transform.position;
+        game.Player.GetOut();
+        foreach (var x in PlayerFrames(2)) yield return x;
+        Check(game.Player.OnFoot && !world.car.acceptInput && world.cameraRig.held, "E got the chaser out: on foot, the car ignores input, the camera rig is held");
+        float d0 = Vector3.Distance(cam.transform.position, carPos);
+        Note($"truck at {carPos}, walker at {cc0().transform.position}, eye {game.Player.Eye}, camera {cam.transform.position}");
+        Check(d0 > 1f && d0 < 4f && Mathf.Abs(cam.transform.position.y - carPos.y) < 3f, $"the camera is at the walker's eyes beside the truck ({d0:0.0} m from it)");
+        Check(game.Player.NearTruck, "the truck is within reach");
+        var eye0 = cam.transform.position;
+        // a walk: the character controller moves when told (no keyboard in batch: move it by the controller directly)
+        var cc = cc0();
+        for (int i = 0; i < 400; i++) { cc.Move(Vector3.ProjectOnPlane(cam.transform.forward, Vector3.up).normalized * 0.005f); yield return null; }   // 2 m at a fixed step (batch frames are far under a millimetre of walking)
+        Check(Vector3.Distance(cam.transform.position, eye0) > 0.5f, $"walking moves the chaser ({Vector3.Distance(cam.transform.position, eye0):0.0} m)");
+        game.Player.GetIn();
+        foreach (var x in PlayerFrames(2)) yield return x;
+        Check(!game.Player.OnFoot && world.car.acceptInput && !world.cameraRig.held, "E got the chaser back in");
+
+        rep.AppendLine().AppendLine("## The photo camera").AppendLine();
+        // to the first tornado of the game: the game clock forward (never back) and the truck a mile from it, facing it
+        var sc = world.game.Scenario;
+        double tAt = double.MaxValue; int which = -1;
+        for (int i = 0; i < sc.storms.Count; i++)
+            foreach (var t in sc.storms[i].InGame(world.game.gameLength, world.game.pace))
+            {
+                double at = sc.storms[i].startMin + (t.formMin + 3) / world.game.pace;
+                if (at < tAt) { tAt = at; which = i; }
+            }
+        Check(which >= 0, $"the game has a tornado ({(which >= 0 ? $"storm {which + 1} at {tAt:0.0} min" : "none")})");
+        if (which < 0) yield break;
+        world.game.playing = false; world.game.gameMinutes = (float)tAt; world.game.Apply();
+        foreach (var x in PlayerFrames(3)) yield return x;
+        var tor = world.game.Storms[which];
+        Check(tor.TornadoAmount > 0.15f, $"the tornado is on the ground at {tAt:0.0} min (amount {tor.TornadoAmount:0.00})");
+        Vector3 Place(float miles)
+        {
+            var g = tor.TornadoGroundWorld;
+            var from = g + new Vector3(0.7071f, 0f, -0.7071f) * (miles * 1609.344f);
+            float half = world.sizeM / 2 - 200f;
+            from.x = Mathf.Clamp(from.x, -half, half); from.z = Mathf.Clamp(from.z, -half, half);
+            var look = g - from; look.y = 0f;
+            world.car.Teleport(from, Quaternion.LookRotation(look.normalized, Vector3.up));
+            return g;
+        }
+        Place(1.0f);
+        world.cameraRig.mode = TestMapCamera.Mode.Cab;
+        foreach (var x in Seconds(2.5f)) yield return x;   // the volume rebuilds, the cab camera eases round, the exposure settles
+        {
+            // from the seat the roof's fittings are behind the headliner: the light bar lamp is not in the camera's view
+            var headliner = world.car.transform.Find("Body/Headliner");
+            var lamp = world.car.transform.Find("Body/Light bar lamp");
+            bool lampHidden = lamp && headliner && Occludes(headliner, cam.transform.position, lamp.position);
+            Check(headliner && headliner.gameObject.activeSelf, "the cab has a headliner from the driver's seat");
+            Check(lampHidden, $"the light bar lamp is behind the headliner from the seat (eye {world.car.transform.InverseTransformPoint(cam.transform.position).y:0.00} m up the truck)");
+            Check(cam.nearClipPlane <= (headliner ? headliner.position.y - cam.transform.position.y : 1f) + 1e-3f, $"the headliner is beyond the near clip ({(headliner ? headliner.position.y - cam.transform.position.y : 0f):0.00} m up, near {cam.nearClipPlane})");
+        }
+        float sceneEV = panel.ExposureEV;
+        game.Photo.SetActive(true);
+        foreach (var x in PlayerFrames(2)) yield return x;
+        Check(game.Photo.Active && cam.usePhysicalProperties, "X brings the camera up on HDRP's physical camera");
+        {
+            // the storm's rays follow the projection the camera really draws with: with the 3:2 sensor fitted to the frame's
+            // width on a wider screen the vertical view is narrower than fieldOfView says (the storm slid against the sky)
+            float fromFov = Mathf.Tan(cam.fieldOfView * 0.5f * Mathf.Deg2Rad), fromProj = 1f / cam.projectionMatrix.m11, used = StormRenderer.TanHalfHeight(cam);
+            Note($"photo camera: {cam.pixelWidth}x{cam.pixelHeight}, gate fit {cam.gateFit}, fieldOfView {cam.fieldOfView:0.0} deg (tan {fromFov:0.000}), projection tan {fromProj:0.000}, storm uses {used:0.000}");
+            Check(Mathf.Abs(used - fromProj) < 1e-4f, "the storm draws with the camera's real projection");
+            if (cam.pixelWidth > cam.pixelHeight * 1.6f) Check(Mathf.Abs(fromFov - fromProj) > 0.02f, "(the gate fit really does crop the view narrower than fieldOfView on this wide frame)");
+        }
+        var volume = Object.FindObjectsByType<UnityEngine.Rendering.Volume>(FindObjectsSortMode.None).FirstOrDefault(v => v.isGlobal && v.sharedProfile && v.sharedProfile.Has<Exposure>());
+        Exposure exposure = null; if (volume) volume.profile.TryGet(out exposure);
+        Check(exposure != null && exposure.mode.value == ExposureMode.UsePhysicalCamera, $"the scene's exposure follows the camera settings ({exposure?.mode.value})");
+        Check(panel.externalExposure, "the storm panel leaves the exposure to the camera");
+        // the meter: auto shutter lands within half a stop of the scene
+        game.Photo.autoShutter = true;
+        foreach (var x in PlayerFrames(2)) yield return x;
+        Note($"scene EV {game.Photo.SceneEV:0.0}; auto: ISO {game.Photo.iso}, f/{game.Photo.aperture}, 1/{1f / game.Photo.shutter:0}, settings EV {game.Photo.SettingsEV:0.0}");
+        Check(Mathf.Abs(game.Photo.ExposureError) <= 0.55f, $"auto shutter meters to within half a stop ({game.Photo.ExposureError:+0.00} stops)");
+        Check(Mathf.Approximately(cam.iso, game.Photo.iso) && Mathf.Approximately(cam.aperture, game.Photo.aperture) && Mathf.Abs(cam.shutterSpeed - game.Photo.shutter) < 1e-5f, "the settings reach the camera");
+        // over-exposing by hand: two stops slower makes the error +2
+        game.Photo.autoShutter = false; float s0 = game.Photo.shutter; game.Photo.shutter = s0 * 4f;
+        foreach (var x in PlayerFrames(1)) yield return x;
+        Check(Mathf.Abs(game.Photo.ExposureError - (sceneEV - game.Photo.SettingsEV)) < 0.01f && game.Photo.ExposureError > 1.5f, $"two stops slower reads over-exposed ({game.Photo.ExposureError:+0.0})");
+        game.Photo.shutter = s0;
+        // the tornado in the frame?
+        var vp = cam.WorldToViewportPoint(tor.TornadoGroundWorld);
+        Check(vp.z > 0 && vp.x > 0 && vp.x < 1 && vp.y > 0 && vp.y < 1, $"the tornado is in the frame from the cab ({vp.x:0.00}, {vp.y:0.00})");
+        int credits0 = ChaseProfile.Current.credits; int photos0 = Directory.Exists(ChaseCamera.PhotoDir) ? Directory.GetFiles(ChaseCamera.PhotoDir, "*.png").Length : 0;
+        game.Photo.TakePhoto();
+        yield return null;
+        Note($"photo: {game.Photo.LastVerdict} -> {game.Photo.LastCredits} cr");
+        Check(game.Photo.LastVerdict.Contains("tornado"), "the photo is judged a tornado photo");
+        Check(game.Photo.LastCredits >= 40 && game.Photo.LastCredits <= 200, $"a mile-off well-exposed tornado pays well ({game.Photo.LastCredits} cr)");
+        Check(ChaseProfile.Current.credits == credits0 + game.Photo.LastCredits && ChaseSetup.chaseCredits >= game.Photo.LastCredits, "the credits went to the profile and the chase tally");
+        int photos1 = Directory.Exists(ChaseCamera.PhotoDir) ? Directory.GetFiles(ChaseCamera.PhotoDir, "*.png").Length : 0;
+        Check(photos1 == photos0 + 1, $"the PNG was saved to {ChaseCamera.PhotoDir}");
+        {
+            // the photo is a picture, not a black block: its mean brightness and how much of it is near black
+            var newest = Directory.GetFiles(ChaseCamera.PhotoDir, "*.png").OrderByDescending(File.GetLastWriteTimeUtc).First();
+            var img = new Texture2D(2, 2); img.LoadImage(File.ReadAllBytes(newest));
+            var px = img.GetPixels32(); double sum = 0; int dark = 0;
+            foreach (var c in px) { float l = (c.r + c.g + c.b) / (3f * 255f); sum += l; if (l < 0.02f) dark++; }
+            float mean = (float)(sum / px.Length), darkFrac = dark / (float)px.Length;
+            Note($"photo {Path.GetFileName(newest)}: {img.width}x{img.height}, camera {cam.pixelWidth}x{cam.pixelHeight}, mean brightness {mean:0.00}, {darkFrac:P0} near black");
+            Check(darkFrac < 0.3f && mean > 0.08f, "the photo is a picture of the scene (not mostly black)");
+            Object.Destroy(img);
+        }
+        // the same tornado again pays less
+        int c1 = game.Photo.LastCredits;
+        game.Photo.TakePhoto();
+        yield return null;
+        Check(game.Photo.LastCredits < c1, $"the same tornado again pays less ({game.Photo.LastCredits} after {c1})");
+        // facing away: no tornado
+        world.car.Teleport(world.car.transform.position, world.car.transform.rotation * Quaternion.Euler(0f, 180f, 0f));
+        foreach (var x in Seconds(2f)) yield return x;
+        game.Photo.TakePhoto();
+        yield return null;
+        Check(!game.Photo.LastVerdict.Contains("tornado") && game.Photo.LastCredits <= 12, $"facing away: {game.Photo.LastVerdict} ({game.Photo.LastCredits} cr)");
+        game.Photo.SetActive(false);
+        foreach (var x in PlayerFrames(2)) yield return x;
+        Check(!cam.usePhysicalProperties && !panel.externalExposure && exposure.mode.value == ExposureMode.Fixed, "closing the camera gives the exposure back to the panel");
+        Check(world.car.acceptInput, "the car takes input again");
+
+        rep.AppendLine().AppendLine("## The shop and the mesonet").AppendLine();
+        var meso = ChaseCatalog.GearItem("mesonet");
+        Check(!ChaseProfile.Current.Buy(meso), $"the mesonet cannot be bought with {ChaseProfile.Current.credits} cr");
+        ChaseProfile.Current.Earn(meso.price);
+        Check(ChaseProfile.Current.Buy(meso) && ChaseProfile.Current.Owns("mesonet"), "with the credits it is bought and owned");
+        var onDisk = ChaseProfile.Load();
+        Check(onDisk.Owns("mesonet") && onDisk.credits == ChaseProfile.Current.credits, "the profile on disk has it");
+        game.Mesonet.SetMounted(true);
+        foreach (var x in PlayerFrames(2)) yield return x;
+        Check(game.Mesonet.Mounted && world.car.transform.Find("Mesonet") != null, "the mesonet is mounted on the roof");
+        IEnumerable<object> LogAt(float miles, float expectRate, string what)
+        {
+            Place(miles);
+            foreach (var x in PlayerFrames(3)) yield return x;
+            int c = ChaseProfile.Current.credits; float t0 = Time.time;
+            foreach (var x in Seconds(2.5f)) yield return x;
+            float dt = Time.time - t0; int earned = ChaseProfile.Current.credits - c;
+            Note($"time: scale {Time.timeScale}, dt {Time.deltaTime:0.0000}, unscaled dt {Time.unscaledDeltaTime:0.0000}, menu page {game.Menu.page}");
+            Note($"{what}: {game.Mesonet.NearestTornadoMi:0.00} mi, rate {game.Mesonet.LogRate:0} cr/s, {earned} cr in {dt:0.0} s; wind {game.Mesonet.WindMps * 2.237f:0} mph, {game.Mesonet.TempF:0} F / {game.Mesonet.DewF:0} F, {game.Mesonet.PressureHpa:0.0} hPa (tornado deficit {game.Mesonet.TornadoDeficitHpa:0.0})");
+            Check(Mathf.Approximately(game.Mesonet.LogRate, expectRate), $"{what}: logging rate {game.Mesonet.LogRate:0} cr/s (expected {expectRate:0})");
+            if (expectRate > 0) Check(earned >= Mathf.FloorToInt(expectRate * dt) - 1 && earned <= Mathf.CeilToInt(expectRate * dt) + 1, $"{what}: earned {earned} cr in {dt:0.0} s");
+            else Check(earned == 0, $"{what}: nothing earned");
+        }
+        foreach (var x in LogAt(0.8f, game.Mesonet.creditsPerSecond, "within a mile")) yield return x;
+        foreach (var x in LogAt(0.35f, game.Mesonet.creditsPerSecond * 2f, "within half a mile")) yield return x;
+        foreach (var x in LogAt(1.6f, 0f, "beyond a mile")) yield return x;
+        Check(game.Mesonet.TornadoDeficitHpa < 1f, "no pressure deficit a mile and a half out");
+
+        rep.AppendLine().AppendLine("## The laptop, the phone and the drone").AppendLine();
+        var minimap = world.GetComponent<TestMapMinimap>();
+        var rig = world.cameraRig;
+        bool BuyNow(string key)
+        {
+            var g = ChaseCatalog.GearItem(key);
+            if (!ChaseProfile.Current.CanAfford(g.price)) ChaseProfile.Current.Earn(g.price - ChaseProfile.Current.credits);
+            return ChaseProfile.Current.Buy(g);
+        }
+        foreach (var x in PlayerFrames(2)) yield return x;
+        Check(minimap && minimap.hidden && !game.MapAllowed, "no laptop: the map is put away in the cab");
+        game.Player.GetOut();
+        foreach (var x in PlayerFrames(2)) yield return x;
+        Check(minimap.hidden, "no phone: no map on foot either");
+        Check(BuyNow("phone"), "the phone is bought");
+        foreach (var x in PlayerFrames(2)) yield return x;
+        Check(!minimap.hidden && game.MapAllowed, "the phone shows the map on foot");
+        game.Player.GetIn();
+        foreach (var x in PlayerFrames(2)) yield return x;
+        Check(minimap.hidden, "back in the truck the map is away again (no laptop)");
+        Check(BuyNow("laptop"), "the laptop is bought");
+        foreach (var x in PlayerFrames(2)) yield return x;
+        Check(!minimap.hidden, "the laptop shows the map in the cab");
+        // third person is the drone's follow cam
+        Check(rig && !rig.thirdPerson && rig.mode == TestMapCamera.Mode.Cab, $"no follow cam: the view is the cab's ({rig.mode})");
+        rig.mode = TestMapCamera.Mode.Chase;
+        foreach (var x in PlayerFrames(2)) yield return x;
+        Check(rig.mode == TestMapCamera.Mode.Cab, "the chase view snaps back to the cab");
+        rig.mode = TestMapCamera.Mode.Storm;
+        foreach (var x in PlayerFrames(2)) yield return x;
+        Check(rig.mode == TestMapCamera.Mode.Storm && !game.Drone.Following, "the roof camera locked on the tornado stays without the drone, and is not the drone's");
+        rig.mode = TestMapCamera.Mode.Cab;
+        // the drone
+        var drone = game.Drone;
+        Check(!drone.Owned, "no drone owned yet");
+        drone.Launch();
+        foreach (var x in PlayerFrames(2)) yield return x;
+        Check(!drone.Flying, "it cannot be launched unowned");
+        Check(!ChaseProfile.Current.Buy(ChaseCatalog.GearItem("drone_range1")), "a drone upgrade cannot be bought before the drone");
+        Check(BuyNow("drone"), "the drone is bought");
+        drone.SetOwnedNow();
+        foreach (var x in PlayerFrames(2)) yield return x;
+        Check(drone.Owned && world.car.transform.Find("Drone") != null, "the drone sits on the roof");
+        Check(Mathf.Approximately(drone.RangeM, 400f) && Mathf.Approximately(drone.FlightSeconds, 300f), $"stock range {drone.RangeM:0} m, battery {drone.FlightSeconds / 60f:0} min");
+        var tg = Place(0.5f);
+        foreach (var x in Seconds(1.5f)) yield return x;
+        Check(world.car.GroundUnder(world.car.transform.position + Vector3.up * 5f, 20f, out var under) && world.car.transform.position.y - under.point.y < 2f,
+              $"the truck is on the ground after the teleport ({world.car.transform.position.y:0.0} m; the tornado's ground point is at {tg.y:0.0} m)");
+        drone.Launch();
+        foreach (var x in PlayerFrames(2)) yield return x;
+        Check(drone.Flying && rig.held && !world.car.acceptInput, "B launches it: the rig is held, the truck ignores input");
+        Check(Vector3.Distance(cam.transform.position, drone.Position) < 0.05f, $"the camera is the drone's ({Vector3.Distance(cam.transform.position, drone.Position):0.00} m off)");
+        float b0 = drone.Battery;
+        foreach (var x in Seconds(1.5f)) yield return x;
+        Check(drone.Battery < b0 && drone.Battery > b0 - 0.02f, $"the battery drains in flight ({b0:P1} -> {drone.Battery:P1} in 1.5 s)");
+        // the fence: put it a kilometre toward the tornado, it comes back to the range
+        var toward = Vector3.ProjectOnPlane(tg - world.car.transform.position, Vector3.up).normalized;
+        drone.TestPlace(world.car.transform.position + toward * 1000f + Vector3.up * 40f, tg + Vector3.up * 300f);
+        foreach (var x in PlayerFrames(3)) yield return x;
+        Check(drone.DistanceM <= 401f && drone.DistanceM > 380f, $"the drone stops at the range fence ({drone.DistanceM:0} m of {drone.RangeM:0})");
+        // a photo from it, 200 m out and 40 m up, aimed a little up the funnel (the tornado has come nearer meanwhile)
+        tg = tor.TornadoGroundWorld;
+        drone.TestPlace(world.car.transform.position + toward * 200f + Vector3.up * 40f, tg + Vector3.up * 100f);
+        foreach (var x in Seconds(1.5f)) yield return x;
+        game.Photo.SetActive(true); game.Photo.autoShutter = true;
+        foreach (var x in PlayerFrames(3)) yield return x;
+        var vpd = cam.WorldToViewportPoint(tg);
+        Check(vpd.z > 0 && vpd.x > 0 && vpd.x < 1 && vpd.y > 0 && vpd.y < 1, $"the tornado is in the drone's frame ({vpd.x:0.00}, {vpd.y:0.00})");
+        game.Photo.TakePhoto();
+        yield return null;
+        Note($"drone photo: {game.Photo.LastVerdict} -> {game.Photo.LastCredits} cr");
+        Check(game.Photo.LastVerdict.Contains("tornado") && game.Photo.LastVerdict.Contains("from the drone"), "the photo is a tornado photo from the drone");
+        game.Photo.SetActive(false);
+        foreach (var x in PlayerFrames(2)) yield return x;
+        Check(drone.Flying && !world.car.acceptInput, "closing the camera leaves the drone flying and the truck parked");
+        // the reserve: it comes home on its own and lands (from 80 m behind the truck, out of the tornado's wind: near the
+        // funnel the wind is over its top speed and carries it, which is the point of the range and the battery)
+        drone.TestPlace(world.car.transform.position - toward * 80f + Vector3.up * 30f, world.car.transform.position);
+        drone.TestBattery(0.09f);
+        foreach (var x in PlayerFrames(2)) yield return x;
+        Check(drone.Returning, "at a tenth of the battery it comes home by itself");
+        {
+            float t0 = Time.unscaledTime;
+            Note($"return start: {drone.DebugState}");
+            while (drone.Flying && Time.unscaledTime - t0 < 40f) yield return null;
+            Note($"home in {Time.unscaledTime - t0:0.0} s: {drone.DebugState}");
+        }
+        Check(!drone.Flying && !rig.held && world.car.acceptInput && drone.Battery > 0.02f, $"it landed on the roof with charge to spare ({drone.Battery:P0}) and the truck drives again");
+        // the upgrades and the follow cam
+        Check(BuyNow("drone_range1") && Mathf.Approximately(drone.RangeM, 1000f), $"the long-range link: {drone.RangeM:0} m");
+        Check(BuyNow("drone_batt1") && Mathf.Approximately(drone.FlightSeconds, 600f), $"the big battery: {drone.FlightSeconds / 60f:0} min");
+        Check(BuyNow("drone_follow"), "the follow cam is bought");
+        drone.TestBattery(1f);   // charged (the return flight left it near the flat mark)
+        foreach (var x in PlayerFrames(2)) yield return x;
+        Check(rig.thirdPerson, "the third-person views are unlocked");
+        rig.mode = TestMapCamera.Mode.Chase;
+        foreach (var x in PlayerFrames(2)) yield return x;
+        Check(rig.mode == TestMapCamera.Mode.Chase && drone.Following, "the chase view stays: the drone follows");
+        float bf = drone.Battery;
+        foreach (var x in Seconds(2f)) yield return x;
+        float drop = bf - drone.Battery, expect = 0.25f * 2f / drone.FlightSeconds;
+        Check(drop > expect * 0.5f && drop < expect * 2f, $"following drains a quarter of the flight rate ({drop:P2} in 2 s, expected about {expect:P2})");
+        drone.TestBattery(0.01f);
+        foreach (var x in PlayerFrames(3)) yield return x;
+        Check(rig.mode == TestMapCamera.Mode.Cab && !rig.thirdPerson, "a flat battery lands the follow cam: back to the cab");
+        drone.TestBattery(1f);
+        foreach (var x in PlayerFrames(2)) yield return x;
+        Check(rig.thirdPerson, "charged, the views are back");
+
+        rep.AppendLine().AppendLine("## The hour is up").AppendLine();
+        world.game.gameMinutes = world.game.gameLength; world.game.Apply();
+        foreach (var x in PlayerFrames(3)) yield return x;
+        Check(ChaseSetup.chaseOver && game.Menu.page == ChaseMenu.Page.Summary && Time.timeScale == 0f, "the chase ends with the summary, the clock stopped");
+        Check(!game.EarnsCredits, "nothing more is earned");
+        Check(ChaseProfile.Current.bestChaseCredits >= ChaseSetup.chaseCredits, $"the best chase is recorded ({ChaseProfile.Current.bestChaseCredits} cr)");
+        ChaseSetup.BackToMenu(); game.ApplyState();
+        foreach (var x in PlayerFrames(2)) yield return x;
+        Check(game.Menu.page == ChaseMenu.Page.Main && Time.timeScale == 1f && world.sandboxKeys, "back to the main menu, the map running");
+
+        rep.AppendLine().AppendLine("## Free roam").AppendLine();
+        ChaseSetup.BeginFreeRoam(); game.Menu.Close(); game.ApplyState();
+        foreach (var x in PlayerFrames(2)) yield return x;
+        Check(!game.EarnsCredits && world.sandboxKeys && world.allowRewind && !panel.locked, "free roam: the sandbox back, no credits");
+        Check(game.Mesonet.Mounted, "free roam carries the mesonet owned");
+    }
+}
