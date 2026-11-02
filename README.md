@@ -290,6 +290,11 @@ and drives at 50 / 25 / 10 % and everything pays 25 / 50 / 75 % more; with the b
 random moment within eight hours: on foot right there, flying the drone once it has been brought home, driving once
 the truck has stopped ("you passed out."), waking at 8 am at half.
 
+**Dev mode** (**F3**, or the pause menu; user 2026-11-02): the sandbox keys back inside a career: **F** the free camera
+(**V** puts the truck under it), **1-9** jump to a spot, **N** new storms, **T / P / [ ]** the clock (rewinding too),
+**G** game mode, **Tab** the storm and lighting panel, whose clock slider and time-of-day buttons move the day's clock
+(`ChaseSetup.devMode`, `ChaseGame.SetDevMode`). Fuel, wear and sanity keep running; the HUD shows DEV.
+
 Check: **StormLab > Test Map > Chase Career Check** (`ChaseCareerCheck.RunFromCommandLine`, about 5 min): the places
 and the rig (lights cycling, 12 marked spots), pictures of Haskett (`Screenshots/town_*.png`), a career's morning, the
 forecast, heading out, the day's clock, fuel (burn, an empty tank, the pump and its bill), wear and repairs, every sanity

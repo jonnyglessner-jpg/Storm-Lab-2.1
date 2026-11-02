@@ -392,7 +392,8 @@ namespace StormLab.TestMap
                        "E  get out / get in (walk: WASD, Shift runs)    X  photo camera    Esc  menu and shop\n" +
                        "T  storm clock speed    P  pause    [ ]  -/+ 5 min    N  new storm    H  hide help (F1: all HUD)    0  sound on / off\n" +
                        "Tab  storm and lighting panel (24 hour clock)    G  game mode (two storms, one hour)    F2  storm quality\n" +
-                       "M  map (bottom right) open / close; click a road on it to get directions\n";
+                       "M  map (bottom right) open / close; click a road on it to get directions\n" +
+                       (Game.ChaseSetup.devMode && Game.ChaseSetup.state == Game.ChaseSetup.State.Chase ? "F3  dev mode off\n" : "");
                 for (int i = 0; i < Mathf.Min(9, spots.Length); i++) help += $"\n{i + 1}  {spots[i].name}";
             }
             else
@@ -403,7 +404,7 @@ namespace StormLab.TestMap
                        "E  get out / get in (walk: WASD, Shift runs)    " + (follow ? "C  camera (drone follow cam / roof / cab; hold right mouse to look)" : "C  camera (roof, locked on the tornado / cab; the drone's follow cam adds the view from behind)") + "\n" +
                        "X  photo camera (arrows: shutter and aperture, Q/E ISO, scroll zooms, click shoots)    B  drone (WASD, Q/E down / up, B home)\n" +
                        "F  at a pump: hold to fuel up    F  in a mechanic's bay: repairs    F  on a marked space at a motel or truck stop: sleep (saves the day)\n" +
-                       "T  clock speed (1x / 10x / 30x / 60x)    P  pause    ]  +5 min (no going back)    H  hide help (F1: all HUD)    0  sound    F2  storm quality\n" +
+                       "T  clock speed (1x / 10x / 30x / 60x)    P  pause    ]  +5 min (no going back)    H  hide help (F1: all HUD)    0  sound    F2  storm quality    F3  dev mode\n" +
                        "Esc  menu and shop    M  map open / close (with the laptop in the cab, the phone on foot; click a road on it to get directions)";
             }
             float ph = small.CalcHeight(new GUIContent(help), 450) + 12;

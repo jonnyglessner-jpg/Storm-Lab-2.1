@@ -13,6 +13,8 @@
 //
 //   Esc  menu and shop    E  get out / in    X  photo camera    B  drone    F  fuel / repairs / sleep at a marked spot
 //   T / P / ]  clock speed, pause, +5 min (no rewind in a chase)
+//   F3  dev mode (user, 2026-11-02): the sandbox keys back in a career (F free camera, V truck under it, 1-9 spots, N new
+//       storms, [ rewind, G game mode, the Tab storm and lighting panel; its clock slider moves the day's clock)
 using System.Collections.Generic;
 using StormLab.TestMap;
 using UnityEngine;
@@ -55,6 +57,7 @@ namespace StormLab.Game
         GUIStyle big, small, mid, tiny;
         TestMapStormPanel panel;
         bool saidDone;
+        float devHourOffset, lastPanelHour = -1f, extraHours, lastGameMinutes;
 
         void Awake() { instance = this; }
 
@@ -119,7 +122,9 @@ namespace StormLab.Game
             if (world.game) { world.game.preset = map.preset; world.game.Clear(); world.game.playing = true; }
             world.SetClockSpeed(0);
             ChaseSetup.morning = true; ChaseSetup.dayStarted = false; ChaseSetup.hour = 8f; StormsDone = false; saidDone = false;
+            devHourOffset = 0f; lastPanelHour = -1f; extraHours = 0f; lastGameMinutes = 0f;
             if (panel) { panel.clockRuns = false; panel.hour = 8f; panel.Apply(); }
+            ApplyDevMode();
             // parked at the last station (or the first town's)
             var towns = TestMapPlaces.Load(world.navResource);
             var t = TestMapPlaces.TownOf(towns, ChaseProfile.Current.spawnTown);
@@ -152,6 +157,7 @@ namespace StormLab.Game
             ChaseSetup.seed = seed;
             ChaseSetup.startHour = ChaseSetup.StartHourFor(seed);
             ChaseSetup.hour = ChaseSetup.startHour; ChaseSetup.morning = false; ChaseSetup.dayStarted = true; StormsDone = false; saidDone = false;
+            devHourOffset = 0f; lastPanelHour = -1f; extraHours = 0f; lastGameMinutes = 0f;
             if (panel) { panel.clockRuns = false; panel.hour = ChaseSetup.hour; panel.Apply(); }
             var towns = TestMapPlaces.Load(world.navResource);
             var t = TestMapPlaces.TownOf(towns, townKey);
@@ -170,20 +176,30 @@ namespace StormLab.Game
         void Update()
         {
             ClockDeltaHours = 0f;
+            var kb = InputBlocked ? null : Keyboard.current;
+            if (kb != null && kb.f3Key.wasPressedThisFrame && InChase) SetDevMode(!ChaseSetup.devMode);
             if (InChase && world.game)
             {
+                bool dev = ChaseSetup.devMode;
+                // dev mode: the panel's clock slider (and its time-of-day buttons) move the day's clock
+                float drag = 0f;
+                if (dev && panel && lastPanelHour >= 0f && Mathf.Abs(panel.hour - lastPanelHour) > 1e-4f) drag = Mathf.DeltaAngle(lastPanelHour * 15f, panel.hour * 15f) / 15f;
                 // the day's clock: with the game clock while the storms are out, then on at the same speed (T sets it)
-                if (!ChaseSetup.morning && !(Sleep && Sleep.Busy) && Time.timeScale > 0f && world.game.playing)
+                if (!ChaseSetup.morning && !(Sleep && Sleep.Busy) && Time.timeScale > 0f && (world.game.playing || dev))
                 {
-                    float speed = world.game.minutesPerSecond * 60f;
+                    // the hour of day = the storms' start hour + the game clock (which T, ] and dev's [ and N move) + the
+                    // panel's drags in dev mode + the time run on after the game hour (which a rewind into the hour drops)
+                    float speed = world.game.playing ? world.game.minutesPerSecond * 60f : 0f;
                     float before = ChaseSetup.hour;
-                    if (world.game.Scenario != null && world.game.gameMinutes < world.game.gameLength - 1e-3f)
-                        ChaseSetup.hour = Mathf.Repeat(ChaseSetup.startHour + world.game.gameMinutes / 60f, 24f);
-                    else ChaseSetup.hour = Mathf.Repeat(ChaseSetup.hour + Time.deltaTime * speed / 3600f, 24f);
+                    if (world.game.Scenario != null) lastGameMinutes = world.game.gameMinutes;
+                    if (world.game.Scenario != null && world.game.gameMinutes < world.game.gameLength - 1e-3f) extraHours = 0f;
+                    else extraHours += Time.deltaTime * speed / 3600f;
+                    devHourOffset += drag;
+                    ChaseSetup.hour = Mathf.Repeat(ChaseSetup.startHour + lastGameMinutes / 60f + devHourOffset + extraHours, 24f);
                     ClockDeltaHours = Mathf.Repeat(ChaseSetup.hour - before + 24f, 24f);
                     if (ClockDeltaHours > 12f) ClockDeltaHours = 0f;
                 }
-                if (panel) { panel.clockRuns = false; panel.hour = ChaseSetup.hour; }
+                if (panel) { panel.clockRuns = false; panel.hour = ChaseSetup.hour; lastPanelHour = panel.hour; }
                 bool done = ChaseSetup.dayStarted && world.game.Scenario != null && world.game.gameMinutes >= world.game.gameLength - 1e-3f;
                 if (done && !saidDone) { saidDone = true; Say("The storms have moved off the map. Find a motel or a truck stop and sleep to save the day."); }
                 StormsDone = done;
@@ -202,6 +218,23 @@ namespace StormLab.Game
                 if ((Forecast && Forecast.Showing) || (Sleep && Sleep.Busy)) world.car.acceptInput = false;
             }
             else { world.car.powerScale = 1f; world.car.speedScale = 1f; if (Player) Player.speedScale = 1f; }
+        }
+
+        /// <summary>Dev mode on or off (F3, the pause menu): the sandbox keys and rewinding, the storm panel unlocked, the free
+        /// camera allowed; off again puts the truck back under a free camera and locks the panel.</summary>
+        public void SetDevMode(bool on)
+        {
+            ChaseSetup.devMode = on;
+            ApplyDevMode();
+            if (!on && world.cameraRig && world.cameraRig.mode == TestMapCamera.Mode.Free) world.cameraRig.DropTruck();
+            Say(on ? "DEV MODE: F free camera, V truck here, 1-9 spots, N new storms, T / P / [ ] clock, G game mode, Tab panel" : "Dev mode off");
+        }
+
+        void ApplyDevMode()
+        {
+            bool on = ChaseSetup.devMode && InChase;
+            world.sandboxKeys = on; world.allowRewind = on;
+            if (panel) { panel.locked = !on; if (!on) panel.show = false; }
         }
 
         /// <summary>The map (bottom right) is a screen the chaser must own (user, 2026-11-02): the laptop shows it in the
@@ -301,7 +334,7 @@ namespace StormLab.Game
             string where = "";
             var town = TestMapPlaces.TownAt(TestMapPlaces.Load(world.navResource), world.car.transform.position, 200f);
             if (town != null) where = "  ·  " + town.name;
-            GUI.Label(new Rect(x, y, 360, 20), $"Day {p.day}  ·  {ChaseSetup.ClockText(ChaseSetup.hour)}{(ChaseSetup.morning ? "  ·  morning" : StormsDone ? "  ·  storms gone: sleep to save" : "")}{where}", tiny); y += 22;
+            GUI.Label(new Rect(x, y, 360, 20), $"Day {p.day}  ·  {ChaseSetup.ClockText(ChaseSetup.hour)}{(ChaseSetup.morning ? "  ·  morning" : StormsDone ? "  ·  storms gone: sleep to save" : "")}{where}{(ChaseSetup.devMode ? "  ·  DEV" : "")}", tiny); y += 22;
             float gal = Fuel.Gallons, tank = Fuel.TankGal;
             Bar(new Rect(x, y + 3, 110, 12), gal / Mathf.Max(tank, 1f), gal / Mathf.Max(tank, 1f) > 0.15f ? new Color(0.95f, 0.75f, 0.2f) : new Color(1f, 0.35f, 0.3f));
             GUI.Label(new Rect(x + 118, y - 2, 250, 20), $"Fuel {gal:0.0} / {tank:0} gal {v.FuelName}{(Fuel.Empty ? "  ·  EMPTY" : Fuel.BurnGph > 0.01f ? $"  ·  {Fuel.BurnGph:0.0} gal/h" : "")}", tiny); y += 22;

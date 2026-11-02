@@ -26,6 +26,8 @@ namespace StormLab.Game
         public static bool morning;
         /// <summary>the day's storms were spawned (and have been chased, or missed)</summary>
         public static bool dayStarted;
+        /// <summary>dev mode (F3, user 2026-11-02): the sandbox keys back in a career (free camera, spot jumps, V, N, [ ], the Tab panel)</summary>
+        public static bool devMode;
 
         /// <summary>The seed of a career day's storms.</summary>
         public static int DaySeed(int careerSeed, int day) => (careerSeed * 131 + day * 7919) % 999983 + 1;

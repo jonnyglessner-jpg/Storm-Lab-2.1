@@ -254,6 +254,25 @@ public static class ChaseCareerCheck
             world.SetClockSpeed(0);
         }
 
+        rep.AppendLine().AppendLine("## Dev mode").AppendLine();
+        {
+            Check(!world.sandboxKeys && !world.allowRewind && panel.locked, "a career has no sandbox keys, no rewind, the panel locked");
+            game.SetDevMode(true);
+            foreach (var x in PlayerFrames(2)) yield return x;
+            Check(ChaseSetup.devMode && world.sandboxKeys && world.allowRewind && !panel.locked, "F3: the sandbox keys, rewinding and the panel are back");
+            float h0 = ChaseSetup.hour;
+            panel.hour = Mathf.Repeat(h0 + 2f, 24f);
+            foreach (var x in PlayerFrames(2)) yield return x;
+            Check(Mathf.Abs(Mathf.Repeat(ChaseSetup.hour - h0 + 24f, 24f) - 2f) < 0.05f, $"the panel's clock slider moves the day's clock ({ChaseSetup.ClockText(h0)} -> {ChaseSetup.ClockText(ChaseSetup.hour)})");
+            float h1 = ChaseSetup.hour;
+            world.game.gameMinutes = Mathf.Max(0f, world.game.gameMinutes - 5f); world.game.Apply();
+            foreach (var x in PlayerFrames(2)) yield return x;
+            Check(Mathf.Abs(Mathf.Repeat(h1 - ChaseSetup.hour + 24f, 24f) - 5f / 60f) < 0.05f, $"rewinding the game clock five minutes takes the day back with it ({ChaseSetup.ClockText(ChaseSetup.hour)})");
+            game.SetDevMode(false);
+            foreach (var x in PlayerFrames(2)) yield return x;
+            Check(!ChaseSetup.devMode && !world.sandboxKeys && !world.allowRewind && panel.locked, "off again: locked down");
+        }
+
         rep.AppendLine().AppendLine("## Fuel").AppendLine();
         var fuel = game.Fuel; var v = ChaseSetup.Vehicle;
         Check(v.fuel == FuelGrade.Diesel && Mathf.Approximately(fuel.Gallons, v.tankGal), $"the dually starts with a full tank of {v.FuelName} ({fuel.Gallons:0.0} / {v.tankGal:0} gal)");
