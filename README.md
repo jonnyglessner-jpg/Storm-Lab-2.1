@@ -91,9 +91,15 @@ side starts off the map on the side its motion comes from (none of the game's se
 tracks drawn in `storm_tracks.png`).
 
 **A game** (`StormScenario`, 2.0's scenario on the web build's storms; `StormScenarioRunner` draws it): two supercells
-from one game seed, the second starting 2-12 game minutes after the first, in lanes about 26 km apart across the storm
-motion (never under 15 miles: closer draws are pushed apart, and the check measures how close the storms come), each its own `StormRenderer` (and, through `StormScenarioRunner.StormCreated`, its own lightning). Each starts as
-towering cumulus off the map's upwind edge and comes onto the map 2 storm minutes before its first wall cloud. A game is
+from one game seed, the second starting 2-12 game minutes after the first, in lanes across the day's mean storm motion
+whose tracks cross the map's centre line 25-31 miles apart (never under 25 miles, and while both are alive their
+updrafts never come closer: the lanes are pushed apart until they do not, and the check measures how close the storms
+come), the pair shifted up to 6 miles either way. The day's motion is the preset's turned up to 15 degrees and sped up
+to 10 % either way, and each storm's is a few degrees and a few per cent off the day's (`StormGame.Deviate` turns the
+storm's structure with it), so the tracks fan a little. Each is its own `StormRenderer` (and, through
+`StormScenarioRunner.StormCreated`, its own lightning). About a third of storms initiate over the map itself (towering
+cumulus up to 12 km in from the upwind edge); the rest start as towering cumulus off the map's upwind edge and come onto
+the map 2-10 storm minutes before their first wall cloud. A game is
 60 minutes; each storm's life cycle runs 2.5x the game clock (`pace`) while it crosses the ground at its real speed
 (`StormRenderer.motionScale = 1/pace`), so a 30 min build-up to the first wall cloud takes 12 game minutes, and the
 lightning follows the faster life cycle. 2.0's rules: the game's top rating is drawn once (60 % no tornado above EF2,

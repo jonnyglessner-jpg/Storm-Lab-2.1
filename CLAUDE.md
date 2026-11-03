@@ -23,8 +23,12 @@ README.md has the layout, use, checks and known gaps.
   size that changes: `(z - v x clock) / r` slides the whole texture by clock x d(1 / r) (a funnel widening out of its rope
   stage sent the skin and dust plunging at ~1 km/s, user 2026-11-01); sample `z / r - rise` with the rise added up in
   `StormSpin` (S_spin5; `-- --rise` checks the speeds). New random draws get their own `StormRng` stream.
-  `StormScenario` (2.0's game layout) uses streams 500 (tiers, lanes, starts), 600+i (storm seeds), 700+i (precip);
-  its storms reach the website plan only through `PlanOverrides` (precip, forced tornadic), which parity must not see.
+  `StormScenario` (2.0's game layout) uses streams 500 (tiers, lanes, starts), 510 (the day's motion turn and speed, the
+  lanes' gap and shift), 600+i (storm seeds), 700+i (precip), 800+i (each storm's own motion and initiation point);
+  its storms reach the website plan only through `PlanOverrides` (precip, forced tornadic; its turnDeg / speedScale are
+  applied after the design by `StormGame.Deviate`, which turns fwd / lft / tilt / adir with the motion), which parity must not see.
+  The storms never come within 25 miles of each other (user, 2026-11-02; `MinSeparationM`, the lanes pushed apart until
+  `ClosestApproachM` says so): keep it when touching lanes, motions or starts, and run `-- --scenario` to see the spread.
   Game changes to the plan itself (cycle shapes, timing, no anticyclonic side) go in `StormGame.Adapt`, which every game plan passes through
   (`StormGame.Plan` in the renderer, `StormScenario`, the game-facing `validation/parity/csharp` checks) and parity does not.
   Re-run the website comparison (README) after shader changes; it uses the website's lighting and tornado.

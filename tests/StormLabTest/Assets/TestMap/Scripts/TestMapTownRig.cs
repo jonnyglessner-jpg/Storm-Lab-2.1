@@ -157,7 +157,9 @@ namespace StormLab.TestMap
             Part(PrimitiveType.Cylinder, "Post", sign.transform, Vector3.up * 1.2f, Quaternion.identity, new Vector3(0.08f, 1.2f, 0.08f), post);
             Part(PrimitiveType.Cube, "Board", sign.transform, Vector3.up * 2.55f, Quaternion.identity, new Vector3(1.2f, 0.7f, 0.04f), signFace);
             var tm = new GameObject("Text"); tm.transform.SetParent(sign.transform, false);
-            tm.transform.localPosition = new Vector3(0f, 2.55f, -0.03f); tm.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
+            // the text on the board's near face (-z, the side the truck noses up to): a TextMesh reads from its -z side, so no
+            // turn (turned about, it read backwards from the driver's seat; user, 2026-11-02)
+            tm.transform.localPosition = new Vector3(0f, 2.55f, -0.03f); tm.transform.localRotation = Quaternion.identity;
             var mesh = tm.AddComponent<TextMesh>(); mesh.text = text + "\nSLEEP HERE  (F)"; mesh.fontSize = 48; mesh.characterSize = 0.045f; mesh.anchor = TextAnchor.MiddleCenter; mesh.alignment = TextAlignment.Center; mesh.color = Color.white;
             if (kind == "mechanic") mesh.text = text + "\nREPAIRS  (F)";
             Spots.Add((t, kind, spot));

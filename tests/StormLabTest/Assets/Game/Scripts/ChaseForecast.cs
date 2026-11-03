@@ -27,6 +27,8 @@ namespace StormLab.Game
             public int index; public string lane, mode, shapes; public float initHour, bearing, motionDeg, motionMph;
             public int pTornado, pEf2, pEf4, maxEf, count;
             public Vector2 entry, dir;
+            /// <summary>it initiates over the map (entry is then where its towering cumulus stands, not an edge crossing)</summary>
+            public bool onMap;
         }
         public Outlook[] Outlooks { get; private set; } = new Outlook[0];
         public string Discussion { get; private set; } = "";
@@ -82,7 +84,8 @@ namespace StormLab.Game
                 mode = s.precip == Precip.HP ? "HP (rain-wrapped: short views, dangerous near the core)" : "classic supercell (clear views of the base)",
                 initHour = StartHour + (float)s.startMin / 60f, bearing = (float)s.bearing,
                 motionDeg = (Mathf.Atan2(m.x, m.y) * Mathf.Rad2Deg + 360f) % 360f, motionMph = m.magnitude * 2.237f,
-                entry = new Vector2((float)s.entryX, (float)s.entryZ), dir = m.sqrMagnitude > 1e-4f ? m.normalized : Vector2.up,
+                entry = s.onMap ? new Vector2((float)s.startX, (float)s.startZ) : new Vector2((float)s.entryX, (float)s.entryZ), onMap = s.onMap,
+                dir = m.sqrMagnitude > 1e-4f ? m.normalized : Vector2.up,
                 maxEf = maxEf, count = tor.Count,
                 pTornado = tor.Count > 0 ? R(70, 95) : R(10, 30),
                 pEf2 = maxEf >= 2 ? R(45, 75) : maxEf >= 0 ? R(8, 22) : R(2, 8),
@@ -98,9 +101,12 @@ namespace StormLab.Game
         {
             var o = Outlooks;
             string init = ChaseSetup.ClockText(StartHour);
-            string s = $"Towering cumulus expected from about {init} along the dryline west of the map. Two supercells should mature and cross the map through the afternoon, moving toward {Compass(o.Length > 0 ? o[0].motionDeg : 45f)} at about {(o.Length > 0 ? o[0].motionMph : 30f):0} mph.\n";
+            var toward = o.Select(k => Compass(k.motionDeg)).Distinct().ToList();
+            float lo = o.Length > 0 ? o.Min(k => k.motionMph) : 30f, hi = o.Length > 0 ? o.Max(k => k.motionMph) : 30f;
+            string speeds = hi - lo < 2.5f ? $"about {(lo + hi) / 2f:0} mph" : $"{lo:0}-{hi:0} mph";
+            string s = $"Towering cumulus expected from about {init} along the dryline west of the map. Two supercells should mature and cross the map through the afternoon, moving toward the {string.Join(" and ", toward.DefaultIfEmpty("north-east"))} at {speeds}.\n";
             foreach (var k in o)
-                s += $"\nThe {k.lane} storm: initiates about {ChaseSetup.ClockText(k.initHour)}, comes onto the map from the {Compass(k.bearing)}, {k.mode}. Tornado {k.pTornado} %, EF2+ {k.pEf2} %, EF4+ {k.pEf4} %; {k.shapes}.";
+                s += $"\nThe {k.lane} storm: initiates about {ChaseSetup.ClockText(k.initHour)} {(k.onMap ? "over the " + Compass(k.bearing) + " of the map" : "off the map to the " + Compass(k.bearing) + ", coming onto it just before its first wall cloud")}, moving toward {k.motionDeg:0} degrees at {k.motionMph:0} mph; {k.mode}. Tornado {k.pTornado} %, EF2+ {k.pEf2} %, EF4+ {k.pEf4} %; {k.shapes}.";
             s += "\n\nPick which storm to play for, and the truck stop to start from: the day fast-forwards to the first towering cumulus with you parked there.";
             return s;
         }

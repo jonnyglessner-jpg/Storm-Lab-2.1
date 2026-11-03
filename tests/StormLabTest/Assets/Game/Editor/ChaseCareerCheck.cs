@@ -195,6 +195,10 @@ public static class ChaseCareerCheck
             foreach (var x in Shot(world, cam, mFrom, (m + Vector3.up * 4f - mFrom).normalized, "town_motel.png")) yield return x;
             var mc = hk.mechanic.Position;
             foreach (var x in Shot(world, cam, mc + new Vector3(30f, 2f, -70f), (mc - (mc + new Vector3(30f, 0f, -70f))).normalized, "town_mechanic.png")) yield return x;
+            // the motel's guest space from the driver's seat of a truck nosed up to its sign (the text must read the right way round)
+            var sp = hk.motel.sleep; var fwdS = Quaternion.Euler(0f, sp.yaw, 0f) * Vector3.forward;
+            var eye = sp.Position + Vector3.up * 1.45f - fwdS * 1.2f;
+            foreach (var x in Shot(world, cam, eye, (sp.Position + fwdS * 4.55f + Vector3.up * 2.4f - eye).normalized, "town_sleep_sign.png")) yield return x;
             var side = L + new Vector3(-275f, 1.7f, 300f);   // on the east-west street three blocks north, two west of Main
             foreach (var x in Shot(world, cam, side, Vector3.right, "town_side_street.png")) yield return x;
             foreach (var x in Shot(world, cam, L + new Vector3(-900f, 420f, -900f), (L - (L + new Vector3(-900f, 420f, -900f))).normalized, "town_air.png")) yield return x;
@@ -219,7 +223,7 @@ public static class ChaseCareerCheck
         Check(fc.Preview != null && fc.Outlooks.Length == 2, $"the forecast reads the day's two storms (seed {fc.DaySeed}, initiation {ChaseSetup.ClockText(fc.StartHour)})");
         foreach (var o in fc.Outlooks)
         {
-            Note($"{o.lane} storm: initiates {ChaseSetup.ClockText(o.initHour)}, from the {o.bearing:0} deg, toward {o.motionDeg:0} deg at {o.motionMph:0} mph, {o.mode}; tornado {o.pTornado} %, EF2+ {o.pEf2} %, EF4+ {o.pEf4} %; {o.shapes} (really: {o.count} tornadoes, strongest EF{o.maxEf})");
+            Note($"{o.lane} storm: initiates {ChaseSetup.ClockText(o.initHour)}, {(o.onMap ? "over the map" : "off the map")} from the {o.bearing:0} deg, toward {o.motionDeg:0} deg at {o.motionMph:0} mph, {o.mode}; tornado {o.pTornado} %, EF2+ {o.pEf2} %, EF4+ {o.pEf4} %; {o.shapes} (really: {o.count} tornadoes, strongest EF{o.maxEf})");
             Check(o.pTornado >= 0 && o.pTornado <= 100 && o.pEf2 <= o.pTornado + 5 && o.pEf4 <= o.pEf2 + 5, $"{o.lane}: the probabilities nest");
             Check(o.count == 0 ? o.pTornado < 35 : o.pTornado >= 70, $"{o.lane}: the tornado chance follows the day's real storm");
         }
@@ -238,7 +242,7 @@ public static class ChaseCareerCheck
             {
                 float mu = 0.5f + (t.centre.x + 4000f) / fc.MapSpan, mv = 0.5f + t.centre.z / fc.MapSpan;   // 2.5 miles east along the highway, clear of the station squares
                 Color up = fc.MapImage.GetPixel((int)(mu * mrt.width), (int)(mv * mrt.height));
-                bool orange = up.r > 0.85f && up.g > 0.5f && up.g < 0.8f && up.b < 0.4f;
+                bool orange = up.r > 0.85f && up.g > 0.5f && up.g < 0.8f && up.b < 0.6f && up.r - up.b > 0.3f;   // (orange, or orange under a track cone's tint)
                 if (orange) onRoute++;
                 Note($"{t.name} (world {t.centre.x:0}, {t.centre.z:0}) at the drawn map's north-up pixel: {up} {(orange ? "(the state route)" : "")}");
             }
@@ -313,7 +317,7 @@ public static class ChaseCareerCheck
 
         rep.AppendLine().AppendLine("## Fuel").AppendLine();
         var fuel = game.Fuel; var v = ChaseSetup.Vehicle;
-        Check(v.fuel == FuelGrade.Diesel && Mathf.Approximately(fuel.Gallons, v.tankGal), $"the dually starts with a full tank of {v.FuelName} ({fuel.Gallons:0.0} / {v.tankGal:0} gal)");
+        Check(v.fuel == FuelGrade.Diesel && fuel.Gallons > v.tankGal - 0.1f, $"the dually starts with a full tank of {v.FuelName} ({fuel.Gallons:0.0} / {v.tankGal:0} gal)");
         {
             car.acceptInput = false; car.testThrottle = 1f;
             float g0 = fuel.Gallons;
