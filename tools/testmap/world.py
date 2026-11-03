@@ -38,10 +38,11 @@ import profiles as P
 from roads import bridged
 from terrain import CDL_STEP, sample
 from textures import LAYERS
+import towns as TN
 
 rng = np.random.default_rng(2026)
 T0 = time.time()
-DITCH = {"state": 0.9, "paved": 0.7, "gravel": 0.5, "drive": 0.0}
+DITCH = {"state": 0.9, "paved": 0.7, "gravel": 0.5, "drive": 0.0, "street": 0.0}
 L_STUBBLE, L_GREEN, L_FALLOW, L_RANGE, L_GRASS, L_SORGHUM, L_SAND, L_DIRT = range(8)
 
 
@@ -81,7 +82,9 @@ def road_seeds(profs):
         cols["f"].append(pr["superf"][sel])
         cols["sl"].append(pr["superslope"][sel])
         cols["w"].append(np.full(len(sel), M.outer(pr["cls"])))
-        cols["D"].append(np.full(len(sel), DITCH[pr["cls"]]))
+        D = np.full(len(sel), DITCH[pr["cls"]])
+        D[TN.inside_mask(pr["pts"][sel], 120.0)] = 0.0      # an urban section through the towns: no ditch
+        cols["D"].append(D)
         cols["rank"].append(np.full(len(sel), P.RANK[pr["cls"]]))
         cols["prof"].append(np.full(len(sel), k))
         cols["end"].append(end[sel])
@@ -203,7 +206,7 @@ def plan_farmsteads(profs, dem, water_edge, clear):
             t = t[min(2, len(t) - 1)]
             side = rng.choice([-1, 1])
             c = p + n * side * 85.0
-            ok = 1500 < c[0] < cfg.SIZE_M - 1500 and 1500 < c[1] < cfg.SIZE_M - 1500
+            ok = 1500 < c[0] < cfg.SIZE_M - 1500 and 1500 < c[1] < cfg.SIZE_M - 1500 and TN.inside(c, 300.0) is None
             if ok:
                 ok = jt.query(p)[0] > 180 and (not pos or cKDTree(pos).query(c)[0] > 900)
             if ok:
@@ -381,13 +384,19 @@ def field_plan(main, second, frac2, farms):
         qi, qj = int(fm["c"][0] / (cfg.MILE / 2)), int(fm["c"][1] / (cfg.MILE / 2))
         if kind[qj, qi] >= 4:
             kind[qj, qi] = 0
+    for t in TN.TOWNS:
+        x0, z0, x1, z1 = TN.box(t, 100.0)
+        for qj in range(int(z0 / (cfg.MILE / 2)), int(z1 / (cfg.MILE / 2)) + 1):
+            for qi in range(int(x0 / (cfg.MILE / 2)), int(x1 / (cfg.MILE / 2)) + 1):
+                if 0 <= qi < 100 and 0 <= qj < 100 and kind[qj, qi] >= 4:
+                    kind[qj, qi] = 0
     # a little colour variety within each field: a fraction of a neighbouring cover mixed in
     mixc = rng.choice([L_FALLOW, L_RANGE, L_DIRT, L_GRASS], size=(100, 100)).astype(np.int8)
     mixw = rng.uniform(0.0, 0.25, (100, 100)).astype(np.float32)
     return dict(kind=kind, a=a, b=b, corner=corner, mixc=mixc, mixw=mixw)
 
 
-def landcover_tile(c, r, plan, dem, clear, water_edge, draw_dist, farms_in_tile):
+def landcover_tile(c, r, plan, dem, clear, water_edge, draw_dist, farms_in_tile, lawns=(), pads=()):
     """Splat weights (8, R, R) for one tile; texel (j, i) centre at ((i + .5), (j + .5)) * CELL from the tile."""
     R = cfg.SPLAT_RES
     x = c * cfg.TILE_M + (np.arange(R) + 0.5) * cfg.CELL
@@ -425,6 +434,18 @@ def landcover_tile(c, r, plan, dem, clear, water_edge, draw_dist, farms_in_tile)
     mixc = plan["mixc"][qj, qi]
     for k in range(8):
         W[k] = W[k] * (1 - mixw) + (mixc == k) * mixw
+    # the towns: lawns over every block, dirt under the paved lots (which get their own meshes)
+    for (ax0, az0, ax1, az1) in lawns:
+        m = (X >= ax0) & (X <= ax1) & (Z >= az0) & (Z <= az1)
+        if m.any():
+            W[:, m] = 0.0
+            W[L_GRASS][m] = 0.82
+            W[L_RANGE][m] = 0.18
+    for (ax0, az0, ax1, az1) in pads:
+        m = (X >= ax0 - 2) & (X <= ax1 + 2) & (Z >= az0 - 2) & (Z <= az1 + 2)
+        if m.any():
+            W[:, m] = 0.0
+            W[L_DIRT][m] = 1.0
     # road verges: mown grass in the ditches, a little range grass
     cl = clear[sl, sc].astype(np.float32)
     verge = np.clip((14.0 - cl) / 4.0, 0, 1)[None]
@@ -517,6 +538,8 @@ def windbreaks(profs, clear):
             for s in np.arange(s0 + 150, s0 + cfg.MILE - 150, rng.uniform(5, 8)):
                 i = int(np.searchsorted(pr["s"], s))
                 p = pr["pts"][min(i, len(pr["pts"]) - 1)] + np.array([0, 28.0 + rng.normal(0, 0.7)])
+                if TN.inside(p, 100.0) is not None:
+                    continue
                 gi, gj = int(p[0] / cfg.CELL), int(p[1] / cfg.CELL)
                 if 0 <= gi < cfg.GRID and 0 <= gj < cfg.GRID and clear[gj, gi] > 8:
                     out.append((typ, p, float(rng.uniform(0.8, 1.1))))
@@ -534,6 +557,8 @@ def power_lines(profs, farms, clear, ground):
         by_prof[fm["prof_k"]] = by_prof.get(fm["prof_k"], 0) + 1
     lines = []
     for k, pr in enumerate(profs):
+        if pr["cls"] == "street":
+            continue          # (the towns' lines run down the alleys, out of sight: none drawn)
         if not (pr["cls"] != "gravel" or k % 3 == 0 or by_prof.get(k, 0) >= 1):
             continue
         three = pr["cls"] != "gravel"
@@ -550,6 +575,8 @@ def power_lines(profs, farms, clear, ground):
                 i = int(np.searchsorted(pr["s"], q))
                 i = min(i, len(pr["s"]) - 1)
                 p = pr["pts"][i] + n[i] * off * side
+                if TN.inside(p, 40.0) is not None:
+                    continue      # (a pole 18 m off the highway would stand in a storefront)
                 gi, gj = int(p[0] / cfg.CELL), int(p[1] / cfg.CELL)
                 if not (0 < gi < cfg.GRID - 1 and 0 < gj < cfg.GRID - 1):
                     continue
@@ -567,9 +594,123 @@ def power_lines(profs, farms, clear, ground):
     return lines
 
 
+# ----------------------------------------------------------------------------------------------------------- towns
+
+def smooth_towns(dem):
+    """The ground under each town smoothed (the lots, streets and pads then sit on gentle ground), blended into the land
+    round it over 400 m. Kansas towns sit on flat ground; the real ones were smoothed out of the DEM by terrain.py."""
+    out = dem.copy()
+    for t in TN.TOWNS:
+        x0, z0, x1, z1 = TN.box(t, 520.0)
+        i0, i1 = max(0, int(x0 / cfg.CELL)), min(cfg.GRID, int(x1 / cfg.CELL) + 1)
+        j0, j1 = max(0, int(z0 / cfg.CELL)), min(cfg.GRID, int(z1 / cfg.CELL) + 1)
+        sub = dem[j0:j1, i0:i1].astype(np.float32)
+        sm = ndimage.gaussian_filter(sub, 20.0)
+        jj, ii = np.mgrid[j0:j1, i0:i1]
+        x, z = ii * cfg.CELL, jj * cfg.CELL
+        bx0, bz0, bx1, bz1 = TN.box(t, 80.0)
+        d = np.hypot(np.maximum(np.maximum(bx0 - x, x - bx1), 0), np.maximum(np.maximum(bz0 - z, z - bz1), 0))
+        w = np.clip(1 - d / 400.0, 0, 1)
+        w = w * w * (3 - 2 * w)
+        out[j0:j1, i0:i1] = (sub * (1 - w) + sm * w).astype(dem.dtype)
+    return out
+
+
+def grade_towns(dem, layouts):
+    """Flatten the ground under every paved pad (parking lots, the truck stop, the elevator's yard) to its median height,
+    blended out over 20 m. Run before the roads are graded, so the streets' own grading wins beside them."""
+    from matplotlib.path import Path as MPath
+    n = 0
+    for t, L in layouts:
+        for pd in L.pads:
+            P = pd["pts"]
+            x0, z0 = P.min(0) - 30
+            x1, z1 = P.max(0) + 30
+            i0, i1 = max(0, int(x0 / cfg.CELL)), min(cfg.GRID, int(x1 / cfg.CELL) + 2)
+            j0, j1 = max(0, int(z0 / cfg.CELL)), min(cfg.GRID, int(z1 / cfg.CELL) + 2)
+            jj, ii = np.mgrid[j0:j1, i0:i1]
+            x, z = ii * cfg.CELL, jj * cfg.CELL
+            inside = MPath(P).contains_points(np.stack([x.ravel(), z.ravel()], 1)).reshape(x.shape)
+            core = ndimage.binary_dilation(inside, iterations=1)
+            if not core.any():
+                continue
+            dist = ndimage.distance_transform_edt(~core) * cfg.CELL
+            w = np.clip(1 - dist / 20.0, 0, 1)
+            h = float(np.median(dem[jj, ii][core]))
+            dem[jj, ii] = (dem[jj, ii] * (1 - w) + h * w).astype(dem.dtype)
+            n += 1
+    return n
+
+
+def town_meshes(tm, layouts, ground):
+    """The towns' sidewalks, driveways and paved pads, on the graded ground."""
+    for t, L in layouts:
+        for a, b, width, mat in L.strips:
+            M.add_strip(tm, a, b, width, M.M_CONCRETE if mat == "concrete" else M.M_PASPHALT, ground,
+                        lift=0.05 if width < 2.0 or width > 4.0 else 0.03)
+        for pd in L.pads:
+            M.add_pad(tm, pd["pts"], M.M_PASPHALT if pd["mat"] == "plain_asphalt" else M.M_PGRAVEL, ground)
+
+
+def town_buildings(layouts, datum, ground):
+    """The towns' buildings in the export format (world x, y, z; TestMapBuilder reads the kind and tag)."""
+    half = cfg.SIZE_M / 2
+    out = []
+    for t, L in layouts:
+        for b in L.buildings:
+            out.append(dict(kind=b["kind"], tag=b["tag"], x=float(b["p"][0] - half), y=float(ground(b["p"][0], b["p"][1]) - datum),
+                            z=float(b["p"][1] - half), yaw=float(b["yaw"]), w=float(b["w"]), l=float(b["l"]), h=float(b["h"]),
+                            roof=float(b["roof"]), wall=list(b["wall"]), roofc=list(b["roofc"])))
+    return out
+
+
+# Kansas state averages (AAA via Gasolytics / Fuelwide, 29 Sep 2026): regular 4.13, premium 4.84, diesel 6.15 $/gal.
+# Each station sets its own within about 15 cents of them.
+FUEL_BASE = dict(regular=4.13, premium=4.84, diesel=6.15)
+
+
+def write_places(layouts, datum, ground):
+    """places.json (TestMapData) and Resources/TestMapPlaces.json: each town's name, extent, traffic light, truck stop
+    (pumps, diesel lanes, the overnight spot, its prices), motel (the guest spot, its rate) and mechanic (the service
+    spot), in world metres, for TestMapBuilder and the game (TestMapPlaces)."""
+    half = cfg.SIZE_M / 2
+
+    def W(x, z):
+        return dict(x=round(float(x) - half, 2), y=round(float(ground(x, z)) - datum, 2), z=round(float(z) - half, 2))
+
+    def spot(d):
+        o = W(d["x"], d["z"])
+        o["yaw"] = round(float(d["yaw"]), 1)
+        return o
+
+    towns = []
+    for t, L in layouts:
+        P = L.places
+        c = TN.centre(t)
+        x0, z0, x1, z1 = TN.box(t)
+        rng = np.random.default_rng(t["seed"] + 500)
+        prices = {k: round(v + float(rng.uniform(-0.15, 0.15)), 2) for k, v in FUEL_BASE.items()}
+        gas, mo, me, li = P["gas"], P["motel"], P["mechanic"], P["light"]
+        towns.append(dict(
+            key=t["key"], name=t["name"], pop=t["pop"], centre=W(c[0], c[1]),
+            box=dict(x0=round(x0 - half, 1), z0=round(z0 - half, 1), x1=round(x1 - half, 1), z1=round(z1 - half, 1)),
+            light=dict(**W(li["x"], li["z"]), nsHalf=li["ns_half"], ewHalf=li["ew_half"], main=li["main"], cross=li["cross"]),
+            gas=dict(name=gas["name"], **W(gas["x"], gas["z"]), yaw=gas["yaw"], canopy=W(gas["canopy"]["x"], gas["canopy"]["z"]),
+                     pumps=[spot(p) for p in gas["pumps"]], diesel=[spot(p) for p in gas["diesel"]], sleep=spot(gas["sleep"]),
+                     regular=prices["regular"], premium=prices["premium"], dieselPrice=prices["diesel"]),
+            motel=dict(name=mo["name"], **W(mo["x"], mo["z"]), yaw=mo["yaw"], sleep=spot(mo["sleep"]), rate=int(84 + rng.integers(0, 5) * 5)),
+            mechanic=dict(name=me["name"], **W(me["x"], me["z"]), yaw=me["yaw"], spot=spot(me["spot"]), rate=round(float(rng.uniform(95, 125)), 0)),
+        ))
+    data = dict(towns=towns)
+    json.dump(data, open(cfg.UNITY_DATA / "places.json", "w"), indent=1)
+    res = cfg.UNITY_GEN / "Resources"
+    res.mkdir(parents=True, exist_ok=True)
+    json.dump(data, open(res / "TestMapPlaces.json", "w"), indent=1)
+
+
 # ---------------------------------------------------------------------------------------------------------- export
 
-def write_tiles(dem, datum, plan, clear, water_edge, draw_dist, farms):
+def write_tiles(dem, datum, plan, clear, water_edge, draw_dist, farms, lawns=(), pads=()):
     out = cfg.UNITY_DATA
     (out / "heights").mkdir(parents=True, exist_ok=True)
     (out / "splat").mkdir(parents=True, exist_ok=True)
@@ -583,7 +724,10 @@ def write_tiles(dem, datum, plan, clear, water_edge, draw_dist, farms):
             (out / "heights" / f"h_{c}_{r}.raw").write_bytes(np.clip(h * 65535, 0, 65535).astype("<u2").tobytes())
             tf = [f for f in farms if c * cfg.TILE_M - 200 < f["c"][0] < (c + 1) * cfg.TILE_M + 200
                   and r * cfg.TILE_M - 200 < f["c"][1] < (r + 1) * cfg.TILE_M + 200]
-            W = landcover_tile(c, r, plan, dem, clear, water_edge, draw_dist, tf)
+            tx0, tz0, tx1, tz1 = c * cfg.TILE_M - 50, r * cfg.TILE_M - 50, (c + 1) * cfg.TILE_M + 50, (r + 1) * cfg.TILE_M + 50
+            tl = [q for q in lawns if q[2] > tx0 and q[0] < tx1 and q[3] > tz0 and q[1] < tz1]
+            tp = [q for q in pads if q[2] > tx0 and q[0] < tx1 and q[3] > tz0 and q[1] < tz1]
+            W = landcover_tile(c, r, plan, dem, clear, water_edge, draw_dist, tf, tl, tp)
             for half in range(2):
                 img = (np.clip(W[4 * half:4 * half + 4], 0, 1) * 255 + 0.5).astype(np.uint8).transpose(1, 2, 0)
                 Image.fromarray(img[::-1], "RGBA").save(out / "splat" / f"s_{c}_{r}_{half}.png")
@@ -591,7 +735,7 @@ def write_tiles(dem, datum, plan, clear, water_edge, draw_dist, farms):
     return hmin, hmax
 
 
-def write_objects(trees, farms, lines, datum, ground):
+def write_objects(trees, farms, lines, datum, ground, town_buildings=()):
     out = cfg.UNITY_DATA
     tiles = {}
     for typ, p, sc in trees:
@@ -611,6 +755,7 @@ def write_objects(trees, farms, lines, datum, ground):
             fj.append(dict(kind=b["kind"], x=float(b["p"][0] - half), y=float(fm["pad"] - datum),
                            z=float(b["p"][1] - half), yaw=float(b["yaw"]), w=float(b["w"]), l=float(b["l"]),
                            h=float(b["h"]), roof=float(b["roof"]), wall=list(b["wall"]), roofc=list(b["roofc"])))
+    fj += list(town_buildings)
     json.dump(dict(items=fj), open(out / "buildings.json", "w"))
     lj = [dict(three=ln["three"], poles=[round(v, 2) for p in ln["poles"] for v in (p[0] - half, p[1] - datum, p[2] - half)])
           for ln in lines]
@@ -721,8 +866,8 @@ def preview(plan, dem, profs, farms, path):
     fig, ax = plt.subplots(figsize=(24, 24))
     ax.imshow(np.clip(img, 0, 1), origin="lower", extent=(0, cfg.SIZE_M, 0, cfg.SIZE_M))
     for pr in profs:
-        ax.plot(pr["pts"][:, 0], pr["pts"][:, 1], color={"state": "#e02020", "paved": "#202020", "gravel": "#e8e0d0"}[pr["cls"]],
-                lw={"state": 1.8, "paved": 1.2, "gravel": 0.5}[pr["cls"]])
+        ax.plot(pr["pts"][:, 0], pr["pts"][:, 1], color={"state": "#e02020", "paved": "#202020", "gravel": "#e8e0d0", "street": "#b0b0b0"}[pr["cls"]],
+                lw={"state": 1.8, "paved": 1.2, "gravel": 0.5, "street": 0.4}[pr["cls"]])
     if farms:
         fx = np.array([f["c"] for f in farms])
         ax.plot(fx[:, 0], fx[:, 1], "s", ms=2.5, color="#2050ff")
@@ -740,6 +885,11 @@ def main():
     dem = np.load(cfg.OUT / "dem.npy")
     datum = float(np.round(np.median(dem[::20, ::20]) / 10) * 10)
     log(f"datum {datum:.0f} m")
+    dem = smooth_towns(dem)
+    layouts = [(t, TN.layout(t)) for t in TN.TOWNS]
+    for t, L in layouts:
+        log(TN.summary(t, L))
+    log(f"{grade_towns(dem, layouts)} town pads flattened")
 
     profs, node_h = P.all_profiles(net, dem, streams)
     for ln in P.summary(profs):
@@ -747,7 +897,7 @@ def main():
     seeds = road_seeds(profs)
     jn = [n for n in range(len(nodes)) if degree[n] >= 3]
     nodes_xy = nodes[jn]
-    node_r = np.full(len(jn), 22.0)
+    node_r = np.array([12.0 if TN.inside(nodes[n], 50.0) is not None else 22.0 for n in jn])   # (town crossings: small pads)
     graded, clear, flatmask = grade_roads(dem, seeds, nodes_xy, node_r)
     del seeds
     log("roads graded")
@@ -777,6 +927,8 @@ def main():
     trees = stream_trees(streams, clear, water_edge) + windbreaks(profs, clear)
     for fm in farms:
         trees += fm["trees"]
+    for t, L in layouts:
+        trees += L.trees
     log(f"{len(trees):,} trees")
     lines = power_lines(profs, farms, clear, ground)
     log(f"{len(lines)} power lines, {sum(len(l['poles']) for l in lines):,} poles")
@@ -784,6 +936,7 @@ def main():
     tm = M.TileMeshes(datum)
     pads = M.build_roads(tm, profs, degree, nodes)
     drive_meshes(tm, farms)
+    town_meshes(tm, layouts, ground)
     nb = M.build_bridges(tm, profs, ground)
     nw = M.build_water(tm, streams)
     log(f"meshes: {pads} junction pads, {nb} bridges, {nw} water pieces")
@@ -795,8 +948,11 @@ def main():
     cfg.UNITY_DATA.mkdir(parents=True)
     stats = tm.write(cfg.UNITY_DATA / "meshes")
     log(f"mesh vertices: {stats}")
-    hmin, hmax = write_tiles(graded, datum, plan, clear, water_edge, draw_dist, farms)
-    write_objects(trees, farms, lines, datum, ground)
+    lawns = [q for t, L in layouts for q in L.lawns]
+    pads = [(float(pd["pts"][:, 0].min()), float(pd["pts"][:, 1].min()), float(pd["pts"][:, 0].max()), float(pd["pts"][:, 1].max())) for t, L in layouts for pd in L.pads]
+    hmin, hmax = write_tiles(graded, datum, plan, clear, water_edge, draw_dist, farms, lawns, pads)
+    write_objects(trees, farms, lines, datum, ground, town_buildings(layouts, datum, ground))
+    write_places(layouts, datum, ground)
     skirt = write_skirt(graded, datum, hmin, hmax)
     meta = dict(sizeM=cfg.SIZE_M, tiles=cfg.TILES, tileM=cfg.TILE_M, tileRes=cfg.TILE_RES, splatRes=cfg.SPLAT_RES,
                 datum=datum, hmin=hmin, hmax=hmax, layers=LAYERS, materials=M.MAT, skirt=skirt,

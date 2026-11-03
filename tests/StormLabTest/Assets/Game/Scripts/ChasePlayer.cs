@@ -13,6 +13,8 @@ namespace StormLab.Game
     {
         public ChaseGame game;
         public float walkSpeed = 1.8f, runSpeed = 4.6f, eyeHeight = 1.65f;
+        [Tooltip("walking and running speed as a share (the chaser's sanity; ChaseSanity sets it)")]
+        public float speedScale = 1f;
         [Tooltip("degrees per mouse count")]
         public float lookSensitivity = 0.12f;
         [Tooltip("how close to the truck E gets back in, m, and how slow it must be going to get out, mph")]
@@ -105,7 +107,7 @@ namespace StormLab.Game
             var gp = Gamepad.current;
             if (gp != null) { var st = gp.leftStick.ReadValue(); if (st.sqrMagnitude > 0.02f) move += fwd * st.y + right * st.x; }
             if (move.sqrMagnitude > 1f) move.Normalize();
-            float speed = kb != null && kb.leftShiftKey.isPressed ? runSpeed : walkSpeed;
+            float speed = (kb != null && kb.leftShiftKey.isPressed ? runSpeed : walkSpeed) * Mathf.Clamp01(speedScale);
             // the tornado's wind on a person (drag on about 0.6 m^2, 80 kg): past 30 m/s it carries the walker along
             var wind = World.gameMode && World.game ? World.game.TornadoWindAt(walker.transform.position) : World.storm && World.storm.isActiveAndEnabled ? World.storm.TornadoWindAt(walker.transform.position) : Vector3.zero;
             var rel = wind - pushVel;

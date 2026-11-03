@@ -575,7 +575,8 @@ static class DumpCs
         foreach (var key in StormPreset.All.Select(p => p.key))
         {
             var pre = StormPreset.All.First(p => p.key == key);
-            int n = 400, allTor = 0, headNorth = 0, heads = 0, hp0 = 0, hp1 = 0;
+            int n = 400, allTor = 0, headNorth = 0, heads = 0, hp0 = 0, hp1 = 0, onMap = 0;
+            double turnMin = 999, turnMax = -999, spdMin = 1e9, spdMax = 0;
             var tiers = new int[6]; var maxEf = new int[7];
             double closeMin = 1e9, closeSum = 0, bMin = 999, bMax = -1, offMin = 1e9, entMin = 1e9, entMax = 0, matMin = 1e9, matMax = 0, gapMin = 1e9, gapMax = 0;
             for (int seed = 1; seed <= n; seed++)
@@ -589,7 +590,10 @@ static class DumpCs
                     if (st.northness > 0.5 && st.precip == Precip.HP) hp1++;
                     if (st.northness < 0.5 && st.precip == Precip.HP) hp0++;
                     bMin = Math.Min(bMin, st.bearing); bMax = Math.Max(bMax, st.bearing);
-                    double off = Math.Max(Math.Abs(st.startX), Math.Abs(st.startZ)) - half; offMin = Math.Min(offMin, off);
+                    if (st.onMap) onMap++;
+                    double az = (Math.Atan2(st.plan.motion.x, st.plan.motion.y) * 180 / Math.PI + 360) % 360, spd = Math.Sqrt(st.plan.motion.x * st.plan.motion.x + st.plan.motion.y * st.plan.motion.y);
+                    turnMin = Math.Min(turnMin, az); turnMax = Math.Max(turnMax, az); spdMin = Math.Min(spdMin, spd); spdMax = Math.Max(spdMax, spd);
+                    double off = Math.Max(Math.Abs(st.startX), Math.Abs(st.startZ)) - half; if (!st.onMap) offMin = Math.Min(offMin, off);
                     entMin = Math.Min(entMin, st.entryMin); entMax = Math.Max(entMax, st.entryMin);
                     matMin = Math.Min(matMin, st.matureMin); matMax = Math.Max(matMax, st.matureMin);
                 }
@@ -598,7 +602,7 @@ static class DumpCs
             }
             Console.WriteLine($"{key,-6}: built-for tiers EF2 {tiers[2] * 100.0 / n:0}%, EF3 {tiers[3] * 100.0 / n:0}%, EF4 {tiers[4] * 100.0 / n:0}%, EF5 {tiers[5] * 100.0 / n:0}%; " +
                 $"strongest in game EF0-5: {string.Join("/", Enumerable.Range(1, 6).Select(i => maxEf[i]))}, none {maxEf[0]}; every storm tornadic {allTor * 100.0 / n:0}%; headline north {(heads > 0 ? headNorth * 100.0 / heads : 0):0}%; " +
-                $"HP north {hp1 * 100.0 / n:0}% south {hp0 * 100.0 / n:0}%; lanes {gapMin / 1609.344:0.0}-{gapMax / 1609.344:0.0} mi apart, closest the storms come {closeMin / 1609.344:0.0} mi (mean {closeSum / n / 1609.344:0.0}); starts {bMin:0}-{bMax:0} deg, >= {offMin / 1000:0.0} km off; on the map {entMin:0.0}-{entMax:0.0} min, mature {matMin:0.0}-{matMax:0.0} min (game)");
+                $"HP north {hp1 * 100.0 / n:0}% south {hp0 * 100.0 / n:0}%; lanes {gapMin / 1609.344:0.0}-{gapMax / 1609.344:0.0} mi apart, closest the storms come {closeMin / 1609.344:0.0} mi (mean {closeSum / n / 1609.344:0.0}); starts {bMin:0}-{bMax:0} deg, {onMap * 100.0 / (2 * n):0}% over the map, the rest >= {offMin / 1000:0.0} km off; motions toward {turnMin:0}-{turnMax:0} deg at {spdMin * 2.237:0}-{spdMax * 2.237:0} mph; on the map {entMin:0.0}-{entMax:0.0} min, mature {matMin:0.0}-{matMax:0.0} min (game)");
         }
         var one = new StormScenario(StormPreset.All[0], 1, half);
         Console.WriteLine("plains game 1: " + one);

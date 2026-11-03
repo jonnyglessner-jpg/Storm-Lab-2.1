@@ -1,6 +1,7 @@
-// The game's menus (IMGUI, like the rest of the test map's HUD): the main menu over the map at start-up (new chase, free
-// roam, the shop, the chaser's record), the new-chase set-up (map, vehicle, gear, seed), the shop (gear bought with
-// credits, kept in the profile), the pause menu (Esc) and the chase's summary when its hour is up. The game clock and
+// The game's menus (IMGUI, like the rest of the test map's HUD): the main menu over the map at start-up (a new career,
+// the career so far, free roam, the shop, the chaser's record), the new-career set-up (map, vehicle, gear, seed), the
+// shop (gear bought with credits, kept in the profile), the pause menu (Esc) and the summary when a career day is abandoned.
+// The game is Never Stop Chasing (user, 2026-11-02). The game clock and
 // the physics stop while the pause menu or the summary is up (Time.timeScale); the main menu lets the map run behind it.
 using System.IO;
 using UnityEngine;
@@ -91,15 +92,17 @@ namespace StormLab.Game
         {
             var p = ChaseProfile.Current;
             GUILayout.BeginHorizontal();
-            GUILayout.Label("STORM LAB", title, GUILayout.Height(60));
+            GUILayout.Label("NEVER STOP CHASING", title, GUILayout.Height(60));
             GUILayout.FlexibleSpace();
             GUILayout.Label($"{p.credits:n0} credits", head, GUILayout.Height(60));
             GUILayout.EndHorizontal();
-            GUILayout.Label("Chase the storms of the Plains, Dixie and the Midwest. Photograph tornadoes for credits, buy a mesonet, and log the data no one else gets.", body);
+            GUILayout.Label("Chase the storms of the Plains day after day. Photograph tornadoes for credits, buy a mesonet, keep the truck fuelled and fixed, and get some sleep.", body);
             GUILayout.Space(16);
             GUILayout.BeginHorizontal();
             GUILayout.BeginVertical(GUILayout.Width(300));
-            if (GUILayout.Button("New chase", button)) { page = Page.NewChase; seedText = ChaseSetup.seed.ToString(); }
+            if (p.careerStarted && GUILayout.Button($"Continue career  ·  day {p.day}", button)) { ChaseSetup.BeginChase(); StartChase(); }
+            if (p.careerStarted) GUILayout.Space(6);
+            if (GUILayout.Button(p.careerStarted ? "New career" : "New career", button)) { page = Page.NewChase; seedText = ChaseSetup.seed.ToString(); }
             GUILayout.Space(6);
             if (GUILayout.Button("Free roam (the sandbox)", button)) { ChaseSetup.BeginFreeRoam(); Close(); game.ApplyState(); }
             GUILayout.Space(6);
@@ -120,16 +123,18 @@ namespace StormLab.Game
             GUILayout.Space(30);
             GUILayout.BeginVertical();
             GUILayout.Label("Your record", head);
-            GUILayout.Label($"Chases: {p.chases}     Best chase: {p.bestChaseCredits:n0} cr     Earned in all: {p.creditsEarned:n0} cr", body);
+            GUILayout.Label($"Days chased: {p.chases}     Best day: {p.bestChaseCredits:n0} cr     Earned in all: {p.creditsEarned:n0} cr", body);
+            if (p.careerStarted) GUILayout.Label($"Career: day {p.day}, seed {p.careerSeed}     Motel nights: {p.motelNights}     Nights in the truck: {p.carCampNights}     Passed out: {p.passOuts}     Repairs: {p.repairs}     Fuel bought: {p.fuelBought:0} gal", body);
             GUILayout.Label($"Photos: {p.photos}     Tornadoes photographed: {p.tornadoesPhotographed}     Mesonet data: {p.mesonetSeconds / 60.0:0.0} min", body);
             GUILayout.Space(10);
             GUILayout.Label("Gear owned", head);
             foreach (var g in ChaseCatalog.Gear) if (g.Owned) GUILayout.Label($"•  {g.name}", body);
             GUILayout.Space(10);
             GUILayout.Label("How it plays", head);
-            GUILayout.Label("An hour of game time, two storms, the clock runs forward only (T speeds it up, ] skips 5 min). Get out of the truck with E, bring the camera up with X. " +
-                            "A tornado in the frame, well exposed and sharp, pays best. The mesonet logs on its own within a mile of a tornado, double within half a mile. " +
-                            "You start in the driver's seat (C: the roof camera, locked on the tornado) with no map: the laptop puts the map in the cab, the phone in your hand, and the drone's follow cam gives the view from behind the truck.", small);
+            GUILayout.Label("Every day opens at 8 am on the forecast: pick the storm to play for and the truck stop to start from, and the day fast-forwards to the first towering cumulus. " +
+                            "Two storms cross the map over an hour (T speeds the clock, ] skips 5 min, never back). E gets you out of the truck, X brings the camera up: a tornado in the frame, well exposed and sharp, pays best; the mesonet logs within a mile of one. " +
+                            "Fuel up at a truck stop (hold F at a pump: regular, premium or diesel, whatever your truck takes), get the truck repaired at a mechanic, and sleep at a motel or on a truck stop's lot (F on the marked space) to save the day. " +
+                            "Stay up and the sanity bar drains: slower on your feet and in the truck, but everything pays more... until you pass out.", small);
             GUILayout.Label($"Photos are saved to {ChaseCamera.PhotoDir}", small);
             GUILayout.EndVertical();
             GUILayout.EndHorizontal();
@@ -137,7 +142,7 @@ namespace StormLab.Game
 
         void NewChasePage()
         {
-            GUILayout.Label("New chase", head);
+            GUILayout.Label("New career", head);
             scroll = GUILayout.BeginScrollView(scroll);
             GUILayout.Label("Map", head);
             GUILayout.BeginHorizontal();
@@ -178,13 +183,13 @@ namespace StormLab.Game
             if (int.TryParse(seedText, out var sd)) ChaseSetup.seed = Mathf.Max(1, sd);
             if (GUILayout.Button("Random", GUILayout.Width(100))) { ChaseSetup.RandomSeed(); seedText = ChaseSetup.seed.ToString(); }
             float startAt = ChaseSetup.StartHourFor(ChaseSetup.seed);
-            GUILayout.Label($"the same seed lays out the same two storms  ·  starts {ChaseSetup.ClockText(startAt)} ({ChaseSetup.TimeOfDayName(startAt)})", small);
+            GUILayout.Label("the career's seed: every day's storms come from it and the day", small);
             GUILayout.EndHorizontal();
-            GUILayout.Label("Half of all games start about noon, a third in the afternoon, one in seven at dusk and run into the night.", small);
+            GUILayout.Label("Half of all days initiate about noon, a third in the afternoon, one in seven at dusk and run into the night. A new career starts on day 1 with full tanks; the old one is lost.", small);
             GUILayout.EndScrollView();
             GUILayout.FlexibleSpace();
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Start the chase", button, GUILayout.Width(260))) StartChase();
+            if (GUILayout.Button("Start the career", button, GUILayout.Width(260))) { ChaseProfile.Current.StartCareer(ChaseSetup.seed); ChaseSetup.BeginChase(); StartChase(); }
             if (GUILayout.Button("Shop", button, GUILayout.Width(140))) { shopFrom = Page.NewChase; page = Page.Shop; }
             GUILayout.FlexibleSpace();
             if (GUILayout.Button("Back", button, GUILayout.Width(140))) page = Page.Main;
@@ -247,15 +252,24 @@ namespace StormLab.Game
 
         void PausePage()
         {
-            GUILayout.Label(ChaseSetup.state == ChaseSetup.State.Chase ? "Chase paused" : "Free roam", head);
+            GUILayout.Label(ChaseSetup.state == ChaseSetup.State.Chase ? "Paused" : "Free roam", head);
             if (ChaseSetup.state == ChaseSetup.State.Chase)
-                GUILayout.Label($"{ChaseSetup.Map.name}  ·  {ChaseSetup.Vehicle.name}  ·  game {ChaseSetup.seed}, from {ChaseSetup.ClockText(ChaseSetup.startHour)}\nEarned this chase: {ChaseSetup.chaseCredits:n0} cr  ·  photos {ChaseSetup.chasePhotos}  ·  mesonet data {ChaseSetup.chaseMesonetSeconds / 60:0.0} min", body);
+            {
+                var pr = ChaseProfile.Current; var vs = pr.Vehicle(ChaseSetup.vehicle);
+                GUILayout.Label($"Day {pr.day}, {ChaseSetup.ClockText(ChaseSetup.hour)}  ·  {ChaseSetup.Map.name}  ·  {ChaseSetup.Vehicle.name}  ·  storms from {ChaseSetup.ClockText(ChaseSetup.startHour)}\nEarned today: {ChaseSetup.chaseCredits:n0} cr  ·  photos {ChaseSetup.chasePhotos}  ·  mesonet data {ChaseSetup.chaseMesonetSeconds / 60:0.0} min\nFuel {(vs.fuelGal < 0 ? ChaseSetup.Vehicle.tankGal : vs.fuelGal):0.0} gal  ·  truck {vs.condition:P0}  ·  sanity {pr.sanity:P0} ({pr.awakeHours:0.0} h awake)\nThe day is saved when you sleep; leaving now goes back to this morning.", body);
+            }
             GUILayout.Space(16);
             if (GUILayout.Button("Resume", button, GUILayout.Width(300))) Close();
             GUILayout.Space(6);
             if (GUILayout.Button("Gear and shop", button, GUILayout.Width(300))) { shopFrom = Page.Pause; page = Page.Shop; }
+            if (ChaseSetup.state == ChaseSetup.State.Chase)
+            {
+                GUILayout.Space(6);
+                if (GUILayout.Button(ChaseSetup.devMode ? "Dev mode: on  (F3)" : "Dev mode: off  (F3)", button, GUILayout.Width(300))) game.SetDevMode(!ChaseSetup.devMode);
+                if (ChaseSetup.devMode) GUILayout.Label("F free camera (V puts the truck under it), 1-9 jump to a spot, N new storms, T / P / [ ] the clock, G game mode, Tab the storm and lighting panel (its clock slider moves the day), M the map without the laptop or phone.", small);
+            }
             GUILayout.Space(6);
-            if (GUILayout.Button(ChaseSetup.state == ChaseSetup.State.Chase ? "Abandon the chase: main menu" : "Main menu", button, GUILayout.Width(300)))
+            if (GUILayout.Button(ChaseSetup.state == ChaseSetup.State.Chase ? "Leave the day: main menu" : "Main menu", button, GUILayout.Width(300)))
             {
                 if (ChaseSetup.state == ChaseSetup.State.Chase) game.EndChase();
                 ChaseSetup.BackToMenu(); ChaseProfile.Current.Save();
@@ -268,14 +282,14 @@ namespace StormLab.Game
         void SummaryPage()
         {
             var p = ChaseProfile.Current;
-            GUILayout.Label("Chase over", title, GUILayout.Height(60));
-            GUILayout.Label($"{ChaseSetup.Map.name}  ·  {ChaseSetup.Vehicle.name}  ·  game {ChaseSetup.seed}", body);
+            GUILayout.Label("Day left behind", title, GUILayout.Height(60));
+            GUILayout.Label($"Day {p.day}  ·  {ChaseSetup.Map.name}  ·  {ChaseSetup.Vehicle.name}", body);
             GUILayout.Space(10);
-            GUILayout.Label($"Earned {ChaseSetup.chaseCredits:n0} credits", head);
-            GUILayout.Label($"Photos: {ChaseSetup.chasePhotos}     Mesonet data: {ChaseSetup.chaseMesonetSeconds / 60:0.0} min     Best chase so far: {p.bestChaseCredits:n0} cr     Credits now: {p.credits:n0}", body);
+            GUILayout.Label($"Earned {ChaseSetup.chaseCredits:n0} credits today (kept)", head);
+            GUILayout.Label($"Photos: {ChaseSetup.chasePhotos}     Mesonet data: {ChaseSetup.chaseMesonetSeconds / 60:0.0} min     Best day so far: {p.bestChaseCredits:n0} cr     Credits now: {p.credits:n0}\nThe day was not slept into: the career goes on from this morning's forecast.", body);
             GUILayout.Space(20);
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Chase again (same set-up)", button, GUILayout.Width(280))) StartChase();
+            if (GUILayout.Button("Back to this morning", button, GUILayout.Width(280))) { ChaseSetup.BeginChase(); StartChase(); }
             if (GUILayout.Button("Gear and shop", button, GUILayout.Width(180))) { shopFrom = Page.Summary; page = Page.Shop; }
             if (GUILayout.Button("Main menu", button, GUILayout.Width(180))) { ChaseSetup.BackToMenu(); game.ApplyState(); }
             GUILayout.EndHorizontal();

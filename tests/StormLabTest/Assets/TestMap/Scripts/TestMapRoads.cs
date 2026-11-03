@@ -35,9 +35,9 @@ namespace StormLab.TestMap
             public float Seconds => time.Count > 0 ? time[time.Count - 1] : 0f;
         }
 
-        public static readonly string[] ClassNames = { "state route", "paved", "gravel" };
-        /// <summary>the speeds the route plans on, m/s: state routes 65 mph, paved county roads 55, gravel 45</summary>
-        public static readonly float[] Speed = { 29.06f, 24.59f, 20.12f };
+        public static readonly string[] ClassNames = { "state route", "paved", "gravel", "street" };
+        /// <summary>the speeds the route plans on, m/s: state routes 65 mph, paved county roads 55, gravel 45, town streets 30</summary>
+        public static readonly float[] Speed = { 29.06f, 24.59f, 20.12f, 13.41f };
 
         public readonly Vector2[] nodes;
         public readonly Edge[] edges;

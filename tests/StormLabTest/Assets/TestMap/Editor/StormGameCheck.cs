@@ -1,5 +1,5 @@
 // Play-mode check of game mode (StormScenario through StormScenarioRunner) on the test map: switches the map to a game,
-// then checks each storm against the game's rules at its own times (and the pair at least 15 miles apart): towering
+// then checks each storm against the game's rules at its own times (and the pair at least 25 miles apart): towering
 // cumulus off the map at its start, its updraft on the map's edge when it comes on, over the map when mature, lightning bound and active once mature, and the
 // tornado wind summed over the storms. Renders a chaser's view of both storms at several game times.
 // Screenshots/game_*.png, a contact sheet game_sheet.jpg, validation/reports/StormGameCheck.md, and the storms' tracks
@@ -141,12 +141,12 @@ public static class StormGameCheck
             double LifeAt(double g) => (g - st.startMin) * game.pace;
             Vector3 S = r.UpdraftWorld(0), E = r.UpdraftWorld(LifeAt(st.entryMin)), M = r.UpdraftWorld(LifeAt(st.matureMin));
             string stage0 = StormDesign.At(r.Plan, 0, 0).stage, stageM = StormDesign.At(r.Plan, LifeAt(st.matureMin), 0).stage;
-            bool startOff = Out(S) > 100f, onEdge = Mathf.Abs(Out(E)) < 200f, inside = Out(M) < 0f;
-            tracksOk &= startOff && onEdge && inside;
+            bool startOff = Out(S) > 100f, onEdge = Mathf.Abs(Out(E)) < 200f, inside = Out(M) < 0f, startOn = Out(S) < -100f;
+            tracksOk &= (st.onMap ? startOn : startOff && onEdge) && inside;
             stagesOk &= stage0 == "Towering cumulus";
             boundsOk &= Math.Abs(S.x - st.startX) < 50 && Math.Abs(S.z - st.startZ) < 50;
             var tors = st.InGame(game.gameLength, game.pace).Select(t => $"EF{t.ef} {StormTornadoes.ShapeName[(int)t.shape].ToLowerInvariant()} at {st.startMin + t.formMin / game.pace:0} min").ToList();
-            rep.AppendLine($"| {i + 1} | {st.seed} | {st.precip}, {(st.northness > 0.5 ? "north" : "south")} | {st.startMin:0.0} min | {st.bearing:0} deg | {Out(S) / 1000:0.0} km | {st.entryMin:0.0} min | {st.matureMin:0.0} min | {-Out(M) / 1000:0.0} km | {stage0} | {stageM} | {string.Join("; ", tors)} |");
+            rep.AppendLine($"| {i + 1} | {st.seed} | {st.precip}, {(st.northness > 0.5 ? "north" : "south")} | {st.startMin:0.0} min | {st.bearing:0} deg{(st.onMap ? " (over the map)" : "")}, toward {(Math.Atan2(r.Plan.motion.x, r.Plan.motion.y) * 180 / Math.PI + 360) % 360:0} deg | {Out(S) / 1000:0.0} km | {st.entryMin:0.0} min | {st.matureMin:0.0} min | {-Out(M) / 1000:0.0} km | {stage0} | {stageM} | {string.Join("; ", tors)} |");
             for (double g = st.startMin; g <= game.gameLength + 1e-6; g += 1)
             {
                 double life = LifeAt(g); if (life > r.Plan.duration) break;
@@ -158,7 +158,7 @@ public static class StormGameCheck
         rep.AppendLine();
         Check(sc.storms.Count == 2 && game.Storms.Count == 2, "two storms, each its own StormRenderer");
         Check(stagesOk, "every storm starts as towering cumulus");
-        Check(tracksOk, "every storm starts off the map, its updraft comes onto the map's edge at its entry time and is over the map when mature");
+        Check(tracksOk, "every storm starts off the map with its updraft onto the map's edge at its entry time, or initiates well over the map; every one is over the map when mature");
         Check(boundsOk, "the drawn storms start where the scenario placed them");
         // how close the drawn storms' updrafts come while both are alive, every 6 s of game time
         double closest = double.PositiveInfinity;
@@ -169,7 +169,7 @@ public static class StormGameCheck
             var d = game.Storms[0].UpdraftWorld(l0) - game.Storms[1].UpdraftWorld(l1); d.y = 0;
             closest = Math.Min(closest, d.magnitude);
         }
-        Check(closest >= StormScenario.MinSeparationM - 1, $"the storms are never closer than 15 miles (closest {closest / 1609.344:0.0} mi; lanes {Math.Abs(sc.storms[0].laneM - sc.storms[1].laneM) / 1609.344:0.0} mi apart)");
+        Check(closest >= StormScenario.MinSeparationM - 1, $"the storms are never closer than {StormScenario.MinSeparationM / 1609.344:0} miles (closest {closest / 1609.344:0.0} mi; lanes {Math.Abs(sc.storms[0].laneM - sc.storms[1].laneM) / 1609.344:0.0} mi apart)");
         Check(sc.EveryStormTornadic, "every storm puts down a tornado during the game");
         Check(sc.MaxEf <= sc.topEf, $"no tornado above the game's top rating (strongest EF{sc.MaxEf}, built for EF{sc.topEf})");
 

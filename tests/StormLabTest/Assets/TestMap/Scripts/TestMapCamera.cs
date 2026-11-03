@@ -117,7 +117,7 @@ namespace StormLab.TestMap
 
         void HideGlass(bool hide)
         {
-            if (hide == glassHidden) return;
+            if (hide == glassHidden || !car) return;
             var body = car.transform.Find("Body");
             if (glass == null)
             {

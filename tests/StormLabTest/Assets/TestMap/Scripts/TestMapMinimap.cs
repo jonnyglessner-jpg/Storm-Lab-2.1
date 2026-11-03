@@ -44,6 +44,7 @@ namespace StormLab.TestMap
         public float RouteAlong { get; private set; }
 
         Texture2D baseMap; Material mat;
+        PlaceTown[] towns = new PlaceTown[0];
         int routeIndex; float offFor, arrivedAt = -1f; string notice; float noticeUntil;
         float anim;
         Vector2 fullCentre; bool follow = true;
@@ -66,6 +67,7 @@ namespace StormLab.TestMap
             string nav = world ? world.navResource : "TestMapNav";
             Roads = TestMapRoads.Load(nav);
             baseMap = Resources.Load<Texture2D>(nav + "Base");
+            towns = TestMapPlaces.Load(nav);
             var sh = Shader.Find("Hidden/StormLab/TestMapMapDraw");
             if (sh) mat = new Material(sh) { hideFlags = HideFlags.HideAndDontSave };
             if (!radar)
@@ -283,11 +285,11 @@ namespace StormLab.TestMap
                 float worldR = 0.75f * Mathf.Max(r.width, r.height) * view.mpp;
                 Pass(null);
                 GL.Begin(GL.QUADS);
-                for (int cls = 2; cls >= 0; cls--)
+                for (int cls = 3; cls >= 0; cls--)
                 {
-                    float w = cls == 0 ? 3.2f : cls == 1 ? 2.2f : 1.4f;
-                    if (cls == 2 && view.mpp > 120f) continue;
-                    Color col = cls == 0 ? new Color(0.98f, 0.66f, 0.25f) : cls == 1 ? new Color(0.86f, 0.86f, 0.84f) : new Color(0.62f, 0.6f, 0.55f, view.mpp > 40f ? 0.45f : 0.85f);
+                    float w = cls == 0 ? 3.2f : cls == 1 ? 2.2f : cls == 3 ? 1.2f : 1.4f;
+                    if ((cls == 2 && view.mpp > 120f) || (cls == 3 && view.mpp > 70f)) continue;
+                    Color col = cls == 0 ? new Color(0.98f, 0.66f, 0.25f) : cls == 1 ? new Color(0.86f, 0.86f, 0.84f) : cls == 3 ? new Color(0.78f, 0.78f, 0.76f, 0.9f) : new Color(0.62f, 0.6f, 0.55f, view.mpp > 40f ? 0.45f : 0.85f);
                     GL.Color(Lin(col));
                     foreach (var e in Roads.edges)
                     {
@@ -300,6 +302,14 @@ namespace StormLab.TestMap
                 GL.End();
             }
 
+            // the towns' places: the truck stop (yellow), the motel (blue) and the mechanic (white), when the map is close enough
+            if (view.mpp < 90f)
+                foreach (var t in towns)
+                {
+                    if (t.gas != null) { Dot(new Vector2(t.gas.x, t.gas.z), 6f * k, Color.black); Dot(new Vector2(t.gas.x, t.gas.z), 4.5f * k, new Color(1f, 0.85f, 0.2f)); }
+                    if (t.motel != null) { Dot(new Vector2(t.motel.x, t.motel.z), 6f * k, Color.black); Dot(new Vector2(t.motel.x, t.motel.z), 4.5f * k, new Color(0.3f, 0.55f, 1f)); }
+                    if (t.mechanic != null) { Dot(new Vector2(t.mechanic.x, t.mechanic.z), 6f * k, Color.black); Dot(new Vector2(t.mechanic.x, t.mechanic.z), 4.5f * k, new Color(0.95f, 0.95f, 0.95f)); }
+                }
             // the radar over the roads, so the storm stays readable
             if (showRadar && radar && radar.Image) Image(radar.Area, radar.Image, new Color(1, 1, 1, radarOpacity), 0f, 1f);
 
@@ -475,6 +485,20 @@ namespace StormLab.TestMap
                 GUI.Label(nb, notice, new GUIStyle(tiny) { fontSize = Mathf.RoundToInt(15 * k) });
             }
 
+            // the towns by name, and their places when close
+            foreach (var t in towns)
+            {
+                var sp = ToScreen(new Vector2(t.centre.x, t.centre.z));
+                if (!r.Contains(sp)) continue;
+                GUI.Label(new Rect(sp.x - 60 * k, sp.y - 30 * k, 120 * k, 20 * k), t.name, new GUIStyle(tiny) { fontStyle = FontStyle.Bold });
+                if (view.mpp < 25f)
+                {
+                    void Tag(float x, float z, string s) { var q = ToScreen(new Vector2(x, z)); if (r.Contains(q)) GUI.Label(new Rect(q.x - 70 * k, q.y + 5 * k, 140 * k, 18 * k), s, tiny); }
+                    if (t.gas != null) Tag(t.gas.x, t.gas.z, "fuel");
+                    if (t.motel != null) Tag(t.motel.x, t.motel.z, "motel");
+                    if (t.mechanic != null) Tag(t.mechanic.x, t.mechanic.z, "repairs");
+                }
+            }
             if (full) FullScreenControls(k);
 
             // the mouse on the map, after the buttons have had it

@@ -141,12 +141,18 @@ public static class ChaseGameCheck
 
         rep.AppendLine().AppendLine("## A chase from the menu").AppendLine();
         ChaseSetup.map = "plains"; ChaseSetup.vehicle = "dually"; ChaseSetup.seed = 7; ChaseSetup.mountMesonet = true;   // not owned yet: must not mount
+        ChaseProfile.Current.StartCareer(7);
+        ChaseSetup.BeginChase();
         game.Menu.StartChase();
         foreach (var x in PlayerFrames(3)) yield return x;
-        Check(ChaseSetup.state == ChaseSetup.State.Chase && !game.Menu.Showing, "the chase started on this map and the menu closed");
+        Check(ChaseSetup.state == ChaseSetup.State.Chase && !game.Menu.Showing && game.Forecast.Showing, "the career started on this map at its morning forecast");
+        // the day's storms (ChaseCareerCheck checks the morning itself)
+        game.Forecast.Confirm();
+        foreach (var x in PlayerFrames(3)) yield return x;
+        int daySeed = ChaseSetup.DaySeed(7, 1);
         {
             // the start hour from the seed, and its spread: noon 50 %, afternoon 35 %, dusk 15 % (user, 2026-11-02)
-            float h7 = ChaseSetup.StartHourFor(7);
+            float h7 = ChaseSetup.StartHourFor(daySeed);
             Check(Mathf.Approximately(ChaseSetup.startHour, h7) && Mathf.Abs(panel.hour - h7) < 0.01f && !panel.clockRuns, $"the chase starts at the seed's hour ({ChaseSetup.ClockText(h7)}, {ChaseSetup.TimeOfDayName(h7)}; panel {panel.hour:0.00})");
             int noon = 0, aft = 0, dusk = 0, n = 4000; bool inRange = true;
             for (int s = 1; s <= n; s++)
@@ -168,7 +174,7 @@ public static class ChaseGameCheck
         }
         Check(!world.sandboxKeys && !world.allowRewind, "the sandbox keys and rewinding are off in a chase");
         Check(panel.locked && !panel.show, "the storm panel is locked in a chase");
-        Check(world.gameMode && world.game && world.game.Scenario != null && world.game.seed == 7 && world.game.preset == "plains", $"the game is laid out from the chase's seed ({(world.game ? world.game.seed : -1)}, {(world.game ? world.game.preset : "")})");
+        Check(world.gameMode && world.game && world.game.Scenario != null && world.game.seed == daySeed && world.game.preset == "plains", $"the game is laid out from the day's seed ({(world.game ? world.game.seed : -1)}, {(world.game ? world.game.preset : "")})");
         Check(Mathf.Approximately(world.car.Body.mass, 3600f) && Mathf.Approximately(world.windAreaM2, 3.8f), $"the dually is fitted: mass {world.car.Body.mass}, wind area {world.windAreaM2}");
         Check(!game.Mesonet.Mounted, "no mesonet is mounted when none is owned");
         Check(world.game.minutesPerSecond * 60f < 1.01f, $"the game clock starts at real time ({world.game.minutesPerSecond * 60f:0}x)");
@@ -439,9 +445,12 @@ public static class ChaseGameCheck
         rep.AppendLine().AppendLine("## The hour is up").AppendLine();
         world.game.gameMinutes = world.game.gameLength; world.game.Apply();
         foreach (var x in PlayerFrames(3)) yield return x;
-        Check(ChaseSetup.chaseOver && game.Menu.page == ChaseMenu.Page.Summary && Time.timeScale == 0f, "the chase ends with the summary, the clock stopped");
+        Check(game.StormsDone && !ChaseSetup.chaseOver && game.Menu.page == ChaseMenu.Page.None && Time.timeScale == 1f, "the storms are done; the day goes on until the chaser sleeps (no summary)");
+        game.EndChase();
+        foreach (var x in PlayerFrames(2)) yield return x;
+        Check(ChaseSetup.chaseOver && game.Menu.page == ChaseMenu.Page.Summary && Time.timeScale == 0f, "leaving the day brings the summary, the clock stopped");
         Check(!game.EarnsCredits, "nothing more is earned");
-        Check(ChaseProfile.Current.bestChaseCredits >= ChaseSetup.chaseCredits, $"the best chase is recorded ({ChaseProfile.Current.bestChaseCredits} cr)");
+        Check(ChaseProfile.Current.bestChaseCredits >= ChaseSetup.chaseCredits, $"the best day is recorded ({ChaseProfile.Current.bestChaseCredits} cr)");
         ChaseSetup.BackToMenu(); game.ApplyState();
         foreach (var x in PlayerFrames(2)) yield return x;
         Check(game.Menu.page == ChaseMenu.Page.Main && Time.timeScale == 1f && world.sandboxKeys, "back to the main menu, the map running");

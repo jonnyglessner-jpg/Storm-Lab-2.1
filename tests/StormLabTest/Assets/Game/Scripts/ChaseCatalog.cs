@@ -2,6 +2,7 @@
 // laptop and phone that show the map, the drone and its upgrades), with their prices in credits, the game's currency. The catalog is fixed data; what the player owns is in ChaseProfile and
 // what they took on this chase in ChaseSetup.
 using System.Linq;
+using StormLab.TestMap;
 using UnityEngine;
 
 namespace StormLab.Game
@@ -17,6 +18,10 @@ namespace StormLab.Game
         /// <summary>mass kg, total motor torque N m, top speed kph, side-on drag area m^2 (how much a tornado's wind pushes it)</summary>
         public float massKg, torqueNm, topKph, windAreaM2;
         public Color paint;
+        /// <summary>what it burns (every truck stop sells all three; the vehicle takes only its own), its tank, gallons an hour at
+        /// idle and at full throttle at its top speed, and what the mechanic charges per point of condition (credits)</summary>
+        public FuelGrade fuel; public float tankGal, idleGph, fullGph, repairRate;
+        public string FuelName => fuel == FuelGrade.Diesel ? "diesel" : fuel == FuelGrade.Premium ? "premium" : "regular unleaded";
         /// <summary>Hatchback: the pickup bed is hidden and the cab stretched; Dually: wider rear tyres</summary>
         public VehicleBody body;
     }
@@ -63,11 +68,14 @@ namespace StormLab.Game
         public static readonly ChaseVehicle[] Vehicles =
         {
             new ChaseVehicle { key = "halfton", name = "Half-ton pickup", blurb = "The chaser's usual ride: quick enough, steady enough, room on the roof for a mesonet.",
-                               massKg = 2300f, torqueNm = 2600f, topKph = 185f, windAreaM2 = 3.2f, paint = new Color(0.82f, 0.82f, 0.80f), body = VehicleBody.Pickup },
+                               massKg = 2300f, torqueNm = 2600f, topKph = 185f, windAreaM2 = 3.2f, paint = new Color(0.82f, 0.82f, 0.80f), body = VehicleBody.Pickup,
+                               fuel = FuelGrade.Regular, tankGal = 26f, idleGph = 0.4f, fullGph = 6.0f, repairRate = 4f },
             new ChaseVehicle { key = "dually", name = "Heavy-duty dually", blurb = "A ton and a half heavier: slow off the line, but a tornado's inflow barely moves it.",
-                               massKg = 3600f, torqueNm = 3600f, topKph = 160f, windAreaM2 = 3.8f, paint = new Color(0.45f, 0.08f, 0.07f), body = VehicleBody.Dually },
+                               massKg = 3600f, torqueNm = 3600f, topKph = 160f, windAreaM2 = 3.8f, paint = new Color(0.45f, 0.08f, 0.07f), body = VehicleBody.Dually,
+                               fuel = FuelGrade.Diesel, tankGal = 34f, idleGph = 0.5f, fullGph = 7.5f, repairRate = 6f },
             new ChaseVehicle { key = "hatch", name = "Rally hatchback", blurb = "Light and fast on gravel, and tossed about by any wind over 60 mph. No roof rack to speak of.",
-                               massKg = 1350f, torqueNm = 2100f, topKph = 200f, windAreaM2 = 2.4f, paint = new Color(0.12f, 0.30f, 0.70f), body = VehicleBody.Hatchback },
+                               massKg = 1350f, torqueNm = 2100f, topKph = 200f, windAreaM2 = 2.4f, paint = new Color(0.12f, 0.30f, 0.70f), body = VehicleBody.Hatchback,
+                               fuel = FuelGrade.Premium, tankGal = 14f, idleGph = 0.3f, fullGph = 4.2f, repairRate = 5f },
         };
 
         public static readonly ChaseGear[] Gear =

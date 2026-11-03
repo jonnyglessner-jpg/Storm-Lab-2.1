@@ -55,6 +55,12 @@ namespace StormLab.TestMap
         {
             StormRenderer.Towns.Clear();
             if (!world) return;
+            // the map's own towns (tools/testmap/towns.py), by their populations
+            foreach (var t in TestMapPlaces.Load(nav))
+            {
+                float g = t.pop / 15000f;
+                StormRenderer.Towns.Add(new StormRenderer.TownGlow { position = t.centre.Position, radiusM = 2500f * Mathf.Sqrt(g), glow = g });
+            }
             var radar = TestMapRoads.Load(nav)?.radar;
             if (radar == null || string.IsNullOrEmpty(radar.name) || !Maps.TryGetValue(radar.name, out var map)) return;
             Vector3 anchor;
