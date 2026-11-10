@@ -66,6 +66,14 @@ namespace StormLab.TestMap
         [Tooltip("auto exposure: stops it opens beyond the night model through sunset and twilight (none by day or on a moonlit night)")]
         [Range(0f, 3f)] public float twilightLift = 1f;
         [Range(-6f, 16f)] public float manualEV = 13.5f;
+        [Tooltip("auto exposure: the eye's adaptation to the storm's shade (user, 2026-11-08: noon and afternoon " +
+                 "\"unnaturally dark\"): stops opened per halving of the sky light the storms leave the camera " +
+                 "(StormSceneAmbient.Ambient), as an eye or a camera's meter adapts under a storm; 0: the day's fixed 13.5 EV")]
+        [Range(0f, 1f)] public float stormAdaptation = 0.6f;
+        [Tooltip("auto exposure: the most stops the storm's shade opens it")]
+        [Range(0f, 4f)] public float stormAdaptationMax = 2.5f;
+        /// <summary>stops the exposure is open now for the storm's shade</summary>
+        public float StormLift { get; private set; }
         [Tooltip("the sun's illuminance with it well up, lux (HDRP's daylight)")]
         public float sunLux = 100000f;
         [Tooltip("a full moon's illuminance, lux")]
@@ -205,7 +213,13 @@ namespace StormLab.TestMap
             var sky = storm.PhysicalSky ? SkyLighting.Evaluate(storm.SunDirVol, storm.MoonDirVol, night) : default;
             float gain = storm.PhysicalSky ? sky.gain : 1f;
             float lift = storm.PhysicalSky ? TwilightLift(sky.level) : 0f;
-            ExposureEV = autoExposure ? Mathf.Clamp(13.5f - Mathf.Log(Mathf.Max(gain, 1e-6f), 2f) - lift, -6f, 16f) - compensation : manualEV;
+            // the storm's shade (the share of the sky's light the storms leave the camera, settled over a second or two):
+            // under a supercell's base the light is a quarter of the open sky's or less, and an eye or a meter opens up
+            // for it; the day's exposure held at 13.5 EV left the base and the rain under it near black
+            var amb = StormSceneAmbient.Current;
+            float shade = amb ? Mathf.Clamp(amb.Ambient, 0.02f, 1f) : 1f;
+            StormLift = autoExposure ? Mathf.Min(-Mathf.Log(shade, 2f) * stormAdaptation, stormAdaptationMax) : 0f;
+            ExposureEV = autoExposure ? Mathf.Clamp(13.5f - Mathf.Log(Mathf.Max(gain, 1e-6f), 2f) - lift - StormLift, -6f, 16f) - compensation : manualEV;
             if (exposure && !externalExposure) { exposure.mode.Override(ExposureMode.Fixed); exposure.fixedExposure.Override(ExposureEV); }
             ApplySkyFill(s);
         }

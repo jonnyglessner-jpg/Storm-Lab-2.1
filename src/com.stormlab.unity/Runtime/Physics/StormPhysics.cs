@@ -40,6 +40,10 @@ namespace StormLab
     {
         public double T0F, TdF, lapse, cap, moist;   // thermo (moist in m)
         public double llj, shear, upper;             // winds, m/s
+        /// <summary>(game, StormPreset.Day: not in the web build) the hodograph's low-level curvature: 0 the web build's,
+        /// 1 the surface wind backed 30 degrees and the lowest kilometre veering through it (a curved, high-SRH
+        /// hodograph), -1 the low levels veered toward the shear (a straight one)</summary>
+        public double curve;
     }
 
     public static class Thermo
@@ -194,7 +198,8 @@ namespace StormLab
         public static Winds Make(EnvInput o)
         {
             double s0 = 2.5 + 0.35 * o.llj;
-            Vec2 V0 = FromDir(150, s0), V05 = FromDir(170, 0.75 * o.llj + 1.5), V1 = FromDir(190, o.llj);
+            // (game: o.curve turns the lowest kilometre; 0 keeps the web build's directions)
+            Vec2 V0 = FromDir(150 - 30 * o.curve, s0), V05 = FromDir(170 - 16 * o.curve, 0.75 * o.llj + 1.5), V1 = FromDir(190 - 6 * o.curve, o.llj);
             Vec2 e = FromDir(240, 1);
             double bq = -(e.x * V0.x + e.y * V0.y), cq = V0.x * V0.x + V0.y * V0.y - o.shear * o.shear;
             double disc = bq * bq - cq, s6 = Math.Max(0, -bq + Math.Sqrt(Math.Max(disc, 0)));

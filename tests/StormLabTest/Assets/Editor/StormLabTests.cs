@@ -212,6 +212,27 @@ public static class StormLabTests
         if (li >= 0 && li + 3 < argv.Length)
             return TornadoLife(argv[li + 1], int.Parse(argv[li + 2]), int.Parse(argv[li + 3]), li + 4 < argv.Length && !argv[li + 4].StartsWith("-") ? argv[li + 4] : "");
         if (System.Environment.GetCommandLineArgs().Contains("-slTornadoCost")) return TornadoCost();
+        int ri = Array.IndexOf(argv, "-slRain");
+        if (ri >= 0)
+        {
+            ok &= RainSheets(rep, ri + 1 < argv.Length && !argv[ri + 1].StartsWith("-") ? argv[ri + 1] : "now");
+            File.WriteAllText(Path.Combine(StormLabTestKit.RepoRoot, "validation", "reports", "RainChecks.md"), rep.ToString());
+            return ok;
+        }
+        int ai = Array.IndexOf(argv, "-slAnvils");
+        if (ai >= 0)
+        {
+            ok &= AnvilSheets(rep, ai + 1 < argv.Length && !argv[ai + 1].StartsWith("-") ? argv[ai + 1] : "plains", 24f);
+            File.WriteAllText(Path.Combine(StormLabTestKit.RepoRoot, "validation", "reports", "AnvilChecks.md"), rep.ToString());
+            return ok;
+        }
+        int si = Array.IndexOf(argv, "-slStructure");
+        if (si >= 0)
+        {
+            ok &= StructureSheets(rep, si + 1 < argv.Length && !argv[si + 1].StartsWith("-") ? argv[si + 1] : "plains,lp,dixie,ohio");
+            File.WriteAllText(Path.Combine(StormLabTestKit.RepoRoot, "validation", "reports", "StructureChecks.md"), rep.ToString());
+            return ok;
+        }
         if (System.Environment.GetCommandLineArgs().Contains("-slTail"))
         {
             Tails(rep);
@@ -304,6 +325,231 @@ public static class StormLabTests
         File.WriteAllText(ReportPath, rep.ToString());
         Debug.Log($"[StormLab] storm checks {(ok ? "PASS" : "FAIL")}; report {ReportPath}");
         return ok;
+    }
+
+    // ------------------------------------------------------------------ rain (-slRain <tag>)
+    /// <summary>The rear-flank rain round a tornado and the storm's light at noon and in the afternoon (user, 2026-11-08: a
+    /// box missing from the RFD rain round the tornado; the rain too thick, the storm too dark at midday). Per setup at its
+    /// first tornado: from the rear flank 7 km off looking at the tornado, from the inflow side 14 km off; suns 60 and 30
+    /// degrees up. Screenshots/rain_&lt;tag&gt;.png: rows the setups, columns rear noon, rear afternoon, inflow noon, inflow
+    /// afternoon. Also each view's mean brightness, in the report.</summary>
+    static bool RainSheets(StringBuilder rep, string tag)
+    {
+        rep.AppendLine($"## Rain and midday light ({tag})").AppendLine();
+        storm.tornado = TornadoModel.Detailed; storm.lighting = StormLighting.Unified; storm.structure = StructureModel.Environmental;
+        storm.drawBackdrop = true;
+        // (a probe of the unified lighting's diffused sun: -slDiffuseSun x)
+        var argv = System.Environment.GetCommandLineArgs(); int di = Array.IndexOf(argv, "-slDiffuseSun");
+        if (di >= 0 && di + 1 < argv.Length && float.TryParse(argv[di + 1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var dsun))
+        { storm.diffuseSun = dsun; rep.AppendLine($"diffuseSun {dsun}").AppendLine(); }
+        int dfi = Array.IndexOf(argv, "-slDiffusion");
+        if (dfi >= 0 && dfi + 1 < argv.Length && float.TryParse(argv[dfi + 1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var dif))
+        { storm.diffusion = dif; rep.AppendLine($"diffusion {dif}").AppendLine(); }
+        const int W = 800, H = 500;
+        var tiles = new List<string>();
+        foreach (var pre in new[] { "plains", "dixie", "ohio" })
+        {
+            storm.preset = pre; storm.seed = 42; storm.varied = true; storm.Replan();
+            var c0 = storm.Plan.cycles[0];
+            float t = (float)(c0.times[3] + 1.5);
+            var line = new StringBuilder($"- {pre} at {t:0.0} min: ");
+            foreach (var (view, el) in new[] { ("rear", 60f), ("rear", 30f), ("inflow", 60f), ("inflow", 30f) })
+            {
+                storm.sunElevation = el; storm.sunAzimuth = 240f;
+                var k = new Case { preset = pre, t = t, w = W, h = H };
+                Show(k);
+                var f = new Vector2(storm.Frame.param[0], storm.Frame.param[1]);
+                float azF = Mathf.Atan2(f.y, f.x) * Mathf.Rad2Deg;
+                var tor = new Vector2(storm.Frame.param[52], storm.Frame.param[53]);
+                k.cam = view == "rear" ? new WebCam { az = azF + 200, dist = 7, h = 0.05f, tz = 1.2f, tx = tor.x, ty = tor.y }
+                                       : new WebCam { az = azF - 70, dist = 14, h = 0.05f, tz = 1.6f, tx = tor.x, ty = tor.y };
+                Aim(k.cam, t);
+                string file = Path.Combine(ShotDir, $"rain_{tag}_{pre}_{view}_{el:0}.png");
+                Shot(Path.GetFileName(file), k);
+                tiles.Add(file);
+                var img = Load(file); var px = img.GetPixels(); double sum = 0;
+                for (int i = 0; i < px.Length; i += 7) sum += px[i].grayscale;
+                Object.DestroyImmediate(img);
+                line.Append($"{view} {el:0} deg mean {sum / (px.Length / 7.0):0.000}; ");
+            }
+            rep.AppendLine(line.ToString());
+        }
+        Sheet(tiles, 4, Path.Combine(ShotDir, $"rain_{tag}.png"));
+        return true;
+    }
+
+    // ------------------------------------------------------------------ several storms' anvils (-slAnvils)
+    /// <summary>Three storms side by side across their motion, their anvils overlapping, with the web build's layout and the
+    /// old pairwise composite (structure Website) and with the game's (Environmental: its textures and the one-pass
+    /// composite of every storm): from the ground 45 km off, from under the anvils, and from the air. Screenshots/
+    /// anvils_sheet.png: rows the views, left the old, right the new.</summary>
+    static bool AnvilSheets(StringBuilder rep, string pre, float spacingKm)
+    {
+        rep.AppendLine($"## Three storms' anvils ({pre}, {spacingKm:0} km apart)").AppendLine();
+        storm.tornado = TornadoModel.Detailed; storm.lighting = StormLighting.Unified;
+        storm.sunAzimuth = 250f; storm.sunElevation = 30f;
+        storm.drawBackdrop = false;
+        cam.backgroundColor = new Color(0.36f, 0.52f, 0.78f);
+        var hd = cam.GetComponent<UnityEngine.Rendering.HighDefinition.HDAdditionalCameraData>();
+        if (hd) hd.backgroundColorHDR = new Color(0.36f, 0.52f, 0.78f);
+        const float t = 75f;
+        var storms = new List<StormRenderer> { storm };
+        for (int i = 1; i < 3; i++)
+        {
+            var go = new GameObject($"Storm {i + 1}");
+            var r = go.AddComponent<StormRenderer>();
+            r.UseStandaloneLook(); r.drawBackdrop = false;
+            r.performance = StormPerformance.Custom; r.playing = false; r.renderScale = 1f; r.temporalBlend = 1f; r.checkerboard = false;
+            r.sunSource = SunSource.Fixed; r.sunAzimuth = storm.sunAzimuth; r.sunElevation = storm.sunElevation;
+            r.tornado = storm.tornado; r.lighting = storm.lighting;
+            storms.Add(r);
+        }
+        for (int i = 0; i < 3; i++)
+        {
+            var r = storms[i];
+            r.drawAlongside = true; r.preset = pre; r.seed = 42 + 17 * i; r.varied = true; r.Replan();
+        }
+        var P = storm.Plan;
+        // across the motion (its left), in world metres: x east, z north
+        var lw = new Vector3((float)P.lft.x, 0, (float)P.lft.y).normalized;
+        var fw = new Vector3((float)P.fwd.x, 0, (float)P.fwd.y).normalized;
+        var tiles = new List<string>();
+        var views = new (string name, Vector3 offKm, float hKm, Vector3 lookKm)[]
+        {
+            // from the inflow side, 45 km right of the motion: the three storms in a row, their anvils overlapping
+            ("ground", -lw * 45 - fw * 5, 0.1f, fw * 10 + new Vector3(0, 7, 0)),
+            // under the anvils downstream of the middle storm, looking up and across them
+            ("under", fw * 28, 0.1f, fw * 32 + lw * 14 + new Vector3(0, 11, 0)),
+            // from the air, upstream and above
+            ("aerial", -fw * 70 - lw * 20, 20f, fw * 25),
+        };
+        foreach (var mode in new[] { StructureModel.Website, StructureModel.Environmental })
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                storms[i].structure = mode;
+                storms[i].PlaceUpdraftAt(lw * (spacingKm * 1000f * (i - 1)), t);
+                storms[i].StepTo(t, 100f, true);
+            }
+            StormLabTestKit.Sync();
+            foreach (var (name, offKm, hKm, lookKm) in views)
+            {
+                var basePos = storm.UpdraftWorld(t);
+                var cp = basePos + offKm * 1000f + Vector3.up * (hKm * 1000f);
+                var tgt = basePos + new Vector3(lookKm.x * 1000f, lookKm.y * 1000f, lookKm.z * 1000f);
+                cam.transform.SetPositionAndRotation(cp, Quaternion.LookRotation(tgt - cp, Vector3.up));
+                foreach (var r in storms) r.ResetHistory(cam);
+                string f = Path.Combine(ShotDir, $"anvils_{name}_{(mode == StructureModel.Website ? "old" : "new")}.png");
+                StormLabTestKit.Render(cam, f, 960, 600, 3);
+                tiles.Add(f);
+            }
+            rep.AppendLine($"- {mode}: {StormCustomPass.Composites} composites so far");
+        }
+        // rows the views, columns old | new
+        var ordered = new List<string>();
+        for (int v = 0; v < views.Length; v++) { ordered.Add(tiles[v]); ordered.Add(tiles[views.Length + v]); }
+        Sheet(ordered, 2, Path.Combine(ShotDir, "anvils_sheet.png"));
+        for (int i = 1; i < 3; i++) Object.DestroyImmediate(storms[i].gameObject);
+        storm.drawAlongside = false;
+        return true;
+    }
+
+    // ------------------------------------------------------------------ structure (-slStructure [presets])
+    /// <summary>The game's structure from the environment (StormStructure) beside the web build's layout: per setup (a
+    /// comma list; "plains~1234" is a day's environment) at four stages of the first cycle (organising, slot open, mature
+    /// tornado, rope-out), a chaser's view from the inflow side, a closer view under the base, and the radar's 0.5 deg
+    /// scan. Screenshots/structure_(preset).png: rows the stages; columns web view, game view, web close, game close, web
+    /// radar, game radar.</summary>
+    static bool StructureSheets(StringBuilder rep, string presets)
+    {
+        rep.AppendLine("## Structure from the environment (StormStructure) beside the web build's layout").AppendLine();
+        storm.tornado = TornadoModel.Detailed; storm.lighting = StormLighting.Unified;
+        storm.sunAzimuth = 250f; storm.sunElevation = 24f;
+        var radarGo = new GameObject("Radar");
+        var radar = radarGo.AddComponent<StormRadar>();
+        radar.resolution = 600; radar.areaHalfM = 45000f; radar.gateNoiseDb = 2.5f;
+        var late = typeof(StormRadar).GetMethod("LateUpdate", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        const int W = 800, H = 500;
+        foreach (var pre in presets.Split(','))
+        {
+            storm.preset = pre; storm.seed = 42; storm.varied = true; storm.structure = StructureModel.Environmental; storm.Replan();
+            var P = storm.Plan;
+            if (P.cycles == null) { rep.AppendLine($"- {pre}: {P.kind}, no cycles"); continue; }
+            var c0 = P.cycles[0];
+            var stages = new (string name, float t)[]
+            {
+                ("organising", (float)(c0.start - 4)), ("slot open", (float)(c0.times[1] + 0.6 * (c0.times[2] - c0.times[1]))),
+                ("tornado", (float)(c0.times[3] + 1)), ("rope-out", (float)(c0.times[4] + 0.6 * (c0.times[5] - c0.times[4]))),
+            };
+            rep.AppendLine($"### {pre}: {P.env}").AppendLine();
+            var sc = StormStructure.Scales(P);
+            rep.AppendLine($"meso radius {sc.meso:0.0} km, tower {sc.tower:0.0} km, forward-flank core {sc.ffd:0.0} km and hail {sc.hail:0.0} km from the updraft; tower at the EL after {StormStructure.RiseMin(P):0.0} min; HP-ness {P.hpness:0.00}").AppendLine();
+            var tiles = new List<string>();
+            foreach (var (name, t) in stages)
+            {
+                foreach (var mode in new[] { StructureModel.Website, StructureModel.Environmental })
+                {
+                    storm.structure = mode;
+                    var k = new Case { preset = pre, t = t, w = W, h = H };
+                    Show(k);
+                    var u = new Vector2(storm.Frame.param[64], storm.Frame.param[65]);
+                    var f = new Vector2(storm.Frame.param[0], storm.Frame.param[1]);
+                    float azF = Mathf.Atan2(f.y, f.x) * Mathf.Rad2Deg;
+                    // from the inflow side: south-east of the updraft for a north-east mover (right of the motion)
+                    k.cam = new WebCam { az = azF - 80, dist = 26, h = 0.1f, tz = 3.2f, tx = u.x, ty = u.y }; Aim(k.cam, t);
+                    string tag = $"{pre.Replace('~', '_')}_{name.Replace(' ', '_')}_{(mode == StructureModel.Website ? "web" : "game")}";
+                    Shot($"structure_{tag}_view.png", k); tiles.Add(Path.Combine(ShotDir, $"structure_{tag}_view.png"));
+                    var wc = new Vector2(storm.Frame.param[24], storm.Frame.param[25]);
+                    k.cam = new WebCam { az = azF - 75, dist = 10, h = 0.05f, tz = 1.0f, tx = wc.x, ty = wc.y }; Aim(k.cam, t);
+                    Shot($"structure_{tag}_close.png", k); tiles.Add(Path.Combine(ShotDir, $"structure_{tag}_close.png"));
+                    // the radar 70 km south-east of the updraft
+                    var uw = storm.UpdraftWorld(t);
+                    var dirSE = new Vector3(1, 0, -1).normalized;
+                    radar.site = uw + dirSE * 70000f; radar.site.y = storm.origin.y;
+                    radar.areaCentre = new Vector2(uw.x, uw.z);
+                    radar.ScanAll();
+                    late.Invoke(radar, null); StormLabTestKit.Sync();
+                    string rp = Path.Combine(ShotDir, $"structure_{tag}_radar.png");
+                    SaveRadar(radar, rp, W, H); tiles.Add(rp);
+                    var a = storm.Frame.param;
+                    rep.AppendLine($"- {name} ({t:0.0} min, {storm.Frame.stage}), {mode}: tower R {a[9]:0.0} km, wall cloud {Vector2.Distance(wc, u):0.0} km from the updraft (radius {a[26]:0.0}), surge radius {a[74]:0.0} km at {Vector2.Distance(new Vector2(a[72], a[73]), u):0.0} km, FFD core {Vector2.Distance(new Vector2(a[36], a[37]), u):0.0} km, tornado top {a[57]:0.00} km");
+                }
+            }
+            // per stage the columns web view, game view, web close, game close, web radar, game radar
+            var ordered = new List<string>();
+            for (int s = 0; s < stages.Length; s++)
+            {
+                int b = s * 6;   // web: view, close, radar; then the game's
+                ordered.AddRange(new[] { tiles[b], tiles[b + 3], tiles[b + 1], tiles[b + 4], tiles[b + 2], tiles[b + 5] });
+            }
+            Sheet(ordered, 6, Path.Combine(ShotDir, $"structure_{pre.Replace('~', '_')}.png"));
+            rep.AppendLine();
+        }
+        Object.DestroyImmediate(radarGo);
+        return true;
+    }
+
+    /// <summary>The radar's image (linear palette colours, alpha) over a dark map, cropped to w x h round its centre.</summary>
+    static void SaveRadar(StormRadar radar, string path, int w, int h)
+    {
+        var img = radar.Image; if (!img) return;
+        var prev = RenderTexture.active; RenderTexture.active = img;
+        var t = new Texture2D(img.width, img.height, TextureFormat.RGBA32, false, true);
+        t.ReadPixels(new Rect(0, 0, img.width, img.height), 0, 0); t.Apply();
+        RenderTexture.active = prev;
+        var o = new Texture2D(w, h, TextureFormat.RGB24, false);
+        int x0 = (img.width - w) / 2, y0 = (img.height - h) / 2;
+        var bg = new Color(0.07f, 0.08f, 0.09f);
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+            {
+                int sx = Mathf.Clamp(x + x0, 0, img.width - 1), sy = Mathf.Clamp(y + y0, 0, img.height - 1);
+                var c = t.GetPixel(sx, sy);
+                o.SetPixel(x, y, Color.Lerp(bg, new Color(c.r, c.g, c.b).gamma, c.a));
+            }
+        o.Apply();
+        File.WriteAllBytes(path, o.EncodeToPNG());
+        Object.DestroyImmediate(t); Object.DestroyImmediate(o);
     }
 
     // ------------------------------------------------------------------ tornadoes (-slTornadoes)

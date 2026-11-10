@@ -52,6 +52,9 @@ namespace StormLab
         public double lclM, hpness;
         /// <summary>(game, StormLife) storm minutes at which it begins to die as it leaves the map; infinity: never</summary>
         public double dieMin = double.PositiveInfinity;
+        /// <summary>(game, StormStructure) what the structure reads of the environment the plan was made from; null for
+        /// the web build's plans</summary>
+        public StormEnv env;
         /// <summary>(game, StormLife) a copy to trim; its cycles are shared until replaced</summary>
         public StormPlan Clone() => (StormPlan)MemberwiseClone();
 

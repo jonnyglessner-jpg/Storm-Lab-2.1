@@ -13,8 +13,10 @@ namespace StormLab
 {
     public static class StormLife
     {
-        /// <summary>how far inside the map's edge the updraft is when the storm begins to die, km</summary>
-        public const double LeadKm = 3;
+        /// <summary>how far inside the map's edge the updraft is when the storm begins to die, km (4 since the game's
+        /// structure, StormStructure, 2026-11-07: its wall cloud and tornado sit up to about 4 km from the updraft as the
+        /// occlusion carries them back; 3 left a few tornado samples half a kilometre off the map)</summary>
+        public const double LeadKm = 4;
         /// <summary>storm minutes the core takes to collapse, and the anvil to fade after it</summary>
         public const double CollapseMinutes = 22, AnvilMinutes = 14;
 

@@ -139,8 +139,18 @@ namespace StormLab
         /// website preset ("web:..."), which stays as the web build's for the comparison.</summary>
         public static StormPlan Plan(string presetKey, StormPreset pre, int? seed, PlanOverrides o = null)
         {
-            var P = StormDesign.Plan(pre, seed, o);
-            return presetKey != null && presetKey.StartsWith(StormPreset.WebPrefix, StringComparison.Ordinal) ? P : Deviate(Adapt(P), o);
+            if (presetKey != null && presetKey.StartsWith(StormPreset.WebPrefix, StringComparison.Ordinal)) return StormDesign.Plan(pre, seed, o);
+            return Deviate(Adapt(Design(pre, seed, o)), o);
+        }
+
+        /// <summary>The web build's plan for a preset with the environment it came from kept on it (StormPlan.env, for
+        /// StormStructure); the plan itself is StormDesign.Plan's.</summary>
+        public static StormPlan Design(StormPreset pre, int? seed, PlanOverrides o = null)
+        {
+            var E = Environment.Make(pre.ToEnv());
+            var P = StormDesign.Plan(E, StormDiag.Make(E), seed, o);
+            P.env = StormEnv.From(E);
+            return P;
         }
 
         /// <summary>The storm's motion turned turnDeg clockwise off the environment's and its speed scaled, with everything

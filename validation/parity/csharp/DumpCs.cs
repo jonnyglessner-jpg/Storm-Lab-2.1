@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 // Dumps the C# port's parameter block in the same layout as dump_web.ts, for the parity check.
 using System;
 using System.Globalization;
@@ -19,6 +20,9 @@ static class DumpCs
         if (args.Length > 0 && args[0] == "--gameframes") { GameFrames(args[1], int.Parse(args[2]), int.Parse(args[3]), double.Parse(args[4], CultureInfo.InvariantCulture), double.Parse(args[5], CultureInfo.InvariantCulture)); return; }
         if (args.Length > 0 && args[0] == "--spin") { Spin(args.Length > 1 ? args[1] : "plains"); return; }
         if (args.Length > 0 && args[0] == "--rise") { Rise(); return; }
+        if (args.Length > 0 && args[0] == "--structure") { Structure(); return; }
+        if (args.Length > 0 && args[0] == "--lcl") { Lcl(); return; }
+        if (args.Length > 0 && args[0] == "--track") { Track(args.Length > 1 ? args[1] : null); return; }
         if (args.Length > 0 && args[0] == "--anti")
         {
             // game storms have no anticyclonic side (StormGame.Adapt, user 2026-10-27): storm minutes with an anti-mesocyclone
@@ -486,13 +490,14 @@ static class DumpCs
                         dying++;
                         double gDie = st.startMin + P.dieMin / sc.pace, gGone = st.startMin + P.duration / sc.pace;
                         dieMin = Math.Min(dieMin, gDie); dieMax = Math.Max(dieMax, gDie); goneMin = Math.Min(goneMin, gGone); goneMax = Math.Max(goneMax, gGone);
-                        var full = StormGame.Adapt(StormDesign.Plan(pre, st.seed, st.overrides));
+                        var full = StormGame.Adapt(StormDesign.Plan(sc.preset, st.seed, st.overrides));
                         if (full.cycles != null) for (int i = 0; i < full.cycles.Length; i++) if (full.cycles[i].tornadic && !P.cycles[i].tornadic) lostTornadic++;
                     }
                     bool on = false;
                     for (double t = 0; t <= P.duration; t += 0.25)
                     {
-                        StormDesign.At(P, t, 0, F); StormLife.Apply(P, t, F);
+                        // (the game's pipeline: its structure moves the wall cloud and tornado, StormStructure)
+                        StormDesign.At(P, t, 0, F); StormTornadoes.Apply(P, st.tornadoes, t, F); StormTilt.Apply(P, F); StormStructure.Apply(P, t, 0, F); StormLife.Apply(P, t, F);
                         double amt = F.param[13 * 4 + 2];
                         if (amt <= 0.15) { on = false; continue; }
                         if (!on) tornadoes++;
@@ -502,7 +507,12 @@ static class DumpCs
                         double x = st.startX + (F.param[13 * 4] - u.x + P.motion.x * 0.06 * t / sc.pace) * 1000;
                         double z = st.startZ + (F.param[13 * 4 + 1] - u.y + P.motion.y * 0.06 * t / sc.pace) * 1000;
                         double outBy = Math.Max(Math.Abs(x), Math.Abs(z)) - half;
-                        if (outBy > 0) { outside++; worstOut = Math.Max(worstOut, outBy); }
+                        if (outBy > 0)
+                        {
+                            outside++; worstOut = Math.Max(worstOut, outBy);
+                            if (System.Environment.GetEnvironmentVariable("LIFE_DEBUG") != null && outside <= 3)
+                                Console.WriteLine($"  off: {pre.key} game {seed} storm {st.index} t {t:0.0}/{P.duration:0.0} die {P.dieMin:0.0} rope {F.param[14 * 4 + 3]:0.00} amt {amt:0.00} at ({x / 1000:0.0}, {z / 1000:0.0}) km, tornado {F.param[13 * 4] - u.x:0.0},{F.param[13 * 4 + 1] - u.y:0.0} from the updraft, start ({st.startX / 1000:0.0}, {st.startZ / 1000:0.0}) onMap {st.onMap}");
+                        }
                     }
                 }
             }
@@ -511,15 +521,16 @@ static class DumpCs
             int sTors = 0, sOut = 0, sSamples = 0, sDying = 0, sCut = 0; double sWorst = 0;
             for (int seed = 1; seed <= 300; seed++)
             {
-                var full = StormGame.Adapt(StormDesign.Plan(pre, seed));
+                var full = StormGame.Adapt(StormGame.Design(pre, seed));
                 var (sx, sz) = TestMapStart(full, seed, half);
                 var P = StormLife.Trim(full, StormLife.DyingFrom(sx, sz, full.motion, 1, half));
+                var chars = StormTornadoes.Build(P, StormTornadoes.RegionOf(pre.key));
                 if (!double.IsInfinity(P.dieMin)) sDying++;
                 if (full.cycles != null) for (int i = 0; i < full.cycles.Length; i++) if (full.cycles[i].tornadic && !P.cycles[i].tornadic) sCut++;
                 var u = P.Updraft; bool on = false;
                 for (double t = 0; t <= P.duration; t += 0.25)
                 {
-                    StormDesign.At(P, t, 0, F); StormLife.Apply(P, t, F);
+                    StormDesign.At(P, t, 0, F); StormTornadoes.Apply(P, chars, t, F); StormTilt.Apply(P, F); StormStructure.Apply(P, t, 0, F); StormLife.Apply(P, t, F);
                     if (F.param[13 * 4 + 2] <= 0.15) { on = false; continue; }
                     if (!on) sTors++;
                     on = true; sSamples++;
@@ -609,5 +620,151 @@ static class DumpCs
         foreach (var st in one.storms)
             Console.WriteLine($"  storm {st.index + 1}: seed {st.seed}, starts {st.startMin:0.0} min at {st.bearing:0} deg, lane {st.laneM / 1000:0.0} km (north {st.northness:0}), {st.precip}; tornadoes in the game: " +
                 string.Join(", ", st.InGame(one.gameMinutes, one.pace).Select(t => $"EF{t.ef} {t.shape} at {st.startMin + t.formMin / one.pace:0.0} min")));
+    }
+
+    // the game's structure from the environment (StormStructure): per setup and day, the environment, the scales, and
+    // over the storm's life the separations seen, the surge against the tornado, how far the wall cloud moves while the
+    // slot opens (it must not be pushed: near 0), and the largest jump per 0.1 storm min of the eased amounts
+    /// <summary>(user, 2026-11-08: "the tornadoes now take very sudden turns and move insanely fast when the occlusion
+    /// starts") Each tornado's ground track through the game's pipeline: its speed over the ground as a share of the
+    /// storm's, its slowest progress along the motion (negative: it runs backwards), and its sharpest turn, degrees per
+    /// storm minute, over half-minute legs. An occluding tornado slows and curves left; it never outruns the storm much,
+    /// runs backwards or turns faster than about 30 degrees a minute.</summary>
+    static void Track(string only)
+    {
+        bool ok = true; double allFast = 0, allTurn = 0, allBack = 9;
+        var web = System.Environment.GetEnvironmentVariable("TRACK_WEB");
+        foreach (var b in StormPreset.All)
+        {
+            if (only != null && b.key != only) continue;
+            double fast = 0, turn = 0, back = 9, totalTurn = 0, left = -99; string fastAt = "", turnAt = "";
+            int n = 0;
+            foreach (int day in new[] { 0, 11, 222, 3333, 44444 })
+            {
+                var pre = day == 0 ? b : StormPreset.Day(b, day);
+                var key = day == 0 ? b.key : pre.key;
+                for (int seed = 1; seed <= 6; seed++)
+                {
+                    var P = StormGame.Plan(key, pre, seed, null);
+                    if (P.kind != StormKind.Supercell) continue;
+                    var ch = StormTornadoes.Build(P, StormTornadoes.RegionOf(key));
+                    var F = new StormFrame();
+                    double V = Math.Sqrt(P.motion.x * P.motion.x + P.motion.y * P.motion.y) * 0.06;   // km/min
+                    const double dt = 0.5;
+                    double? px = null, py = null, ph = null; double first = double.NaN, heading0 = 0;
+                    for (double t = 0; t <= P.duration; t += dt)
+                    {
+                        StormDesign.At(P, t, 0, F); StormTornadoes.Apply(P, ch, t, F); StormTilt.Apply(P, F); if (web == null) StormStructure.Apply(P, t, 0, F); StormLife.Apply(P, t, F);
+                        var a = F.param;
+                        if (a[13 * 4 + 2] <= 0.15) { if (px != null && !double.IsNaN(first)) totalTurn = Math.Max(totalTurn, Math.Abs(heading0)); px = null; ph = null; first = double.NaN; continue; }
+                        double gx = a[13 * 4] + P.motion.x * 0.06 * t, gy = a[13 * 4 + 1] + P.motion.y * 0.06 * t;
+                        if (px != null)
+                        {
+                            double vx = (gx - px.Value) / dt, vy = (gy - py.Value) / dt, sp = Math.Sqrt(vx * vx + vy * vy);
+                            double along = (vx * P.fwd.x + vy * P.fwd.y) / V;
+                            double h = Math.Atan2(vx * P.lft.x + vy * P.lft.y, vx * P.fwd.x + vy * P.fwd.y) * 180 / Math.PI;
+                            if (sp / V > fast) { fast = sp / V; fastAt = $"{key} seed {seed} t {t:0.0} rope {a[14 * 4 + 3]:0.00}"; }
+                            back = Math.Min(back, along); left = Math.Max(left, h);
+                            if (double.IsNaN(first)) first = h;
+                            heading0 = h - first;
+                            if (ph != null)
+                            {
+                                double dh = h - ph.Value; while (dh > 180) dh -= 360; while (dh < -180) dh += 360;
+                                if (Math.Abs(dh) / dt > turn) { turn = Math.Abs(dh) / dt; turnAt = $"{key} seed {seed} t {t:0.0} rope {a[14 * 4 + 3]:0.00} heading {h:0} deg"; }
+                            }
+                            ph = h; n++;
+                        }
+                        px = gx; py = gy;
+                    }
+                }
+            }
+            Console.WriteLine($"{b.key,-10} fastest {fast:0.00}x the storm ({fastAt}); slowest along the motion {back:0.00}x; sharpest turn {turn:0} deg/min ({turnAt}); furthest left {left:0} deg off the motion; {n} legs");
+            allFast = Math.Max(allFast, fast); allTurn = Math.Max(allTurn, turn); allBack = Math.Min(allBack, back);
+        }
+        ok = allFast <= 1.3 && allBack >= 0.15 && allTurn <= 30;
+        Console.WriteLine($"all: fastest {allFast:0.00}x, slowest along {allBack:0.00}x, sharpest {allTurn:0} deg/min");
+        Console.WriteLine(ok ? "PASS" : "FAIL");
+    }
+
+    /// <summary>The spread of the storms' LCLs (and CAPE, the base) over the game's day environments: per setup, its
+    /// website preset and 400 drawn days.</summary>
+    static void Lcl()
+    {
+        foreach (var b in StormPreset.All)
+        {
+            var l = new List<double>(); var cp = new List<double>();
+            double web = StormGame.Plan(b.key, b, 1, null).env.lclKm;
+            for (int day = 1; day <= 400; day++)
+            {
+                var pre = StormPreset.Day(b, day);
+                var P = StormGame.Plan(pre.key, pre, 1, null);
+                if (P.env == null) continue;
+                l.Add(P.env.lclKm * 1000); cp.Add(P.env.cape);
+            }
+            l.Sort(); cp.Sort();
+            double Q(List<double> x, double q) => x[(int)Math.Round(q * (x.Count - 1))];
+            Console.WriteLine($"{b.key,-8} web preset LCL {web * 1000:0} m; days: LCL min {Q(l, 0):0} / 10% {Q(l, 0.1):0} / median {Q(l, 0.5):0} / 90% {Q(l, 0.9):0} / max {Q(l, 1):0} m; CAPE {Q(cp, 0):0}-{Q(cp, 1):0} (median {Q(cp, 0.5):0}) J/kg");
+        }
+    }
+
+    static void Structure()
+    {
+        bool ok = true;
+        foreach (var b in StormPreset.All)
+        {
+            foreach (int day in new[] { 0, 11, 222, 3333, 44444 })
+            {
+                var pre = day == 0 ? b : StormPreset.Day(b, day);
+                var key = day == 0 ? b.key : pre.key;
+                double maxPush = 0, minRatio = 99, maxJump = 0; double rsWeb = 0, wallWeb = 0, wallNow = 0; double ffdD = 0, hailD = 0, rsMax = 0, torMax = 0, rMax = 0, towerTopAt = -1;
+                string precip = "", jumpAt = "";
+                for (int seed = 1; seed <= 6; seed++)
+                {
+                    var P = StormGame.Plan(key, pre, seed, null);
+                    if (P.kind != StormKind.Supercell) { precip = P.kind.ToString(); continue; }
+                    var ch = StormTornadoes.Build(P, StormTornadoes.RegionOf(key));
+                    var F = new StormFrame(); float[] last = null;
+                    precip = P.hpness > 0.5 ? "HP" : P.hpness < -0.35 ? "LP" : "classic";
+                    for (double t = 0; t <= P.duration; t += 0.1)
+                    {
+                        StormDesign.At(P, t, 0, F); StormTornadoes.Apply(P, ch, t, F); StormTilt.Apply(P, F);
+                        if (F.param[18 * 4 + 3] > 0.3) rsWeb = Math.Max(rsWeb, F.param[18 * 4 + 2]);
+                        double wfx = F.param[24] - F.param[64], wfy = F.param[25] - F.param[65];
+                        StormStructure.Apply(P, t, 0, F);
+                        var a = F.param;
+                        double ux = a[64], uy = a[65];
+                        if (a[27] > 0.5) { wallWeb = Math.Max(wallWeb, Math.Sqrt(wfx * wfx + wfy * wfy)); wallNow = Math.Max(wallNow, Math.Sqrt((a[24] - ux) * (a[24] - ux) + (a[25] - uy) * (a[25] - uy))); }
+                        double D(int s) => Math.Sqrt((a[s * 4] - ux) * (a[s * 4] - ux) + (a[s * 4 + 1] - uy) * (a[s * 4 + 1] - uy));
+                        if (towerTopAt < 0 && a[8] >= P.el) towerTopAt = t;
+                        if (a[39] > 0.9) ffdD = Math.Max(ffdD, D(9));
+                        if (a[43] > 0.9) hailD = Math.Max(hailD, D(10));
+                        rMax = Math.Max(rMax, a[9]);
+                        if (a[18 * 4 + 3] > 0.3) rsMax = Math.Max(rsMax, a[18 * 4 + 2]);
+                        if (a[13 * 4 + 2] > 0.3) { torMax = Math.Max(torMax, a[14 * 4 + 1]); minRatio = Math.Min(minRatio, a[18 * 4 + 2] / Math.Max(a[14 * 4 + 1], 0.01)); }
+                        if (last != null)
+                        {
+                            // while the slot grows (its radius up) with the wall cloud formed and no rope-out yet: the wall cloud's step
+                            if (a[18 * 4 + 2] > last[18 * 4 + 2] + 1e-4 && a[6 * 4 + 3] > 0.5 && a[14 * 4 + 3] < 0.05 && last[6 * 4 + 3] > 0.5)
+                            {
+                                double mx = Math.Sqrt(Math.Pow(a[24] - last[24] - (ux - last[64]), 2) + Math.Pow(a[25] - last[25] - (uy - last[65]), 2));
+                                maxPush = Math.Max(maxPush, mx);
+                            }
+                            foreach (int j in new[] { 6 * 4 + 3, 11 * 4, 18 * 4 + 3, 6 * 4 + 2 })
+                            {
+                                double dj = Math.Abs(a[j] - last[j]) * (j == 6 * 4 + 2 ? Math.Min(a[27], last[27]) : 1);   // (a radius as seen: by the amount)
+                                if (dj > maxJump) { maxJump = dj; jumpAt = $"slot {j / 4}.{"xyzw"[j % 4]} at {t:0.0} min ({last[j]:0.00} -> {a[j]:0.00})"; }
+                            }
+                        }
+                        last = (float[])a.Clone();
+                    }
+                    if (seed == 1) Console.WriteLine($"{key,-14} {precip,-7} {P.env}");
+                }
+                var sc = StormStructure.Scales(StormGame.Plan(key, pre, 1, null));
+                Console.WriteLine($"    meso {sc.meso:0.0} tower R {rMax:0.0} km (top at EL by {towerTopAt:0.0} min); FFD core {ffdD:0.0} km, hail {hailD:0.0} km from the updraft; surge up to {rsMax:0.0} km (web {rsWeb:0.0}), wall cloud up to {wallNow:0.0} km from the updraft (web {wallWeb:0.0}), tornado top up to {torMax:0.00} km, surge/top >= {minRatio:0.0}; wall cloud pushed {maxPush * 1000:0} m/0.1 min while the slot grows; largest eased step {maxJump:0.000} ({jumpAt})");
+                ok &= minRatio >= 1.8 || minRatio == 99;
+                ok &= maxPush < 0.02;
+            }
+        }
+        Console.WriteLine(ok ? "PASS" : "FAIL");
     }
 }

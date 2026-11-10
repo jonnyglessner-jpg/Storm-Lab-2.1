@@ -66,7 +66,7 @@ namespace StormLab
                 var go = new GameObject($"Storm {s.index + 1} ({s.precip}, lane {(s.northness > 0.5 ? "north" : "south")})");
                 go.transform.SetParent(transform, false);
                 var r = go.AddComponent<StormRenderer>();
-                r.preset = pre.key; r.varied = true; r.seed = s.seed; r.planOverrides = s.overrides;
+                r.preset = Scenario.preset.key; r.varied = true; r.seed = s.seed; r.planOverrides = s.overrides;
                 r.motionScale = 1.0 / pace; r.drawAlongside = true; r.playing = false; r.tornado = tornado;
                 r.dieFrom = s.plan.dieMin;   // as the scenario trimmed it
                 CopyLook(r);
@@ -138,7 +138,7 @@ namespace StormLab
             r.sunSource = lookFrom.sunSource; r.sun = lookFrom.sun; r.moon = lookFrom.moon;
             r.sunAzimuth = lookFrom.sunAzimuth; r.sunElevation = lookFrom.sunElevation;
             r.solarHour = lookFrom.solarHour; r.latitude = lookFrom.latitude; r.dayOfYear = lookFrom.dayOfYear; r.moonPhase = lookFrom.moonPhase;
-            r.lighting = lookFrom.lighting; r.wallBase = lookFrom.wallBase; r.precip = lookFrom.precip; r.dropletDiameter = lookFrom.dropletDiameter;
+            r.lighting = lookFrom.lighting; r.wallBase = lookFrom.wallBase; r.precip = lookFrom.precip; r.structure = lookFrom.structure; r.dropletDiameter = lookFrom.dropletDiameter;
             r.diffusion = lookFrom.diffusion; r.diffuseSun = lookFrom.diffuseSun; r.rainExtinction = lookFrom.rainExtinction;
             r.nightBrightness = lookFrom.nightBrightness; r.nightFloor = lookFrom.nightFloor; r.purkinje = lookFrom.purkinje;
             r.lightPollution = lookFrom.lightPollution; r.nightFill = lookFrom.nightFill; r.nightAdaptation = lookFrom.nightAdaptation;

@@ -1,12 +1,13 @@
 // Shared by the storm's compute passes and the lightning medium: the parameter block (StormDesign.cs, 23 float4 slots,
-// then StormTornadoes.cs, 6 more for the detailed tornado, then StormSpin.cs, 2 of angles turned so far),
+// then StormTornadoes.cs, 6 more for the detailed tornado, then StormSpin.cs, 5 of angles turned so far, then
+// StormStructure.cs, 1 for the game's own),
 // noise, and the near-ground features. Ported from StormLab's src/storm3d/shaders.ts (WGSL, web build f5bd687, MIT):
 // the SP struct, NOISE and NEAR blocks, kept line for line. Lengths are km in the storm's frame (origin at the volume
 // centre, x east, y north, z up above ground).
 #ifndef STORM_COMMON
 #define STORM_COMMON
 
-float4 _SP[34];
+float4 _SP[35];
 #define S_f      _SP[0]    // xy forward (storm motion) unit, zw left unit
 #define S_base   _SP[1]    // x cloud base, y storm top (EL), z clock s, w storm time min
 #define S_tower  _SP[2]    // x top height, y radius, z amount, w striation
@@ -45,7 +46,12 @@ float4 _SP[34];
 #define S_spin3  _SP[31]   // x anti-mesocyclone (negative: clockwise), y satellite tornado, z anticyclonic tornado (negative),
                            // w how far the inflow has carried the beaver tail's air toward the updraft, km (0: the web build's)
 #define S_spin4  _SP[32]   // x the wall cloud's inner ring (between the junction's rate and the rim's), y the wall cloud at its
-                           // junction with the funnel (its surface just under the funnel's edge wind), z the junction's radius km, w spare
+                           // junction with the funnel (its surface just under the funnel's edge wind), z the junction's radius km,
+                           // w 1: the game's structure from the environment (StormStructure; S_struct), 0 the web build's layout
+#define S_struct (_SP[32].w > 0.5)
+// ---- the game's (StormStructure): xyz this storm's offset into the noise, in tiles (each storm its own texture; zero for
+// the web build's plans), w spare
+#define S_game   _SP[34]
 #define S_spin5  _SP[33]   // how far the tornado's textures have risen, each in its own radii (StormSpin.RiseRates): x the funnel's
                            // skin, y the central core, z the dust (in the core's frame), w the satellite tornado
 
@@ -71,13 +77,13 @@ float sunReach(float tau, float4 m)
 }
 
 // ---------------------------------------------------------------------------------------------------- NOISE
-float n3(float3 p) { return _Noise.SampleLevel(sampler_LinearRepeat, p, 0); }
+float n3(float3 p) { return _Noise.SampleLevel(sampler_LinearRepeat, p + S_game.xyz, 0); }
 // From StormLab 2.0, for the detailed tornado: filtered noise. g_fp is the pixel footprint (km) at the current sample (set
 // by the march; 0 elsewhere, which is unfiltered). n3k(q, k, o) samples q * k + o from the mip level whose texels are about
 // the footprint, so octaves finer than a pixel average out instead of sparkling
 static float g_fp = 0.0;
 float nlod(float k) { return max(0.0, log2(max(g_fp * 72.0 * k, 1e-6))); }   // 48 texels per tile, x 1.5
-float n3k(float3 q, float k, float3 o) { float l = nlod(k); return l > 3.0 ? 0.5 : _Noise.SampleLevel(sampler_LinearRepeat, q * k + o, l); }
+float n3k(float3 q, float k, float3 o) { float l = nlod(k); return l > 3.0 ? 0.5 : _Noise.SampleLevel(sampler_LinearRepeat, q * k + o + S_game.xyz, l); }
 float2 safeNorm(float2 v, float2 fallback) { float l = length(v); return l > 1e-4 ? v / l : fallback; }
 // three octaves, about 11, 4.3 and 1.7 km
 float fbm(float3 p) { return 0.5 * n3(p * 0.09) + 0.3 * n3(p * 0.23 + float3(0.31, 0.17, 0.53)) + 0.2 * n3(p * 0.6 + float3(0.7, 0.2, 0.4)); }
