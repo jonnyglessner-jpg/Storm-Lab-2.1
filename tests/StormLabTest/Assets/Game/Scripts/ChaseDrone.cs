@@ -89,6 +89,9 @@ namespace StormLab.Game
 
         public void TestBattery(float fraction) { Battery = Mathf.Clamp01(fraction); }
 
+        /// <summary>Fly home now (the chaser is passing out and must land it first; ChaseSanity).</summary>
+        public void ComeHome() { if (Flying && !Returning) { Returning = true; Say("Coming home"); } }
+
         /// <summary>the flight's state for a check's notes</summary>
         public string DebugState
         {

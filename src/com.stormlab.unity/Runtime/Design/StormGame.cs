@@ -140,7 +140,24 @@ namespace StormLab
         public static StormPlan Plan(string presetKey, StormPreset pre, int? seed, PlanOverrides o = null)
         {
             var P = StormDesign.Plan(pre, seed, o);
-            return presetKey != null && presetKey.StartsWith(StormPreset.WebPrefix, StringComparison.Ordinal) ? P : Adapt(P);
+            return presetKey != null && presetKey.StartsWith(StormPreset.WebPrefix, StringComparison.Ordinal) ? P : Deviate(Adapt(P), o);
         }
+
+        /// <summary>The storm's motion turned turnDeg clockwise off the environment's and its speed scaled, with everything
+        /// the design hangs on the motion turned with it (its forward and left, the updraft tilt, the anvil's direction),
+        /// so the storm faces the way it moves. A game scenario gives each storm its own motion this way (StormScenario:
+        /// the day's turned off the preset's, each storm's off the day's). The plan is copied; unchanged, it is returned.</summary>
+        public static StormPlan Deviate(StormPlan P, double turnDeg, double speedScale)
+        {
+            if (P == null || (turnDeg == 0 && speedScale == 1)) return P;
+            var Q = P.Clone();
+            double a = -turnDeg * Math.PI / 180, c = Math.Cos(a), s = Math.Sin(a);
+            Vec2 Rot(Vec2 v) => new Vec2(v.x * c - v.y * s, v.x * s + v.y * c);
+            var m = Rot(P.motion);
+            Q.motion = new Vec2(m.x * speedScale, m.y * speedScale);
+            Q.fwd = Rot(P.fwd); Q.lft = Rot(P.lft); Q.adir = Rot(P.adir); Q.tilt = Rot(P.tilt);
+            return Q;
+        }
+        public static StormPlan Deviate(StormPlan P, PlanOverrides o) => o == null ? P : Deviate(P, o.turnDeg, o.speedScale);
     }
 }

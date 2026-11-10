@@ -19,13 +19,14 @@ from shapely.geometry import LineString
 import map_config as cfg
 from roads import crossings
 from terrain import sample
+import towns as TN
 
 STEP = 4.0
-SMOOTH_M = {"state": 100.0, "paved": 40.0, "gravel": 20.0}
-BLEND_M = {"state": 200.0, "paved": 120.0, "gravel": 60.0}
-CROWN = {"state": 0.02, "paved": 0.02, "gravel": 0.03}
-RANK = {"state": 3, "paved": 2, "gravel": 1}
-MAX_GRADE = {"state": 0.045, "paved": 0.07, "gravel": 0.08}
+SMOOTH_M = {"state": 100.0, "paved": 40.0, "gravel": 20.0, "street": 40.0}
+BLEND_M = {"state": 200.0, "paved": 120.0, "gravel": 60.0, "street": 50.0}
+CROWN = {"state": 0.02, "paved": 0.02, "gravel": 0.03, "street": 0.02}
+RANK = {"state": 3, "paved": 2, "gravel": 1, "street": 2}
+MAX_GRADE = {"state": 0.045, "paved": 0.07, "gravel": 0.08, "street": 0.07}
 SUPER_E = 0.04
 NO_PASS_SIGHT_M = 300.0
 EYE = 1.08
@@ -195,6 +196,11 @@ def no_passing(prof, state_nodes):
     for nd, v in prof["junctions"]:
         if nd in state_nodes:
             flag[(np.abs(s - s[v]) < 120)] = True
+    # through the towns: double yellow the whole way (the crossings every block)
+    for t in TN.TOWNS:
+        x0, z0, x1, z1 = TN.box(t, 120.0)
+        p = prof["pts"]
+        flag |= (p[:, 0] >= x0) & (p[:, 0] <= x1) & (p[:, 1] >= z0) & (p[:, 1] <= z1)
     m = int(NO_PASS_SIGHT_M / STEP)
     for i in range(0, n - m):
         seg = h[i:i + m + 1]

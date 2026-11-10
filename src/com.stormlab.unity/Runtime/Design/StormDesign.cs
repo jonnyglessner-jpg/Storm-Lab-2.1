@@ -82,7 +82,10 @@ namespace StormLab
     {
         public Precip? precip;
         public bool forceTornadic;
-        public override string ToString() => $"{precip?.ToString() ?? "env"}{(forceTornadic ? "+tor" : "")}";
+        /// <summary>(game) the storm's motion turned off the environment's, degrees clockwise, and scaled: applied by
+        /// StormGame.Deviate after the design, which never sees it (a scenario gives each storm its own motion)</summary>
+        public double turnDeg; public double speedScale = 1;
+        public override string ToString() => $"{precip?.ToString() ?? "env"}{(forceTornadic ? "+tor" : "")}{(turnDeg != 0 || speedScale != 1 ? $"@{turnDeg:0.00}x{speedScale:0.000}" : "")}";
     }
 
     public static class StormDesign

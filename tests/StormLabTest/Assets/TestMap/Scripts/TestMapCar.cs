@@ -35,11 +35,31 @@ namespace StormLab.TestMap
         public float antiRollStiffness = 9000f;
         public float downforce = 2.0f;            // N per (m/s)^2
 
+        [Header("Condition")]
+        [Tooltip("the engine's power as a share of its torque: an empty tank or a worn engine (the chase game sets it)")]
+        public float powerScale = 1f;
+        [Tooltip("the top speed as a share of the vehicle's (the chaser's sanity; the chase game sets it)")]
+        public float speedScale = 1f;
+        /// <summary>metres driven since the scene started (the odometer)</summary>
+        public double OdometerM { get; private set; }
+        /// <summary>the last collision's change of the car's speed, m/s, and when it was (Time.time; -1e9 for none)</summary>
+        public float LastImpact { get; private set; }
+        public float LastImpactTime { get; private set; } = -1e9f;
+        /// <summary>what the last collision was with, and how many collisions have counted (for the checks)</summary>
+        public string LastImpactWith { get; private set; } = "";
+        public int Impacts { get; private set; }
+        /// <summary>the last few collisions that counted, newest last (for the checks)</summary>
+        public readonly System.Collections.Generic.List<string> ImpactLog = new System.Collections.Generic.List<string>();
+        /// <summary>the throttle the engine is actually working at, 0..1 (the fuel burn follows it)</summary>
+        public float EngineLoad { get; private set; }
+
         [Header("Input")]
         [Tooltip("when off, the car ignores the keyboard and gamepad (free camera, tests)")]
         public bool acceptInput = true;
         [Tooltip("extra force on the car from outside, e.g. a tornado's wind, N (cleared each physics step)")]
         public Vector3 externalForce;
+        [Tooltip("a check's throttle and brake (0..1), driven in the physics step while acceptInput is off")]
+        public float testThrottle, testBrake;
 
         public float SpeedKph => rb ? rb.linearVelocity.magnitude * 3.6f : 0f;
         public float ForwardSpeed => rb ? Vector3.Dot(rb.linearVelocity, transform.forward) : 0f;
@@ -68,6 +88,7 @@ namespace StormLab.TestMap
         {
             float throttle = 0, steer = 0, brake = 0; bool hand = false;
             if (acceptInput) ReadInput(out throttle, out steer, out brake, out hand);
+            else { throttle = testThrottle; brake = testBrake; }
             Step(throttle, steer, brake, hand, Time.fixedDeltaTime);
         }
 
@@ -80,9 +101,12 @@ namespace StormLab.TestMap
             steerInput = Mathf.MoveTowards(steerInput, steerTarget, steerSpeed * dt);
             float steerAngle = steerInput * Mathf.Lerp(maxSteerAngle, highSpeedSteerAngle, Mathf.InverseLerp(10f, 130f, kph));
             float motor = 0f, brake = 0f, drive = throttle - brakeIn;
-            if (drive > 0.01f) { if (fwd < -0.5f) brake = drive * brakeTorque; else if (kph < maxSpeedKph) motor = drive * maxMotorTorque; }
-            else if (drive < -0.01f) { if (fwd > 0.5f) brake = -drive * brakeTorque; else if (kph < reverseSpeedKph) motor = drive * maxMotorTorque * 0.6f; }
+            float top = maxSpeedKph * Mathf.Clamp01(speedScale), power = maxMotorTorque * Mathf.Clamp01(powerScale);
+            if (drive > 0.01f) { if (fwd < -0.5f) brake = drive * brakeTorque; else if (kph < top) motor = drive * power; }
+            else if (drive < -0.01f) { if (fwd > 0.5f) brake = -drive * brakeTorque; else if (kph < Mathf.Min(reverseSpeedKph, top)) motor = drive * power * 0.6f; }
             else brake = 60f;
+            EngineLoad = powerScale > 0.001f && Mathf.Abs(motor) > 1f ? Mathf.Abs(drive) : 0f;
+            OdometerM += Mathf.Abs(fwd) * dt;
             int driven = 0;
             foreach (var w in wheels) if (w.drive) driven++;
             foreach (var w in wheels)
@@ -94,6 +118,22 @@ namespace StormLab.TestMap
             AntiRoll(0, 1); AntiRoll(2, 3);
             body.AddForce(-transform.up * downforce * body.linearVelocity.sqrMagnitude);
             if (externalForce != Vector3.zero) { body.AddForce(externalForce); externalForce = Vector3.zero; }
+        }
+
+        float teleportedAt = -1e9f; bool landing;
+
+        void OnCollisionEnter(Collision c)
+        {
+            // (the drop onto the ground after a teleport is not a crash: it cost the chase game 1 % of the truck a morning;
+            // the body can also sleep in the air until the first throttle, so the first contact after a teleport never counts)
+            if (landing) { landing = false; return; }
+            if (Time.time - teleportedAt < 2f) return;
+            // the closing speed (the impulse also carries the solver's push out of a jittering resting contact)
+            float dv = c.relativeVelocity.magnitude;
+            if (dv < 0.5f) return;
+            LastImpact = dv; LastImpactTime = Time.time; Impacts++;
+            LastImpactWith = $"{c.collider.name} ({(c.collider.transform.parent ? c.collider.transform.parent.name : "-")}) at {c.GetContact(0).point} dv {dv:0.0} m/s (impulse {c.impulse.magnitude / Mathf.Max(Body.mass, 1f):0.0}) t {Time.time:0.00}, car {SpeedKph:0.0} km/h";
+            ImpactLog.Add(LastImpactWith); if (ImpactLog.Count > 6) ImpactLog.RemoveAt(0);
         }
 
         void AntiRoll(int l, int r)
@@ -125,10 +165,17 @@ namespace StormLab.TestMap
             ground = default; float best = float.MaxValue;
             foreach (var h in Physics.RaycastAll(from, Vector3.down, length, ~0, QueryTriggerInteraction.Ignore))
             {
-                if (h.collider.transform.IsChildOf(transform) || h.distance >= best) continue;
+                // the ground, not a roof: the buildings (the towns' fuel canopies among them, 2026-11-02) and the towns' fittings
+                if (h.collider.transform.IsChildOf(transform) || h.distance >= best || UnderRoot(h.collider.transform, "Farmsteads") || UnderRoot(h.collider.transform, "Towns")) continue;
                 best = h.distance; ground = h;
             }
             return best < float.MaxValue;
+        }
+
+        static bool UnderRoot(Transform t, string name)
+        {
+            for (int i = 0; t && i < 6; i++, t = t.parent) if (t.name == name) return true;
+            return false;
         }
 
         /// <summary>Put the car on the ground at groundPos (found by a raycast down from well above it: the point given may
@@ -143,6 +190,8 @@ namespace StormLab.TestMap
             transform.SetPositionAndRotation(groundPos + Vector3.up * 0.6f, rot);
             body.position = transform.position; body.rotation = rot;
             steerInput = 0f;
+            teleportedAt = Time.time; landing = true;
+            body.WakeUp();
         }
 
         void ReadInput(out float throttle, out float steer, out float brake, out bool handbrake)
