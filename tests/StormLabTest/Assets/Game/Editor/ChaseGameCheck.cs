@@ -146,7 +146,13 @@ public static class ChaseGameCheck
         game.Menu.StartChase();
         foreach (var x in PlayerFrames(3)) yield return x;
         Check(ChaseSetup.state == ChaseSetup.State.Chase && !game.Menu.Showing && game.Forecast.Showing, "the career started on this map at its morning forecast");
-        // the day's storms (ChaseCareerCheck checks the morning itself)
+        // the day's storms (ChaseCareerCheck checks the morning itself), on a day of two tornadic storms whatever event this
+        // seed rolls (StormEvent): isolated storms or, when that is a lone storm, a local outbreak
+        foreach (var choice in new[] { StormEventChoice.IsolatedStorms, StormEventChoice.LocalOutbreak })
+        {
+            world.game.eventType = choice; game.Forecast.Open();
+            if (game.Forecast.Outlooks.Length == 2) break;
+        }
         game.Forecast.Confirm();
         foreach (var x in PlayerFrames(3)) yield return x;
         int daySeed = ChaseSetup.DaySeed(7, 1);

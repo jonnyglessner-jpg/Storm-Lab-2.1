@@ -1,6 +1,8 @@
-// The morning forecast (user, 2026-11-02): every day starts at 8 am with the day's outlook over the map: when storms
-// should initiate, the two storms' lanes (northern and southern) with their likely tracks drawn as cones from where
-// they come onto the map, each storm's likely mode (classic or HP) and its tornado probabilities by intensity, so the
+// The morning forecast (user, 2026-11-02): every day starts at 8 am with the day's outlook over the map: the day's event
+// type (user, 2026-11-09: garden variety, isolated storms, a local, regional or generational outbreak, or a legendary
+// event; StormEvent.cs) with its risk, when storms should initiate, the storms' lanes (northern and southern, and in an
+// outbreak a lead and a trailing storm in a lane) with their likely tracks drawn as cones from where they come onto the
+// map or go up over it, each storm's likely mode (classic or HP) and its tornado probabilities by intensity, so the
 // chaser can decide which storm to play for. The chaser then picks the truck stop to start from (click a station on the
 // map or its button) and confirms: the day fast-forwards to the first towering cumulus (the storms' initiation hour)
 // with the truck parked at that station. The forecast is drawn from the day's actual scenario (ChaseSetup.DaySeed)
@@ -22,9 +24,16 @@ namespace StormLab.Game
         public int DaySeed { get; private set; }
         public float StartHour { get; private set; }
 
+        /// <summary>the day's event (its type, its risk, the real event a legendary day recreates)</summary>
+        public StormEventDay DayEvent => Preview?.eventDay;
+
         public sealed class Outlook
         {
+            /// <summary>lane: what the storm is called ("northern", "southern trailing", "lone": ScenarioStorm.label)</summary>
             public int index; public string lane, mode, shapes; public float initHour, bearing, motionDeg, motionMph;
+            /// <summary>how far along its track the map (or, for a storm with a lead storm ahead of it, the room to that
+            /// storm) reaches from its entry, m: its name is written half way along; it goes up near the map's middle</summary>
+            public float reach; public bool middle;
             public int pTornado, pEf2, pEf4, maxEf, count;
             public Vector2 entry, dir;
             /// <summary>it initiates over the map (entry is then where its towering cumulus stands, not an edge crossing)</summary>
@@ -42,8 +51,10 @@ namespace StormLab.Game
         PlaceTown[] towns = new PlaceTown[0];
         RenderTexture rt; Texture2D mapTex; Material line;
         GUIStyle title, head, body, small, button, tabOn, tabOff, boxStyle;
-        Rect mapRect; float mapSpan;
-        static readonly Color[] StormColours = { new Color(1f, 0.45f, 0.2f), new Color(0.35f, 0.75f, 1f) };
+        Rect mapRect; float mapSpan; Vector2 scroll;
+        static readonly Color[] StormColours = { new Color(1f, 0.45f, 0.2f), new Color(0.35f, 0.75f, 1f), new Color(1f, 0.85f, 0.25f), new Color(0.75f, 0.55f, 1f) };
+        /// <summary>the risk's colour by event type (the outlook categories' own: green, yellow, orange, red, magenta)</summary>
+        static readonly Color[] RiskColours = { new Color(0.45f, 0.8f, 0.45f), new Color(1f, 0.92f, 0.35f), new Color(1f, 0.62f, 0.2f), new Color(1f, 0.32f, 0.28f), new Color(1f, 0.35f, 0.9f), new Color(1f, 0.35f, 0.9f) };
 
         void Start() { towns = TestMapPlaces.Load(game && game.world ? game.world.navResource : "TestMapNav"); }
 
@@ -60,9 +71,13 @@ namespace StormLab.Game
             var pre = StormPreset.Find(map.preset) ?? StormPreset.All[0];
             float half = world.sizeM / 2f;
             var runner = world.game;
-            Preview = new StormScenario(pre, DaySeed, half, runner ? runner.precipitation : ScenarioPrecip.Auto,
-                                        runner ? runner.gameLength : (float)StormScenario.DefaultGameMinutes, runner ? runner.pace : (float)StormScenario.DefaultPace,
-                                        runner ? runner.enterBeforeMature : 2f);
+            // the day's event comes first (user, 2026-11-09): the runner's settings lay the day out exactly as BeginDay will
+            // spawn it (its event type when one is asked for in dev mode, the legendary events the career has had)
+            var seen = p.LegendsSeenBefore(p.day);
+            if (runner) runner.legendsSeen = seen;
+            Preview = runner ? runner.Layout(pre, DaySeed, half) : new StormScenario(pre, DaySeed, half, legendsSeen: seen);
+            if (!double.IsNaN(Preview.startHour)) StartHour = (float)Preview.startHour;
+            scroll = Vector2.zero;
             Outlooks = Preview.storms.Select(Forecast).ToArray();
             Discussion = Discuss();
             Choice = TestMapPlaces.TownOf(towns, p.spawnTown)?.key ?? (towns.Length > 0 ? towns[0].key : "");
@@ -80,7 +95,7 @@ namespace StormLab.Game
             var m = new Vector2((float)s.plan.motion.x, (float)s.plan.motion.y);
             var o = new Outlook
             {
-                index = s.index, lane = s.northness > 0.5 ? "northern" : "southern",
+                index = s.index, lane = s.label,
                 mode = s.precip == Precip.HP ? "HP (rain-wrapped: short views, dangerous near the core)" : "classic supercell (clear views of the base)",
                 initHour = StartHour + (float)s.startMin / 60f, bearing = (float)s.bearing,
                 motionDeg = (Mathf.Atan2(m.x, m.y) * Mathf.Rad2Deg + 360f) % 360f, motionMph = m.magnitude * 2.237f,
@@ -94,6 +109,19 @@ namespace StormLab.Game
             var shapes = tor.Select(t => t.shape.ToString().ToLowerInvariant()).Distinct().ToList();
             o.shapes = shapes.Count == 0 ? "no tornado expected" : (shapes.Count == 1 ? "likely a " + shapes[0] : "likely " + string.Join(" and ", shapes));
             if (maxEf >= 4) o.shapes += ", a violent tornado possible";
+            // how far its track has to itself: to the map's far edge, or to the lead storm that goes up ahead of it in its lane
+            float h = game.world.sizeM / 2f;
+            float exit = float.PositiveInfinity;
+            if (o.dir.x > 1e-4f) exit = Mathf.Min(exit, (h - o.entry.x) / o.dir.x); else if (o.dir.x < -1e-4f) exit = Mathf.Min(exit, (-h - o.entry.x) / o.dir.x);
+            if (o.dir.y > 1e-4f) exit = Mathf.Min(exit, (h - o.entry.y) / o.dir.y); else if (o.dir.y < -1e-4f) exit = Mathf.Min(exit, (-h - o.entry.y) / o.dir.y);
+            o.reach = float.IsInfinity(exit) ? h : Mathf.Max(exit, 0f);
+            foreach (var a in Preview.storms)
+            {
+                if (a == s || !a.lead || a.side != s.side || s.lead) continue;
+                float ahead = Vector2.Dot(new Vector2((float)a.startX, (float)a.startZ) - o.entry, o.dir);
+                if (ahead > 0f) o.reach = Mathf.Min(o.reach, ahead);
+            }
+            o.middle = s.onMap && new Vector2((float)s.startX, (float)s.startZ).magnitude < 0.15f * game.world.sizeM;
             return o;
         }
 
@@ -104,9 +132,11 @@ namespace StormLab.Game
             var toward = o.Select(k => Compass(k.motionDeg)).Distinct().ToList();
             float lo = o.Length > 0 ? o.Min(k => k.motionMph) : 30f, hi = o.Length > 0 ? o.Max(k => k.motionMph) : 30f;
             string speeds = hi - lo < 2.5f ? $"about {(lo + hi) / 2f:0} mph" : $"{lo:0}-{hi:0} mph";
-            string s = $"Towering cumulus expected from about {init} along the dryline west of the map. Two supercells should mature and cross the map through the afternoon, moving toward the {string.Join(" and ", toward.DefaultIfEmpty("north-east"))} at {speeds}.\n";
+            string[] counts = { "No storm", "A lone supercell", "Two supercells", "Three supercells", "Four supercells" };
+            string where = Preview != null && Preview.storms.Any(k => k.lead) ? "along the dryline west of the map, and ahead of it over the map itself" : "along the dryline west of the map";
+            string s = $"Towering cumulus expected from about {init} {where}. {counts[Mathf.Clamp(o.Length, 0, 4)]} should mature and cross the map through the afternoon, moving toward the {string.Join(" and ", toward.DefaultIfEmpty("north-east"))} at {speeds}.\n";
             foreach (var k in o)
-                s += $"\nThe {k.lane} storm: initiates about {ChaseSetup.ClockText(k.initHour)} {(k.onMap ? "over the " + Compass(k.bearing) + " of the map" : "off the map to the " + Compass(k.bearing) + ", coming onto it just before its first wall cloud")}, moving toward {k.motionDeg:0} degrees at {k.motionMph:0} mph; {k.mode}. Tornado {k.pTornado} %, EF2+ {k.pEf2} %, EF4+ {k.pEf4} %; {k.shapes}.";
+                s += $"\nThe {k.lane} storm: initiates about {ChaseSetup.ClockText(k.initHour)} {(k.onMap ? (k.middle ? "over the middle of the map" : "over the " + Compass(k.bearing) + " of the map") : "off the map to the " + Compass(k.bearing) + ", coming onto it just before its first wall cloud")}, moving toward {k.motionDeg:0} degrees at {k.motionMph:0} mph; {k.mode}. Tornado {k.pTornado} %, EF2+ {k.pEf2} %, EF4+ {k.pEf4} %; {k.shapes}.";
             s += "\n\nPick which storm to play for, and the truck stop to start from: the day fast-forwards to the first towering cumulus with you parked there.";
             return s;
         }
@@ -190,6 +220,19 @@ namespace StormLab.Game
             if (game.LastDay > 0) GUILayout.Label($"Yesterday (day {game.LastDay}): {game.LastDayCredits:n0} cr, {game.LastDayPhotos} photos.   Credits: {p.credits:n0}   Sanity: {p.sanity:P0}", small);
             else GUILayout.Label($"Credits: {p.credits:n0}   Sanity: {p.sanity:P0}", small);
             GUILayout.Space(6);
+            // the day's event type, its risk in the risk's colour, and what it means (a legendary event: the day it recreates)
+            var ev = DayEvent;
+            if (ev != null)
+            {
+                GUILayout.Label(ev.legend != null ? $"Legendary event: {ev.legend.name}" : $"Today: {ev.spec.name}", head);
+                GUI.color = RiskColours[(int)ev.type % RiskColours.Length];
+                GUILayout.Label(ev.spec.risk, body);
+                GUI.color = Color.white;
+                GUILayout.Label(ev.legend != null ? $"{ev.legend.date}. {ev.legend.blurb}" : ev.spec.blurb, small);
+                GUILayout.Space(6);
+            }
+            // (an outbreak's four storms run past the page: the outlook and the probabilities scroll)
+            scroll = GUILayout.BeginScrollView(scroll, GUILayout.ExpandHeight(true));
             GUILayout.Label("Convective outlook", head);
             GUILayout.Label(Discussion, body);
             GUILayout.Space(8);
@@ -201,6 +244,7 @@ namespace StormLab.Game
                 GUI.color = Color.white;
                 GUILayout.Label($"      any tornado {o.pTornado} %   ·   EF2 or stronger {o.pEf2} %   ·   EF4 or stronger {o.pEf4} %   ·   mode: {(o.mode.StartsWith("HP") ? "HP" : "classic")}", small);
             }
+            GUILayout.EndScrollView();
             GUILayout.Space(10);
             GUILayout.Label("Start from", head);
             foreach (var t in towns)
@@ -208,7 +252,7 @@ namespace StormLab.Game
                 if (t.gas == null) continue;
                 if (GUILayout.Button($"{t.gas.name}, {t.name}   (fuel {ChaseSetup.Vehicle.FuelName} {t.gas.Price(ChaseSetup.Vehicle.fuel):0.00})", Choice == t.key ? tabOn : tabOff)) Choose(t.key);
             }
-            GUILayout.FlexibleSpace();
+            GUILayout.Space(8);
             GUILayout.BeginHorizontal();
             var chosen = TestMapPlaces.TownOf(towns, Choice);
             GUI.enabled = chosen != null;
@@ -228,10 +272,12 @@ namespace StormLab.Game
             GUI.Label(new Rect(mapRect.x + 8, mapRect.y + 8, 36, 36), "N\n▲", compass);
             foreach (var o in Outlooks)
             {
-                var mid = Pix(o.entry + o.dir * (game.world.sizeM * 0.45f));
+                // (half way along the track it has to itself, never past where a lone pair's names used to sit)
+                var mid = Pix(o.entry + o.dir * Mathf.Min(game.world.sizeM * 0.45f, o.reach * 0.5f));
                 var ls = new GUIStyle(small) { alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold, normal = { textColor = StormColours[o.index % StormColours.Length] } };
-                GUI.color = new Color(0f, 0f, 0f, 0.55f); GUI.DrawTexture(new Rect(mid.x - 60, mid.y - 10, 120, 20), Texture2D.whiteTexture); GUI.color = Color.white;
-                GUI.Label(new Rect(mid.x - 60, mid.y - 10, 120, 20), $"{o.lane} storm", ls);
+                float lw = Mathf.Max(120f, ls.CalcSize(new GUIContent($"{o.lane} storm")).x + 14f);
+                GUI.color = new Color(0f, 0f, 0f, 0.55f); GUI.DrawTexture(new Rect(mid.x - lw / 2, mid.y - 10, lw, 20), Texture2D.whiteTexture); GUI.color = Color.white;
+                GUI.Label(new Rect(mid.x - lw / 2, mid.y - 10, lw, 20), $"{o.lane} storm", ls);
             }
             // the stations: labels, and a click picks one
             foreach (var t in towns)
@@ -244,7 +290,7 @@ namespace StormLab.Game
                 GUI.Label(lr, $"{t.name}{(on ? "  ◄ start" : "")}", new GUIStyle(small) { alignment = TextAnchor.MiddleCenter, fontStyle = on ? FontStyle.Bold : FontStyle.Normal, normal = { textColor = on ? new Color(1f, 0.9f, 0.4f) : Color.white } });
                 if (e.type == EventType.MouseDown && e.button == 0 && Vector2.Distance(e.mousePosition, q) < 26f) { Choose(t.key); e.Use(); }
             }
-            GUI.Label(new Rect(mapRect.x + 8, mapRect.yMax - 26, mapRect.width - 16, 22), "Likely tracks: each storm from where it comes onto the map, with the forecast's spread  ·  click a station to start there", small);
+            GUI.Label(new Rect(mapRect.x + 8, mapRect.yMax - 26, mapRect.width - 16, 22), "Likely tracks: each storm from where it comes onto the map or goes up over it, with the forecast's spread  ·  click a station to start there", small);
         }
 
         /// <summary>The storms' likely tracks drawn into the map's render texture (its GL pixel space, y up = north, the

@@ -120,6 +120,8 @@ namespace StormLab.Game
             // game mode without storms until the chaser heads out (BeginDay)
             if (!world.gameMode) world.SetGameMode(true);
             if (world.game) { world.game.preset = map.preset; world.game.Clear(); world.game.playing = true; }
+            // the day's event is the seed's own (dev mode keeps one asked for on the storm panel, to try a type on)
+            if (world.game && !ChaseSetup.devMode) { world.game.eventType = StormEventChoice.Auto; world.game.legend = ""; }
             world.SetClockSpeed(0);
             ChaseSetup.morning = true; ChaseSetup.dayStarted = false; ChaseSetup.hour = 8f; StormsDone = false; saidDone = false;
             devHourOffset = 0f; lastPanelHour = -1f; extraHours = 0f; lastGameMinutes = 0f;
@@ -151,11 +153,15 @@ namespace StormLab.Game
             if (world.game)
             {
                 world.game.preset = map.preset; world.game.seed = seed;
+                world.game.legendsSeen = p.LegendsSeenBefore(p.day);   // (as the forecast laid the day out)
                 world.game.Spawn(); world.game.playing = true; world.game.gameMinutes = 0f; world.game.Apply();
             }
             world.SetClockSpeed(0);
             ChaseSetup.seed = seed;
-            ChaseSetup.startHour = ChaseSetup.StartHourFor(seed);
+            // the day's event (StormEvent): a legendary event may set its own hour, and is not given to this career again
+            var sc = world.game ? world.game.Scenario : null;
+            ChaseSetup.startHour = sc != null && !double.IsNaN(sc.startHour) ? (float)sc.startHour : ChaseSetup.StartHourFor(seed);
+            if (sc?.eventDay.legend != null) p.SawLegend(p.day, sc.eventDay.legend.key);
             ChaseSetup.hour = ChaseSetup.startHour; ChaseSetup.morning = false; ChaseSetup.dayStarted = true; StormsDone = false; saidDone = false;
             devHourOffset = 0f; lastPanelHour = -1f; extraHours = 0f; lastGameMinutes = 0f;
             if (panel) { panel.clockRuns = false; panel.hour = ChaseSetup.hour; panel.Apply(); }
@@ -170,7 +176,7 @@ namespace StormLab.Game
             world.car.acceptInput = !(Player && Player.OnFoot) && !(Photo && Photo.Active) && !(Drone && Drone.Flying);
             Drone.ResetForChase();
             p.Save();
-            Say($"Day {p.day}: {ChaseSetup.ClockText(ChaseSetup.hour)}, towering cumulus to the west. {(t != null ? t.gas.name + ", " + t.name : map.name)}, {ChaseSetup.Vehicle.name}");
+            Say($"Day {p.day}{(sc != null ? ", " + sc.eventDay.Name.ToLowerInvariant() : "")}: {ChaseSetup.ClockText(ChaseSetup.hour)}, towering cumulus to the west. {(t != null ? t.gas.name + ", " + t.name : map.name)}, {ChaseSetup.Vehicle.name}");
         }
 
         void Update()
@@ -225,6 +231,8 @@ namespace StormLab.Game
         public void SetDevMode(bool on)
         {
             ChaseSetup.devMode = on;
+            // (an event type asked for on the storm panel goes with dev mode: the days after are the seeds' own again)
+            if (!on && world.game) { world.game.eventType = StormEventChoice.Auto; world.game.legend = ""; }
             ApplyDevMode();
             if (!on && world.cameraRig && world.cameraRig.mode == TestMapCamera.Mode.Free) world.cameraRig.DropTruck();
             Say(on ? "DEV MODE: F free camera, V truck here, 1-9 spots, N new storms, T / P / [ ] clock, G game mode, Tab panel, M map" : "Dev mode off");

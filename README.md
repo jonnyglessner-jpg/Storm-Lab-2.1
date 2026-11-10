@@ -90,9 +90,29 @@ side starts off the map on the side its motion comes from (none of the game's se
 **StormLab > Test Map > Storm Spawn Check** checks every setup over 12 seeds (`validation/reports/StormSpawnCheck.md`,
 tracks drawn in `storm_tracks.png`).
 
-**A game** (`StormScenario`, 2.0's scenario on the web build's storms; `StormScenarioRunner` draws it): two supercells
-from one game seed, the second starting 2-12 game minutes after the first, in lanes across the day's mean storm motion
-whose tracks cross the map's centre line 25-31 miles apart (never under 25 miles, and while both are alive their
+**A game** (`StormScenario`, 2.0's scenario on the web build's storms; `StormScenarioRunner` draws it): one to four
+supercells from one game seed. The seed's first decision is the day's **event type** (`StormEvent.cs`; user,
+2026-11-09), from the most common to the rarest:
+
+| Event type | Seeds | Storms | A tornado from each storm | The day's top rating | Other storms' strongest |
+| --- | --- | --- | --- | --- | --- |
+| Garden variety | 40 % | 1-2 | 50 % (one, weak) | EF0 or EF1 | |
+| Isolated storms | 27 % | 1-2 | every storm | EF1 20 %, EF2 55 %, EF3 25 % | |
+| Local outbreak | 17 % | 2-3 | every storm | EF2 15 %, EF3 50 %, EF4 35 % | at least EF1 |
+| Regional outbreak | 10 % | 3-4 | every storm | EF3 20 %, EF4 60 %, EF5 20 % | a second storm EF3, the rest at least EF2 |
+| Legendary event | 4 % | as written | as written | as written | as written |
+| Generational outbreak | 2 % | 4 | every storm | EF5 | a second storm EF4, the rest at least EF3 |
+
+The table is `StormEvents.All`; every number in it is there to be tuned. A legendary event is a recreation of a real,
+infamous day (`StormLegends.cs`: a `LegendaryEvent` gives the setup, optionally its own sounding and start hour, and each
+storm's place, time, motion, mode and written tornadoes; `StormScenario.BuildLegend` lays it out as written and
+`LegendaryEvents.Problems` lists what could not be honoured). None is written yet: a day that rolls one is a regional
+outbreak until one is registered for its setup. `StormScenarioRunner.eventType` (the test map panel's event row) asks for
+a type whatever the seed rolls. With two storms the second starts 2-12 game minutes after the first, in lanes across the
+day's mean storm motion; a lone storm takes a lane of its own within 12 miles of the centre; a third and a fourth are
+lead storms, each going up over the map 25 miles or more ahead of the storm it shares its lane with, a few minutes before
+it and moving as it does (one that cannot be fitted is left out and listed in `StormScenario.leftOut`: about 1 lead storm in 200).
+The two lanes' tracks cross the map's centre line 25-31 miles apart (never under 25 miles, and while both are alive their
 updrafts never come closer: the lanes are pushed apart until they do not, and the check measures how close the storms
 come), the pair shifted up to 6 miles either way. The day's motion is the preset's turned up to 15 degrees and sped up
 to 10 % either way, and each storm's is a few degrees and a few per cent off the day's (`StormGame.Deviate` turns the
@@ -102,15 +122,19 @@ cumulus up to 12 km in from the upwind edge); the rest start as towering cumulus
 the map 2-10 storm minutes before their first wall cloud. A game is
 60 minutes; each storm's life cycle runs 2.5x the game clock (`pace`) while it crosses the ground at its real speed
 (`StormRenderer.motionScale = 1/pace`), so a 30 min build-up to the first wall cloud takes 12 game minutes, and the
-lightning follows the faster life cycle. 2.0's rules: the game's top rating is drawn once (60 % no tornado above EF2,
-20 % EF3, 20 % EF4 or, rarely, EF5); the strongest tornado goes to one storm, most likely the northern one; every other
+lightning follows the faster life cycle. 2.0's rules, with the event in place of 2.0's tiers: the day's top rating
+comes from its event; the strongest tornado goes to one storm, most likely the northern one; every other
 tornado is capped at that rating (`StormTornadoes.Rate` resizes the funnel to suit); the northern storm most likely goes
-HP, the southern one classic (or every storm classic or HP); every storm puts down a tornado during the game (the next
-storm seed is tried if not). `dotnet run --project validation/parity/csharp -- --scenario` gives the statistics over
-400 games. On the test map **G** (or the panel's game-mode toggle) swaps the test storm for a game; T, P, [ ] and N
+HP, the southern one classic (or every storm classic or HP); every storm the event gives a tornado puts one down during
+the game (the next storm seed is tried if not). `dotnet run --project validation/parity/csharp -- --scenario [event]`
+gives the statistics over 400 games (every game that event type, or each seed's own), `-- --events` checks the event
+types (the shares rolled, and with each type asked for on every setup the 25 miles, the ratings and the tornadoes; a
+made-up legendary event laid out as written), and `-- --day <setup> <seed> [event]` or `-- --day <setup> career
+<careerSeed> <first> <last>` prints one day or a career's days. On the test map **G** (or the panel's game-mode toggle) swaps the test storm for a game; T, P, [ ] and N
 then work on the game clock and the game seed, the HUD lists both storms, the camera's storm view turns to the nearer
 one, and the truck feels both storms' tornado wind. **StormLab > Test Map > Game Check** checks a game in Play
-(`validation/reports/StormGameCheck.md`, `-slGameSeed`, `-slGamePreset`).
+(`validation/reports/StormGameCheck.md`, `-slGameSeed`, `-slGamePreset`, `-slGameEvent` with a local outbreak as the
+default: at least two storms, each with a tornado).
 
 **Storms die as they leave the map** (`StormLife`, a game addition beside the port; the web build's supercell never
 dies). A storm begins to die when its updraft comes within 3 km of the map's edge (all round) on its way out, or after
@@ -271,10 +295,12 @@ the HUD names the street in town. The towns glow at night like the real ones rou
 
 The chase is a **career** (`ChaseGame`, `ChaseSetup.DaySeed`): **New career** picks the map, vehicle, gear and the
 career's seed; every day's storms come from the seed and the day. A day opens at **8 am on the morning forecast**
-(`ChaseForecast`): the day's outlook over the map (when towering cumulus is expected, each storm's lane, mode (classic
+(`ChaseForecast`): the day's event type with its risk (garden variety: marginal; isolated storms: slight; local
+outbreak: enhanced; regional outbreak: moderate; legendary event and generational outbreak: high) and the day's outlook
+over the map (when towering cumulus is expected, each storm's lane, mode (classic
 or HP), likely track drawn as a cone from where it comes onto the map, and its tornado probabilities: any, EF2+, EF4+,
 read from the day's real storms with a forecaster's spread) and the choice of truck stop to start from (click a station
-or its button). **Head out** fast-forwards to the first towering cumulus with the truck parked there; the two storms
+or its button). **Head out** fast-forwards to the first towering cumulus with the truck parked there; the day's storms
 cross the map over the game hour, then the clock keeps running (T speeds it) and the chaser drives to a motel or a
 truck stop and **sleeps** on the marked, signed space (F; `ChaseSleep`): the screen fades to black, a quote fades in,
 holds five seconds and fades out, and the chaser wakes at 8 am next day with a fade from black and the next forecast.

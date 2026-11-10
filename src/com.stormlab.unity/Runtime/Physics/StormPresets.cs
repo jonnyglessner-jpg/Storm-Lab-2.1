@@ -59,10 +59,12 @@ namespace StormLab
         };
 
         /// <summary>a game setup or, with "web:" in front, a website preset by its key; null when there is none. A game
-        /// key with a day after it ("plains~1234", DayKey) is that setup's environment on that day (Day).</summary>
+        /// key with a day after it ("plains~1234", DayKey) is that setup's environment on that day (Day); one with a
+        /// legendary event after it ("plains@moore-2013", LegendaryEvents.EnvKey) is that event's own sounding.</summary>
         public static StormPreset Find(string key)
         {
             if (key == null) return null;
+            if (key.IndexOf(LegendaryEvents.EnvSep) > 0) return LegendaryEvents.OfEnvKey(key)?.environment;
             int tilde = key.IndexOf(DaySep);
             if (tilde > 0 && int.TryParse(key.Substring(tilde + 1), out int day))
             {
@@ -75,8 +77,8 @@ namespace StormLab
         }
         public const string WebPrefix = "web:";
         public const char DaySep = '~';
-        /// <summary>the setup's key without its day ("plains~1234" -> "plains")</summary>
-        public static string BaseKey(string key) { int i = key?.IndexOf(DaySep) ?? -1; return i > 0 ? key.Substring(0, i) : key; }
+        /// <summary>the setup's key without its day or its legendary event ("plains~1234", "plains@moore-2013" -> "plains")</summary>
+        public static string BaseKey(string key) { int i = key?.IndexOfAny(new[] { DaySep, LegendaryEvents.EnvSep }) ?? -1; return i > 0 ? key.Substring(0, i) : key; }
         public static string DayKey(string baseKey, int day) => BaseKey(baseKey) + DaySep + day;
 
         /// <summary>

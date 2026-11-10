@@ -21,6 +21,12 @@ namespace StormLab
         public int seed = 1;
         [Tooltip("Auto: by lane (the northern storm leans HP); or every storm classic, or every storm HP")]
         public ScenarioPrecip precipitation = ScenarioPrecip.Auto;
+        [Tooltip("the day's event type (StormEvent): Auto is the seed's own; any other is that type whatever the seed rolls")]
+        public StormEventChoice eventType = StormEventChoice.Auto;
+        [Tooltip("a legendary event by its key (LegendaryEvents): the day is that event; empty: the seed's own")]
+        public string legend = "";
+        /// <summary>the legendary events a career has already had (not picked again while another is left); null: none</summary>
+        [NonSerialized] public List<string> legendsSeen;
         [Tooltip("half the map's width, m (the map is a square centred on the world origin)")]
         public float mapHalfM = 80467.2f / 2f;
         [Tooltip("the ground the storms stand on, world y, m")]
@@ -60,10 +66,10 @@ namespace StormLab
             Clear();
             var pre = StormPreset.Find(preset) ?? StormPreset.All[0];
             preset = pre.key;
-            Scenario = new StormScenario(pre, seed, mapHalfM, precipitation, gameLength, pace, enterBeforeMature);
+            Scenario = Layout(pre, seed, mapHalfM);
             foreach (var s in Scenario.storms)
             {
-                var go = new GameObject($"Storm {s.index + 1} ({s.precip}, lane {(s.northness > 0.5 ? "north" : "south")})");
+                var go = new GameObject($"Storm {s.index + 1} ({s.precip}, {s.label})");
                 go.transform.SetParent(transform, false);
                 var r = go.AddComponent<StormRenderer>();
                 r.preset = Scenario.preset.key; r.varied = true; r.seed = s.seed; r.planOverrides = s.overrides;
@@ -80,6 +86,12 @@ namespace StormLab
             Apply();
             return Scenario;
         }
+
+        /// <summary>The scenario a seed gives with the runner's settings (its event type, precipitation, length and pace),
+        /// without spawning it: the morning forecast reads the day from this.</summary>
+        public StormScenario Layout(StormPreset pre, int gameSeed, double halfM) =>
+            new StormScenario(pre, gameSeed, halfM, precipitation, gameLength, pace, enterBeforeMature,
+                              StormEvents.Forced(eventType), string.IsNullOrEmpty(legend) ? null : LegendaryEvents.Find(legend), legendsSeen);
 
         /// <summary>A new game from a seed.</summary>
         public StormScenario Spawn(string presetKey, int gameSeed) { preset = presetKey; seed = gameSeed; return Spawn(); }

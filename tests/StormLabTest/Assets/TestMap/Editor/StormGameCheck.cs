@@ -5,7 +5,10 @@
 // Screenshots/game_*.png, a contact sheet game_sheet.jpg, validation/reports/StormGameCheck.md, and the storms' tracks
 // validation/reports/game_tracks.csv.
 //   StormLab > Test Map > Game Check
-// Batch: -executeMethod StormGameCheck.RunFromCommandLine [-slGameSeed <n>] [-slGamePreset <key>] (never with -nographics)
+// Batch: -executeMethod StormGameCheck.RunFromCommandLine [-slGameSeed <n>] [-slGamePreset <key>] [-slGameEvent <key>] (never with -nographics)
+// -slGameEvent: the day's event type (StormEvents' keys: garden, isolated, local, regional, generational; auto: the
+// seed's own). The default is a local outbreak: at least two storms, each with a tornado, which the lightning and
+// tornado-wind checks need.
 // -slGameProbe: with the 25 min view of each storm alone, the unified light's parts (game_25_storm<k>_dbg1..4.png) and the
 // cloud, rain and light grids along the view (in the report)
 using System;
@@ -26,7 +29,7 @@ using Object = UnityEngine.Object;
 public static class StormGameCheck
 {
     const string Key = "StormGameCheck.Active", BatchKey = "StormGameCheck.Batch", CodeKey = "StormGameCheck.Code";
-    const string SeedKey = "StormGameCheck.Seed", PresetKey = "StormGameCheck.Preset", SpotKey = "StormGameCheck.Spot";
+    const string SeedKey = "StormGameCheck.Seed", PresetKey = "StormGameCheck.Preset", SpotKey = "StormGameCheck.Spot", EventKey = "StormGameCheck.Event";
     static string ShotDir => Path.Combine(StormLabTestKit.ProjectDir, "Screenshots");
     static string ReportDir => Path.Combine(StormLabTestKit.RepoRoot, "validation", "reports");
 
@@ -42,6 +45,7 @@ public static class StormGameCheck
         string Arg(string name) { int i = Array.IndexOf(args, name); return i >= 0 && i + 1 < args.Length ? args[i + 1] : null; }
         SessionState.SetInt(SeedKey, int.TryParse(Arg("-slGameSeed"), out var sd) ? sd : 1);
         SessionState.SetString(PresetKey, Arg("-slGamePreset") ?? "plains");
+        SessionState.SetString(EventKey, Arg("-slGameEvent") ?? "local");
         // -slGameSpot "eastMi,northMi,gameMin,hour[,fromDeg,toDeg,live,km...]" (live 1: the game runs at real time into gameMin and
         // the views, from each of the heights in km that follow, are taken as Play draws them, without forced rebuilds or history resets): views all round from that spot on the map's grid (as the HUD gives it),
         // with both storms and each alone, instead of the checks
@@ -118,6 +122,8 @@ public static class StormGameCheck
         world.SetGameMode(true);
         var game = world.game;
         game.preset = world.storm.preset; game.seed = SessionState.GetInt(SeedKey, 1); game.playing = false;
+        var eventSpec = StormEvents.Find(SessionState.GetString(EventKey, "local"));
+        game.eventType = eventSpec != null ? StormEvents.Choice(eventSpec.type) : StormEventChoice.Auto;
         game.Spawn();
         foreach (var x in Frames(3)) yield return x;
         var sc = game.Scenario;
@@ -146,7 +152,7 @@ public static class StormGameCheck
             stagesOk &= stage0 == "Towering cumulus";
             boundsOk &= Math.Abs(S.x - st.startX) < 50 && Math.Abs(S.z - st.startZ) < 50;
             var tors = st.InGame(game.gameLength, game.pace).Select(t => $"EF{t.ef} {StormTornadoes.ShapeName[(int)t.shape].ToLowerInvariant()} at {st.startMin + t.formMin / game.pace:0} min").ToList();
-            rep.AppendLine($"| {i + 1} | {st.seed} | {st.precip}, {(st.northness > 0.5 ? "north" : "south")} | {st.startMin:0.0} min | {st.bearing:0} deg{(st.onMap ? " (over the map)" : "")}, toward {(Math.Atan2(r.Plan.motion.x, r.Plan.motion.y) * 180 / Math.PI + 360) % 360:0} deg | {Out(S) / 1000:0.0} km | {st.entryMin:0.0} min | {st.matureMin:0.0} min | {-Out(M) / 1000:0.0} km | {stage0} | {stageM} | {string.Join("; ", tors)} |");
+            rep.AppendLine($"| {i + 1} | {st.seed} | {st.precip}, {st.label} | {st.startMin:0.0} min | {st.bearing:0} deg{(st.onMap ? " (over the map)" : "")}, toward {(Math.Atan2(r.Plan.motion.x, r.Plan.motion.y) * 180 / Math.PI + 360) % 360:0} deg | {Out(S) / 1000:0.0} km | {st.entryMin:0.0} min | {st.matureMin:0.0} min | {-Out(M) / 1000:0.0} km | {stage0} | {stageM} | {string.Join("; ", tors)} |");
             for (double g = st.startMin; g <= game.gameLength + 1e-6; g += 1)
             {
                 double life = LifeAt(g); if (life > r.Plan.duration) break;
@@ -156,7 +162,10 @@ public static class StormGameCheck
         }
         File.WriteAllText(Path.Combine(ReportDir, "game_tracks.csv"), csv.ToString());
         rep.AppendLine();
-        Check(sc.storms.Count == 2 && game.Storms.Count == 2, "two storms, each its own StormRenderer");
+        var spec = sc.eventDay.spec;
+        Check(sc.storms.Count >= 1 && sc.storms.Count <= sc.eventDay.storms && sc.eventDay.storms >= spec.minStorms && sc.eventDay.storms <= spec.maxStorms && game.Storms.Count == sc.storms.Count,
+            $"{sc.storms.Count} storm{(sc.storms.Count == 1 ? "" : "s")} for the day's event ({sc.eventDay}: {spec.minStorms}-{spec.maxStorms} planned), each its own StormRenderer");
+        foreach (var w in sc.leftOut) rep.AppendLine($"  - left out: {w}");
         Check(stagesOk, "every storm starts as towering cumulus");
         Check(tracksOk, "every storm starts off the map with its updraft onto the map's edge at its entry time, or initiates well over the map; every one is over the map when mature");
         Check(boundsOk, "the drawn storms start where the scenario placed them");
@@ -164,20 +173,26 @@ public static class StormGameCheck
         double closest = double.PositiveInfinity;
         for (double g = 0; g <= game.gameLength + 1e-6; g += 0.1)
         {
-            double l0 = (g - sc.storms[0].startMin) * game.pace, l1 = (g - sc.storms[1].startMin) * game.pace;
-            if (l0 < 0 || l1 < 0 || l0 > game.Storms[0].Plan.duration || l1 > game.Storms[1].Plan.duration) continue;
-            var d = game.Storms[0].UpdraftWorld(l0) - game.Storms[1].UpdraftWorld(l1); d.y = 0;
-            closest = Math.Min(closest, d.magnitude);
+            for (int a = 0; a < sc.storms.Count; a++)
+                for (int b = a + 1; b < sc.storms.Count; b++)
+                {
+                    double l0 = (g - sc.storms[a].startMin) * game.pace, l1 = (g - sc.storms[b].startMin) * game.pace;
+                    if (l0 < 0 || l1 < 0 || l0 > game.Storms[a].Plan.duration || l1 > game.Storms[b].Plan.duration) continue;
+                    var d = game.Storms[a].UpdraftWorld(l0) - game.Storms[b].UpdraftWorld(l1); d.y = 0;
+                    closest = Math.Min(closest, d.magnitude);
+                }
         }
-        Check(closest >= StormScenario.MinSeparationM - 1, $"the storms are never closer than {StormScenario.MinSeparationM / 1609.344:0} miles (closest {closest / 1609.344:0.0} mi; lanes {Math.Abs(sc.storms[0].laneM - sc.storms[1].laneM) / 1609.344:0.0} mi apart)");
-        Check(sc.EveryStormTornadic, "every storm puts down a tornado during the game");
+        Check(sc.storms.Count < 2 || closest >= StormScenario.MinSeparationM - 1, $"the storms are never closer than {StormScenario.MinSeparationM / 1609.344:0} miles (closest {(double.IsInfinity(closest) ? "never together" : $"{closest / 1609.344:0.0} mi")}; lanes {string.Join(", ", sc.storms.Select(s => $"{s.laneM / 1609.344:0.0}"))} mi)");
+        Check(sc.TornadoesAsPlanned, $"every storm the day's event gives a tornado puts one down during the game, and no other does ({sc.storms.Count(s => s.tornadic)} of {sc.storms.Count})");
         Check(sc.MaxEf <= sc.topEf, $"no tornado above the game's top rating (strongest EF{sc.MaxEf}, built for EF{sc.topEf})");
 
-        // the clock: before the second storm starts it is switched off; both live mid-game
-        game.gameMinutes = (float)(sc.storms[1].startMin * 0.5); game.Apply();
-        bool secondOff = sc.storms[1].startMin < 0.5 || !game.Storms[1].gameObject.activeSelf;
+        // the clock: before the last storm starts it is switched off; every storm alive mid-game is switched on
+        int last = Enumerable.Range(0, sc.storms.Count).OrderBy(i => sc.storms[i].startMin).Last();
+        game.gameMinutes = (float)(sc.storms[last].startMin * 0.5); game.Apply();
+        bool lastOff = sc.storms[last].startMin < 0.5 || !game.Storms[last].gameObject.activeSelf;
         game.gameMinutes = 30f; game.Apply();
-        Check(secondOff && game.Storms.All(r => r.gameObject.activeSelf), "a storm is switched off before it starts; both are live at 30 game min");
+        Check(lastOff && Enumerable.Range(0, sc.storms.Count).All(i => game.Storms[i].gameObject.activeSelf == sc.storms[i].AliveAt(30, game.pace)) && game.Storms.Any(r => r.gameObject.activeSelf),
+            $"a storm is switched off before it starts; {game.Storms.Count(r => r.gameObject.activeSelf)} of {game.Storms.Count} are live at 30 game min");
         Check(game.Storms.All(r => Math.Abs(r.motionScale - 1.0 / game.pace) < 1e-9), $"each storm crosses the ground at its real speed (motion scale 1/{game.pace:0.#})");
 
         // lightning: each storm got its own, bound to its plan; flashing once mature, with the game running at 10x
@@ -202,7 +217,8 @@ public static class StormGameCheck
         foreach (var r in game.Storms) r.StepTo(r.StormTime, r.Clock, true);
         foreach (var x in Frames(4)) yield return x;
         bool hideOk = true;
-        for (int i = 0; i < 2; i++)
+        if (game.Storms.Count < 2) rep.AppendLine("  - one storm in this game: no other storm to hide its channels (run a day with two)");
+        for (int i = 0; i < 2 && game.Storms.Count >= 2; i++)
         {
             var near = game.Storms[i]; var far = game.Storms[1 - i];
             var N = near.Frame.param; var F = far.Frame.param;

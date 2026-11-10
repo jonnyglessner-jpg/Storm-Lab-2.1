@@ -85,10 +85,12 @@ namespace StormLab
     {
         public Precip? precip;
         public bool forceTornadic;
+        /// <summary>(game) no cycle puts down a tornado, whatever the environment (a garden-variety day's storm, StormEvent)</summary>
+        public bool noTornado;
         /// <summary>(game) the storm's motion turned off the environment's, degrees clockwise, and scaled: applied by
         /// StormGame.Deviate after the design, which never sees it (a scenario gives each storm its own motion)</summary>
         public double turnDeg; public double speedScale = 1;
-        public override string ToString() => $"{precip?.ToString() ?? "env"}{(forceTornadic ? "+tor" : "")}{(turnDeg != 0 || speedScale != 1 ? $"@{turnDeg:0.00}x{speedScale:0.000}" : "")}";
+        public override string ToString() => $"{precip?.ToString() ?? "env"}{(forceTornadic ? "+tor" : "")}{(noTornado ? "-tor" : "")}{(turnDeg != 0 || speedScale != 1 ? $"@{turnDeg:0.00}x{speedScale:0.000}" : "")}";
     }
 
     public static class StormDesign
@@ -117,7 +119,7 @@ namespace StormLab
             double R = C.Clamp(2.2 + 1.3 * C.Clamp((S.w - 20) / 30, 0, 1), 2.0, 3.5) * (lp ? 0.85 : 1);
             double rcKm = S.ptor > 0 ? S.TornadoRadiusYd(S.vMed) * 0.9144 / 1000 : 0.1;
             double meso = C.Clamp(S.vLow / 20, 0.3, 1.2);
-            bool tornadic = kind == StormKind.Supercell && (S.ptor >= 0.3 || o != null && o.forceTornadic);
+            bool tornadic = kind == StormKind.Supercell && (S.ptor >= 0.3 || o != null && o.forceTornadic) && !(o != null && o.noTornado);
             double torR = C.Clamp(rcKm, 0.03, 0.45);
             var cycles = seed == null || kind != StormKind.Supercell ? null : StormCycles.Make(seed.Value, tornadic, torR, zb);
             return new StormPlan

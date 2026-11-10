@@ -23,8 +23,10 @@ README.md has the layout, use, checks and known gaps.
   size that changes: `(z - v x clock) / r` slides the whole texture by clock x d(1 / r) (a funnel widening out of its rope
   stage sent the skin and dust plunging at ~1 km/s, user 2026-11-01); sample `z / r - rise` with the rise added up in
   `StormSpin` (S_spin5; `-- --rise` checks the speeds). New random draws get their own `StormRng` stream.
-  `StormScenario` (2.0's game layout) uses streams 500 (tiers, lanes, starts), 510 (the day's motion turn and speed, the
-  lanes' gap and shift), 600+i (storm seeds), 700+i (precip), 800+i (each storm's own motion and initiation point);
+  `StormScenario` (2.0's game layout) uses streams 500 (lanes, starts; its tier draws are still taken but the event
+  decides the tiers now), 510 (the day's motion turn and speed, the lanes' gap and shift), 530 (the day's event type, its
+  storm count and top rating, which legendary event), 540+i (whether storm i is tornadic), 550 (an outbreak's lead
+  storms), 600+i (storm seeds), 700+i (precip), 800+i (each storm's own motion and initiation point);
   its storms reach the website plan only through `PlanOverrides` (precip, forced tornadic; its turnDeg / speedScale are
   applied after the design by `StormGame.Deviate`, which turns fwd / lft / tilt / adir with the motion), which parity must not see.
   The storms never come within 25 miles of each other (user, 2026-11-02; `MinSeparationM`, the lanes pushed apart until
@@ -59,6 +61,23 @@ README.md has the layout, use, checks and known gaps.
   - Check with `-- --structure` (the wall cloud is never pushed while the slot grows; the surge is at least 1.8x the
     tornado's top), `-- --track` (the tornado's ground speed at most 1.3x the storm's, at least 0.15x along the motion,
     turning at most 30 degrees per minute), `StormLabTests -slStructure [presets]` (web vs game: views and radar) and `-slAnvils` (three storms).
+- Event types (user, 2026-11-09; `StormEvent.cs`): a day's seed first rolls its event, from the most common to the
+  rarest garden variety, isolated storms, local outbreak, regional outbreak, legendary event, generational outbreak, and
+  the event decides the storm count (1-4), whether each storm puts down a tornado, the day's top rating and the lifts of
+  the other storms' strongest. Every number is in one table, `StormEvents.All` (shares, storms, tornado chance, top-EF
+  odds, `secondEf`, `floorEf`, `maxTornadoes`): tune the mix there, never in `StormScenario`. A third and fourth storm
+  are lead storms: each goes up over the map 25 miles or more ahead of the storm it shares a lane with, a few minutes
+  before it and moving as it does; one that cannot be fitted is left out (`StormScenario.leftOut`). The event reaches a
+  storm's plan only through `PlanOverrides` (`noTornado` for a garden-variety storm without one). `StormScenarioRunner.
+  eventType` asks for a type whatever the seed rolls (the test map panel's event row, the checks' `-slGameEvent`); a
+  career always plays the seed's own, and the forecast (`ChaseForecast.DayEvent`) and `BeginDay` lay the day out through
+  the same `StormScenarioRunner.Layout`, so they cannot disagree. Legendary events (`StormLegends.cs`: recreations of
+  real days, e.g. Moore 2013, Pilger 2014, Mayfield 2021) are data, `LegendaryEvent` records registered with
+  `LegendaryEvents.Register` and laid out as written by `StormScenario.BuildLegend`; none is written yet, and until one
+  is a day that rolls a legendary event is a regional outbreak (`StormEventDay.fellBack`). Run `-- --events` after
+  touching the table, the layout or a legendary event (it must print PASS), `-- --scenario [event]` and
+  `-- --life [event]` for the spread and the map's edge, and `-- --day <setup> <seed> [event]` (or `-- --day <setup>
+  career <seed> <first> <last>`) to read one day or a career's days.
 - Storms die leaving the map (`StormLife`, after `StormDesign.At` and `StormTornadoes.Apply`): no tornado may be off the
   map; check with `validation/parity/csharp -- --life` after changing tracks, placement or cycles.
 - Look changes: one named problem at a time, checked in the test map; say when a request is taste, not a bug.

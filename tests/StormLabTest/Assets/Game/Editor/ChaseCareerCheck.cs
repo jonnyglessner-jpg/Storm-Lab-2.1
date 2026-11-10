@@ -2,7 +2,7 @@
 // stop, motel, mechanic, traffic light each) and the town rig builds the signals and marked spots and cycles the lights;
 // pictures of a town (Main Street at the light, the truck stop, the motel, a residential street, from the air) go to
 // Screenshots/town_*.png; a career starts on the morning forecast at 8 am with no storms out and the truck parked at a
-// station, the forecast reads the day's two storms, confirming it spawns them at their initiation hour with the truck at
+// station, the forecast reads the day's event type and its storms, confirming it spawns them at their initiation hour with the truck at
 // the chosen truck stop; the day's clock follows the game clock and runs on after the storms; the tank burns under
 // load, an empty tank kills the engine, pumping at an island fills it and charges the station's price for the vehicle's
 // grade; a worn truck loses power and limps, the mechanic repairs it for the bill; the sanity bar's phases slow the
@@ -220,7 +220,20 @@ public static class ChaseCareerCheck
         Check(!world.LiveStorms().Any(), "no storm is out yet");
         Check(TestMapPlaces.Flat(car.transform.position, towns[0].gas.sleep.Position) < 3f, $"the truck is parked at {towns[0].gas.name} ({TestMapPlaces.Flat(car.transform.position, towns[0].gas.sleep.Position):0.0} m)");
         var fc = game.Forecast;
-        Check(fc.Preview != null && fc.Outlooks.Length == 2, $"the forecast reads the day's two storms (seed {fc.DaySeed}, initiation {ChaseSetup.ClockText(fc.StartHour)})");
+        // the day's event type comes first (user, 2026-11-09): the seed's own, read by the forecast
+        var ev = fc.DayEvent;
+        Check(fc.Preview != null && ev != null && !ev.forced && ev.rolled == StormEvents.Roll(fc.DaySeed) && (ev.type == ev.rolled || ev.fellBack),
+            $"the forecast opens on the day's event, the seed's own (seed {fc.DaySeed}: {ev})");
+        Check(ev != null && fc.Outlooks.Length == fc.Preview.storms.Count && fc.Outlooks.Length >= 1 && ev.storms >= ev.spec.minStorms && ev.storms <= ev.spec.maxStorms,
+            $"it reads the event's storms ({fc.Outlooks.Length}: {string.Join(", ", fc.Outlooks.Select(o => o.lane))}; {ev.spec.name.ToLowerInvariant()} days have {ev.spec.minStorms}-{ev.spec.maxStorms})");
+        // the rest of the morning is checked on a day of two tornadic storms: isolated storms or, when this seed's is a
+        // lone storm, a local outbreak (the same draw gives one of them two), asked for as the dev panel does
+        foreach (var choice in new[] { StormEventChoice.IsolatedStorms, StormEventChoice.LocalOutbreak })
+        {
+            world.game.eventType = choice; fc.Open();
+            if (fc.Outlooks.Length == 2) break;
+        }
+        Check(fc.DayEvent.forced && fc.Outlooks.Length == 2, $"an event type asked for is the day's: two storms (seed {fc.DaySeed}: {fc.DayEvent}; initiation {ChaseSetup.ClockText(fc.StartHour)})");
         foreach (var o in fc.Outlooks)
         {
             Note($"{o.lane} storm: initiates {ChaseSetup.ClockText(o.initHour)}, {(o.onMap ? "over the map" : "off the map")} from the {o.bearing:0} deg, toward {o.motionDeg:0} deg at {o.motionMph:0} mph, {o.mode}; tornado {o.pTornado} %, EF2+ {o.pEf2} %, EF4+ {o.pEf4} %; {o.shapes} (really: {o.count} tornadoes, strongest EF{o.maxEf})");
@@ -273,6 +286,12 @@ public static class ChaseCareerCheck
         foreach (var x in PlayerFrames(3)) yield return x;
         Check(!fc.Showing && !ChaseSetup.morning && ChaseSetup.dayStarted, "the forecast closed and the day is on");
         Check(world.game && world.game.Scenario != null && world.game.seed == fc.DaySeed && world.LiveStorms().Any(), $"the day's storms are out from the day's seed ({world.game.seed})");
+        {
+            var sc = world.game.Scenario; var pv = fc.Preview;
+            bool same = sc != null && sc.EventType == pv.EventType && sc.storms.Count == pv.storms.Count;
+            for (int i = 0; same && i < sc.storms.Count; i++) same &= sc.storms[i].seed == pv.storms[i].seed && sc.storms[i].label == pv.storms[i].label && Math.Abs(sc.storms[i].startX - pv.storms[i].startX) < 1 && Math.Abs(sc.storms[i].startZ - pv.storms[i].startZ) < 1;
+            Check(same, $"the storms out are the ones the forecast read ({sc})");
+        }
         Check(Mathf.Abs(ChaseSetup.hour - fc.StartHour) < 0.02f && Mathf.Abs(panel.hour - fc.StartHour) < 0.02f, $"the day fast-forwarded to the first towering cumulus ({ChaseSetup.ClockText(ChaseSetup.hour)})");
         Check(world.game.gameMinutes < 0.5f, "the game clock starts at 0 (towering cumulus)");
         Check(TestMapPlaces.Flat(car.transform.position, lanark.gas.sleep.Position) < 3f && car.acceptInput, $"the truck is at {lanark.gas.name}, {lanark.name}, and drives");

@@ -337,12 +337,12 @@ namespace StormLab.TestMap
                 var lines = new List<string>();
                 float g = game.gameMinutes;
                 lines.Add($"game clock {Mathf.FloorToInt(g):0}:{Mathf.FloorToInt(g * 60 % 60):00} / {game.gameLength:0} min   {game.minutesPerSecond * 60f:0}x{(game.playing ? "" : "  paused")}   {sc.preset.key} game {sc.seed}");
-                lines.Add($"built for EF{sc.topEf} at most{(sc.headline >= 0 ? $", strongest from storm {sc.headline + 1}" : "")}   ·   life cycles {game.pace:0.#}x the game clock");
+                lines.Add($"{sc.eventDay.Name}: built for EF{sc.topEf} at most{(sc.headline >= 0 ? $", strongest from storm {sc.headline + 1}" : "")}   ·   life cycles {game.pace:0.#}x the game clock");
                 for (int i = 0; i < game.Storms.Count; i++)
                 {
                     var st = sc.storms[i]; var r = game.Storms[i];
                     double life = game.StormMinutes(i);
-                    string name = $"Storm {i + 1} ({st.precip}, {(st.northness > 0.5 ? "north" : "south")} lane)";
+                    string name = $"Storm {i + 1} ({st.precip}, {st.label})";
                     if (life < 0) { lines.Add($"{name}: starts in {Mathf.FloorToInt((float)-life / game.pace)}:{Mathf.FloorToInt((float)(-life / game.pace) * 60 % 60):00}, from {st.bearing:0} deg"); continue; }
                     if (!game.Alive(i)) { lines.Add($"{name}: gone"); continue; }
                     var u = game.UpdraftWorld(i) - p; u.y = 0;

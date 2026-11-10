@@ -12,8 +12,10 @@ static class DumpCs
     static void Main(string[] args)
     {
         if (args.Length > 0 && args[0] == "--tornadoes") { Tornadoes(); return; }
-        if (args.Length > 0 && args[0] == "--scenario") { Scenarios(); return; }
-        if (args.Length > 0 && args[0] == "--life") { Life(); return; }
+        if (args.Length > 0 && args[0] == "--scenario") { Scenarios(EventArg(args)); return; }
+        if (args.Length > 0 && args[0] == "--life") { Life(EventArg(args)); return; }
+        if (args.Length > 0 && args[0] == "--events") { Events(); return; }
+        if (args.Length > 0 && args[0] == "--day") { Day(args); return; }
         if (args.Length > 0 && (args[0] == "--wedges" || args[0] == "--shapes")) { Shapes(); return; }
         if (args.Length > 0 && args[0] == "--slots") { Slots(); return; }
         if (args.Length > 0 && args[0] == "--runup") { RunUp(); return; }
@@ -469,19 +471,30 @@ static class DumpCs
         Console.WriteLine(ok ? "PASS" : "FAIL");
     }
 
+    // an event type named after --scenario or --life ("garden", "isolated", "local", "regional", "generational"): every
+    // game is that event whatever its seed rolls; none: each seed's own
+    static StormEventType? EventArg(string[] args)
+    {
+        if (args.Length < 2) return null;
+        var spec = StormEvents.Find(args[1]);
+        if (spec == null) throw new ArgumentException($"no event type \"{args[1]}\" ({string.Join(", ", StormEvents.All.Select(s => s.key))})");
+        return spec.type;
+    }
+
     // StormLife in games: every tornado on the ground must be over the map, and the storms die as they leave it
-    static void Life()
+    static void Life(StormEventType? ev = null)
     {
         const double half = 80467.2 / 2;
+        if (ev != null) Console.WriteLine($"every game a {StormEvents.Spec(ev.Value).name.ToLowerInvariant()}");
         foreach (var pre in StormPreset.All)
         {
-            int games = 300, torMinutes = 0, outside = 0, dying = 0, tornadoes = 0, lostTornadic = 0, gameTors = 0;
+            int games = 300, torMinutes = 0, outside = 0, dying = 0, tornadoes = 0, lostTornadic = 0, gameTors = 0, stormsIn = 0;
             double worstOut = 0, dieMin = 1e9, dieMax = 0, goneMin = 1e9, goneMax = 0;
             var F = new StormFrame();
             for (int seed = 1; seed <= games; seed++)
             {
-                var sc = new StormScenario(pre, seed, half);
-                gameTors += sc.TornadoCount;
+                var sc = new StormScenario(pre, seed, half, eventType: ev);
+                gameTors += sc.TornadoCount; stormsIn += sc.storms.Count;
                 foreach (var st in sc.storms)
                 {
                     var P = st.plan; var u = P.Updraft;
@@ -540,7 +553,7 @@ static class DumpCs
                 }
             }
             Console.WriteLine($"{pre.key,-7}  test-map storm, 300 seeds: dying on the map {sDying * 100.0 / 300:0}%, tornadoes {sTors}, samples off the map {sOut} of {sSamples} (worst {sWorst / 1000:0.0} km out); tornadic cycles cut {sCut}");
-            Console.WriteLine($"{pre.key,-7}: {games} games; storms dying on the map {dying * 100.0 / (2 * games):0}%, from game min {dieMin:0}-{dieMax:0}, gone by {goneMin:0}-{goneMax:0}; " +
+            Console.WriteLine($"{pre.key,-7}: {games} games, {stormsIn} storms; storms dying on the map {dying * 100.0 / Math.Max(stormsIn, 1):0}%, from game min {dieMin:0}-{dieMax:0}, gone by {goneMin:0}-{goneMax:0}; " +
                 $"tornadoes on the ground {tornadoes} ({gameTors} counted in-game), samples off the map {outside} of {torMinutes} (worst {worstOut / 1000:0.0} km out); tornadic cycles cut {lostTornadic}");
         }
     }
@@ -579,27 +592,32 @@ static class DumpCs
         return (bSx, bSz);
     }
 
-    // StormScenario statistics over many game seeds (a readable summary for review; not part of the parity check)
-    static void Scenarios()
+    // StormScenario statistics over many game seeds (a readable summary for review; not part of the parity check).
+    // ev: every game that event type (--scenario garden); null: each seed's own event.
+    static void Scenarios(StormEventType? ev = null)
     {
         const double half = 80467.2 / 2;
+        if (ev != null) Console.WriteLine($"every game a {StormEvents.Spec(ev.Value).name.ToLowerInvariant()}");
         foreach (var key in StormPreset.All.Select(p => p.key))
         {
             var pre = StormPreset.All.First(p => p.key == key);
-            int n = 400, allTor = 0, headNorth = 0, heads = 0, hp0 = 0, hp1 = 0, onMap = 0;
+            int n = 400, asPlanned = 0, headNorth = 0, heads = 0, hpN = 0, hpS = 0, nN = 0, nS = 0, onMap = 0, storms = 0, leads = 0;
             double turnMin = 999, turnMax = -999, spdMin = 1e9, spdMax = 0;
-            var tiers = new int[6]; var maxEf = new int[7];
+            var tiers = new int[6]; var maxEf = new int[7]; var types = new int[StormEvents.All.Length]; var counts = new int[StormEvents.MaxStorms + 1];
             double closeMin = 1e9, closeSum = 0, bMin = 999, bMax = -1, offMin = 1e9, entMin = 1e9, entMax = 0, matMin = 1e9, matMax = 0, gapMin = 1e9, gapMax = 0;
+            int closeN = 0;
             for (int seed = 1; seed <= n; seed++)
             {
-                var sc = new StormScenario(pre, seed, half);
-                tiers[sc.topEf]++; maxEf[sc.MaxEf + 1]++;
-                if (sc.EveryStormTornadic) allTor++;
-                if (sc.headline >= 0) { heads++; if (sc.storms[sc.headline].northness > 0.5) headNorth++; }
+                var sc = new StormScenario(pre, seed, half, eventType: ev);
+                tiers[sc.topEf]++; maxEf[sc.MaxEf + 1]++; types[(int)sc.EventType]++; counts[sc.storms.Count]++;
+                if (sc.TornadoesAsPlanned) asPlanned++;
+                if (sc.headline >= 0) { heads++; if (sc.storms[sc.headline].side > 0) headNorth++; }
                 foreach (var st in sc.storms)
                 {
-                    if (st.northness > 0.5 && st.precip == Precip.HP) hp1++;
-                    if (st.northness < 0.5 && st.precip == Precip.HP) hp0++;
+                    storms++;
+                    if (st.side > 0) { nN++; if (st.precip == Precip.HP) hpN++; }
+                    if (st.side < 0) { nS++; if (st.precip == Precip.HP) hpS++; }
+                    if (st.lead) { leads++; continue; }
                     bMin = Math.Min(bMin, st.bearing); bMax = Math.Max(bMax, st.bearing);
                     if (st.onMap) onMap++;
                     double az = (Math.Atan2(st.plan.motion.x, st.plan.motion.y) * 180 / Math.PI + 360) % 360, spd = Math.Sqrt(st.plan.motion.x * st.plan.motion.x + st.plan.motion.y * st.plan.motion.y);
@@ -608,18 +626,223 @@ static class DumpCs
                     entMin = Math.Min(entMin, st.entryMin); entMax = Math.Max(entMax, st.entryMin);
                     matMin = Math.Min(matMin, st.matureMin); matMax = Math.Max(matMax, st.matureMin);
                 }
-                double close = sc.ClosestApproachM(); closeMin = Math.Min(closeMin, close); closeSum += close;
-                double gap = Math.Abs(sc.storms[0].laneM - sc.storms[1].laneM); gapMin = Math.Min(gapMin, gap); gapMax = Math.Max(gapMax, gap);
+                double close = sc.ClosestApproachM();
+                if (!double.IsInfinity(close)) { closeMin = Math.Min(closeMin, close); closeSum += close; closeN++; }
+                var south = sc.storms.Where(s => s.side < 0 && !s.lead).ToList(); var north = sc.storms.Where(s => s.side > 0 && !s.lead).ToList();
+                if (south.Count == 1 && north.Count == 1) { double gap = Math.Abs(north[0].laneM - south[0].laneM); gapMin = Math.Min(gapMin, gap); gapMax = Math.Max(gapMax, gap); }
             }
-            Console.WriteLine($"{key,-6}: built-for tiers EF2 {tiers[2] * 100.0 / n:0}%, EF3 {tiers[3] * 100.0 / n:0}%, EF4 {tiers[4] * 100.0 / n:0}%, EF5 {tiers[5] * 100.0 / n:0}%; " +
-                $"strongest in game EF0-5: {string.Join("/", Enumerable.Range(1, 6).Select(i => maxEf[i]))}, none {maxEf[0]}; every storm tornadic {allTor * 100.0 / n:0}%; headline north {(heads > 0 ? headNorth * 100.0 / heads : 0):0}%; " +
-                $"HP north {hp1 * 100.0 / n:0}% south {hp0 * 100.0 / n:0}%; lanes {gapMin / 1609.344:0.0}-{gapMax / 1609.344:0.0} mi apart, closest the storms come {closeMin / 1609.344:0.0} mi (mean {closeSum / n / 1609.344:0.0}); starts {bMin:0}-{bMax:0} deg, {onMap * 100.0 / (2 * n):0}% over the map, the rest >= {offMin / 1000:0.0} km off; motions toward {turnMin:0}-{turnMax:0} deg at {spdMin * 2.237:0}-{spdMax * 2.237:0} mph; on the map {entMin:0.0}-{entMax:0.0} min, mature {matMin:0.0}-{matMax:0.0} min (game)");
+            int others = Math.Max(storms - leads, 1);
+            Console.WriteLine($"{key,-6}: events {string.Join(", ", StormEvents.All.Select((s, i) => $"{s.key} {types[i] * 100.0 / n:0}%"))}; storms per game 1-4: {string.Join("/", Enumerable.Range(1, StormEvents.MaxStorms).Select(i => counts[i]))} ({leads} lead storms); " +
+                $"built-for tiers EF0-5: {string.Join("/", tiers.Select(t => $"{t * 100.0 / n:0}%"))}; " +
+                $"strongest in game EF0-5: {string.Join("/", Enumerable.Range(1, 6).Select(i => maxEf[i]))}, none {maxEf[0]}; tornadoes as the event planned {asPlanned * 100.0 / n:0}%; headline north {(heads > 0 ? headNorth * 100.0 / heads : 0):0}%; " +
+                $"HP north {hpN * 100.0 / Math.Max(nN, 1):0}% south {hpS * 100.0 / Math.Max(nS, 1):0}%; lanes {gapMin / 1609.344:0.0}-{gapMax / 1609.344:0.0} mi apart, closest the storms come {closeMin / 1609.344:0.0} mi (mean {closeSum / Math.Max(closeN, 1) / 1609.344:0.0}); " +
+                $"starts {bMin:0}-{bMax:0} deg, {onMap * 100.0 / others:0}% over the map, the rest >= {offMin / 1000:0.0} km off; motions toward {turnMin:0}-{turnMax:0} deg at {spdMin * 2.237:0}-{spdMax * 2.237:0} mph; on the map {entMin:0.0}-{entMax:0.0} min, mature {matMin:0.0}-{matMax:0.0} min (game; lead storms apart)");
         }
-        var one = new StormScenario(StormPreset.All[0], 1, half);
+        var one = new StormScenario(StormPreset.All[0], 1, half, eventType: ev);
         Console.WriteLine("plains game 1: " + one);
         foreach (var st in one.storms)
-            Console.WriteLine($"  storm {st.index + 1}: seed {st.seed}, starts {st.startMin:0.0} min at {st.bearing:0} deg, lane {st.laneM / 1000:0.0} km (north {st.northness:0}), {st.precip}; tornadoes in the game: " +
-                string.Join(", ", st.InGame(one.gameMinutes, one.pace).Select(t => $"EF{t.ef} {t.shape} at {st.startMin + t.formMin / one.pace:0.0} min")));
+            Console.WriteLine($"  storm {st.index + 1} ({st.label}): seed {st.seed}, starts {st.startMin:0.0} min at {st.bearing:0} deg{(st.onMap ? " over the map" : "")}, lane {st.laneM / 1000:0.0} km (north {st.northness:0.##}), {st.precip}; tornadoes in the game: " +
+                string.Join(", ", st.InGame(one.gameMinutes, one.pace).Select(t => $"EF{t.ef} {t.shape} at {st.startMin + t.formMin / one.pace:0.0} min").DefaultIfEmpty("none")));
+    }
+
+    // The day's event types (--events; user, 2026-11-09: StormEvent.cs, StormLegends.cs). PASS needs:
+    //   - the seeds roll the types in the table's shares, from the most common to the rarest;
+    //   - with every type asked for in turn, on every setup: the storms never within 25 miles of each other, no tornado
+    //     above the day's top rating, the top rating reached from EF3 up, the second storm's and every storm's strongest
+    //     at the event's ratings, no tornado from a storm the event gave none, and a tornado from at least 97 % of the
+    //     storms it gave one; the same seed lays out the same day twice, and asked for its own type gives its own day;
+    //   - a legendary event with none written falls back to a regional outbreak; one written (a made-up event, registered
+    //     for the check only) is laid out as written, is picked by the seeds that roll one, and is not picked again by a
+    //     career that has had it while another is left.
+    static void Events()
+    {
+        const double half = 80467.2 / 2;
+        bool ok = true;
+        void Check(bool pass, string what) { ok &= pass; Console.WriteLine($"  {(pass ? "ok  " : "FAIL")} {what}"); }
+
+        // the roll
+        int rolls = 200000; var got = new int[StormEvents.All.Length];
+        for (int seed = 1; seed <= rolls; seed++) got[(int)StormEvents.Roll(seed)]++;
+        Console.WriteLine($"Event types over {rolls} seeds:");
+        bool shares = true, order = true;
+        for (int i = 0; i < got.Length; i++)
+        {
+            var s = StormEvents.All[i];
+            Console.WriteLine($"  {s.name,-22} {got[i] * 100.0 / rolls,5:0.0}% (table {s.share * 100:0}%)   {s.minStorms}-{s.maxStorms} storms, tornado from each {s.tornadoes * 100:0}%, top EF0-5 odds {string.Join("/", s.topEf.Select(x => $"{x * 100:0}"))}, second EF{s.secondEf}, floor EF{s.floorEf}   {s.risk}");
+            shares &= Math.Abs(got[i] / (double)rolls - s.share) < 0.004;
+            if (i > 0) order &= got[i] < got[i - 1] && (int)s.type == i;
+        }
+        Check(shares, "the seeds roll the table's shares (within 0.4 points)");
+        Check(order && Math.Abs(StormEvents.All.Sum(s => s.share) - 1) < 1e-9, "from the most common to the rarest, in the list's order; the shares add up to 1");
+
+        // every type asked for, on every setup
+        Console.WriteLine("Each type asked for, 300 seeds per setup:");
+        int games = 300;
+        foreach (var spec in StormEvents.All)
+        {
+            if (spec.type == StormEventType.LegendaryEvent) continue;
+            bool sepOk = true, capOk = true, liftOk = true, quietOk = true, sameOk = true, countOk = true;
+            int tornadicPlanned = 0, tornadicGot = 0, topDue = 0, topGot = 0, planned = 0, laid = 0, ms = 0, noRoom = 0, noTornado = 0;
+            double closeMin = 1e9; var count = new int[StormEvents.MaxStorms + 1]; var top = new int[6]; var max = new int[7];
+            var why = new System.Collections.Generic.List<string>();
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            foreach (var pre in StormPreset.All)
+                for (int seed = 1; seed <= games; seed++)
+                {
+                    var sc = new StormScenario(pre, seed, half, eventType: spec.type);
+                    planned += sc.eventDay.storms; laid += sc.storms.Count; count[sc.storms.Count]++; top[sc.topEf]++; max[sc.MaxEf + 1]++;
+                    noRoom += sc.leftOut.Count(w => w.Contains("no room")); noTornado += sc.leftOut.Count(w => w.Contains("tornado"));
+                    countOk &= sc.eventDay.storms >= spec.minStorms && sc.eventDay.storms <= spec.maxStorms && sc.storms.Count >= Math.Min(spec.minStorms, 2) && sc.storms.Count <= sc.eventDay.storms;
+                    double close = sc.ClosestApproachM(); closeMin = Math.Min(closeMin, close);
+                    if (close < StormScenario.MinSeparationM - 1) { sepOk = false; if (why.Count < 4) why.Add($"{pre.key} {seed}: storms {close / 1609.344:0.0} mi apart"); }
+                    if (sc.MaxEf > sc.topEf) { capOk = false; if (why.Count < 4) why.Add($"{pre.key} {seed}: EF{sc.MaxEf} over the day's EF{sc.topEf}"); }
+                    var best = sc.storms.Select(s => s.InGame(sc.gameMinutes, sc.pace).Select(t => t.ef).DefaultIfEmpty(-1).Max()).ToList();
+                    for (int i = 0; i < sc.storms.Count; i++)
+                    {
+                        var st = sc.storms[i];
+                        if (st.tornadic) { tornadicPlanned++; if (best[i] >= 0) tornadicGot++; }
+                        else if (best[i] >= 0 || (st.tornadoes != null && st.tornadoes.Any(t => t != null))) { quietOk = false; if (why.Count < 4) why.Add($"{pre.key} {seed}: storm {i + 1} was given no tornado and has one"); }
+                        if (best[i] >= 0 && best[i] < Math.Min(spec.floorEf, sc.topEf)) { liftOk = false; if (why.Count < 4) why.Add($"{pre.key} {seed}: storm {i + 1} strongest EF{best[i]}, under the floor EF{spec.floorEf}"); }
+                    }
+                    if (sc.topEf >= 3 && sc.headline >= 0 && best[sc.headline] >= 0) { topDue++; if (sc.MaxEf == sc.topEf) topGot++; }
+                    if (spec.secondEf >= 0 && best.Count(b => b >= Math.Min(spec.secondEf, sc.topEf)) < Math.Min(2, best.Count(b => b >= 0))) { liftOk = false; if (why.Count < 4) why.Add($"{pre.key} {seed}: no second storm at EF{spec.secondEf}"); }
+                    if (seed <= 40)
+                    {
+                        var again = new StormScenario(pre, seed, half, eventType: spec.type);
+                        sameOk &= Same(sc, again);
+                        if (StormEvents.Roll(seed) == spec.type) sameOk &= Same(sc, new StormScenario(pre, seed, half));
+                    }
+                }
+            ms = (int)sw.ElapsedMilliseconds;
+            Console.WriteLine($" {spec.name}: storms laid out 1-4: {string.Join("/", Enumerable.Range(1, StormEvents.MaxStorms).Select(i => count[i]))} ({laid} of {planned} planned; left out for room {noRoom}, for no tornado {noTornado}), closest {closeMin / 1609.344:0.0} mi; " +
+                $"top rating EF0-5: {string.Join("/", top)}, strongest in game EF0-5: {string.Join("/", Enumerable.Range(1, 6).Select(i => max[i]))}, none {max[0]}; a tornado from {tornadicGot} of {tornadicPlanned} storms given one; {ms / (4.0 * games):0.0} ms a game");
+            foreach (var w in why) Console.WriteLine("    " + w);
+            Check(countOk, "the storms planned are the event's, and at least the first two are laid out");
+            Check(sepOk, "storms never within 25 miles of each other");
+            Check(capOk, "no tornado above the day's top rating");
+            Check(topGot == topDue, $"the day's top rating is reached from EF3 up ({topGot} of {topDue})");
+            Check(liftOk, "the second storm's and every storm's strongest at the event's ratings");
+            Check(quietOk, "no tornado from a storm the event gave none");
+            Check(tornadicGot >= 0.97 * tornadicPlanned, $"a tornado from the storms given one ({tornadicGot * 100.0 / Math.Max(tornadicPlanned, 1):0.0}%)");
+            Check(sameOk, "the same seed gives the same day, asked for or rolled");
+        }
+
+        // legendary events: none written, then a made-up one
+        Console.WriteLine($"Legendary events ({LegendaryEvents.All.Count} written):");
+        var plains = StormPreset.All[0];
+        int legendSeed = Enumerable.Range(1, 100000).First(s => StormEvents.Roll(s) == StormEventType.LegendaryEvent);
+        if (LegendaryEvents.All.Count == 0)
+        {
+            var none = new StormScenario(plains, legendSeed, half);
+            Check(none.eventDay.rolled == StormEventType.LegendaryEvent && none.EventType == StormEventType.RegionalOutbreak && none.eventDay.fellBack && none.eventDay.legend == null,
+                $"with none written, a seed that rolls one (seed {legendSeed}) is a regional outbreak: {none}");
+        }
+        foreach (var e in LegendaryEvents.All.ToList())
+        {
+            var sc = new StormScenario(StormPreset.Find(e.setup) ?? plains, 1, half, legend: e);
+            var p = LegendaryEvents.Problems(e, sc);
+            Console.WriteLine($"  {e.key}: {sc}");
+            foreach (var w in p) Console.WriteLine("    " + w);
+            Check(p.Count == 0, $"{e.key} ({e.name}, {e.date}) is laid out as written");
+        }
+        var made = new LegendaryEvent
+        {
+            key = "check-1", name = "Check Day", date = "1 January 2000", blurb = "A made-up event for the check.", setup = "plains", startHour = 15.5,
+            environment = new StormPreset { T0F = 82, TdF = 68, moistFt = 4500, lapse = 7.6, cap = 0.8, llj = 48, shear = 58, upper = 82, curve = 0.5 },
+            storms = new[]
+            {
+                new LegendaryStorm { name = "north", precip = Precip.HP, startMin = 0, eastMi = -30, northMi = 8, towardDeg = 60, mph = 30,
+                    tornadoes = new[] { new LegendaryTornado { ef = 5, name = "the big one" }, new LegendaryTornado { cycle = 0, ef = 2, shape = FunnelShape.Cone, widthYd = 200 } } },
+                new LegendaryStorm { name = "south", startMin = 6, eastMi = -10, northMi = -20, towardDeg = 55, mph = 28, tornadoes = new[] { new LegendaryTornado { ef = 2 } } },
+                new LegendaryStorm { name = "east", startMin = 3, eastMi = 10, northMi = 20, towardDeg = 60, mph = 30, tornadic = false },
+            },
+        };
+        var other = new LegendaryEvent { key = "check-2", name = "Other Day", date = "2 January 2000", setup = "plains", storms = new[] { new LegendaryStorm { name = "only", eastMi = -20, northMi = 0, tornadoes = new[] { new LegendaryTornado { ef = 3 } } } } };
+        LegendaryEvents.Register(made); LegendaryEvents.Register(other);
+        try
+        {
+            var sc = new StormScenario(plains, legendSeed, half, legendsSeen: new[] { "check-2" });
+            Console.WriteLine($"  {sc}");
+            foreach (var st in sc.storms)
+                Console.WriteLine($"    {st.label}: seed {st.seed}, {st.precip}, starts {st.startMin:0.0} min at ({st.startX / 1609.344:0.0}, {st.startZ / 1609.344:0.0}) mi, toward {(Math.Atan2(st.plan.motion.x, st.plan.motion.y) * 180 / Math.PI + 360) % 360:0.0} deg at {Math.Sqrt(st.plan.motion.x * st.plan.motion.x + st.plan.motion.y * st.plan.motion.y) * 2.23694:0.0} mph, on the map at {st.entryMin:0.0} min; " +
+                    string.Join(", ", st.InGame(sc.gameMinutes, sc.pace).Select(t => $"EF{t.ef} {t.shape} {t.widthM / 0.9144:0} yd (cycle {t.cycle})").DefaultIfEmpty("no tornado")));
+            Check(sc.EventType == StormEventType.LegendaryEvent && sc.eventDay.legend == made && !sc.eventDay.fellBack, "a seed that rolls a legendary event gets the one the career has not had");
+            Check(new StormScenario(plains, legendSeed, half, legendsSeen: new[] { "check-1" }).eventDay.legend == other, "and the other one once it has had the first");
+            Check(new StormScenario(plains, legendSeed, half, legendsSeen: new[] { "check-1", "check-2" }).eventDay.legend != null, "and one of them again once it has had both");
+            Check(new StormScenario(StormPreset.Find("dixie"), legendSeed, half).eventDay.fellBack, "a setup with none written falls back");
+            Check(sc.preset == made.environment && sc.preset.key == "plains@check-1" && StormPreset.Find(sc.preset.key) == made.environment && StormPreset.BaseKey(sc.preset.key) == "plains" && StormTornadoes.RegionOf(sc.preset.key) == ClimoRegion.Plains,
+                $"its own sounding is the day's environment, found again by its key ({sc.preset.key})");
+            Check(sc.startHour == 15.5, "its start hour is the day's");
+            bool placed = sc.storms.Count == 3;
+            for (int i = 0; placed && i < 3; i++)
+            {
+                var st = sc.storms[i]; var ls = made.storms[i];
+                double toward = (Math.Atan2(st.plan.motion.x, st.plan.motion.y) * 180 / Math.PI + 360) % 360, mph = Math.Sqrt(st.plan.motion.x * st.plan.motion.x + st.plan.motion.y * st.plan.motion.y) * 2.23694;
+                placed &= Math.Abs(st.startX - ls.eastMi * 1609.344) < 1 && Math.Abs(st.startZ - ls.northMi * 1609.344) < 1 && st.startMin == ls.startMin && st.precip == ls.precip && st.label == ls.name
+                    && Math.Abs(toward - ls.towardDeg) < 0.01 && Math.Abs(mph - ls.mph) < 0.01;
+                // the storm faces the way it moves (StormGame.Deviate)
+                placed &= Math.Abs(st.plan.fwd.x * st.plan.motion.y - st.plan.fwd.y * st.plan.motion.x) < 1e-6 * mph;
+            }
+            Check(placed, "each storm where, when and moving as written");
+            var problems = LegendaryEvents.Problems(made, sc);
+            foreach (var w in problems) Console.WriteLine("    " + w);
+            Check(problems.Count == 0 && sc.MaxEf == 5 && sc.topEf == 5 && sc.headline == 0 && sc.TornadoesAsPlanned, "its written tornadoes are made (an EF5 from the north storm, the cone on its first cycle, an EF2 from the south, none from the east)");
+            var cone = sc.storms[0].tornadoes[0];
+            Check(cone != null && cone.shape == FunnelShape.Cone && cone.ef == 2 && Math.Abs(cone.widthM - 200 * 0.9144) < 0.5, "a written shape and width are kept");
+            Check(Same(sc, new StormScenario(plains, 77, half, legend: made)) == false && Same(sc, new StormScenario(plains, legendSeed, half, legend: made)), "asked for by name it is the same day; another seed draws the storms' own seeds anew");
+            var bad = new LegendaryEvent { key = "check-3", name = "Bad Day", setup = "plains", storms = new[] {
+                new LegendaryStorm { name = "a", eastMi = -10, northMi = 0, tornadoes = new[] { new LegendaryTornado { ef = 3 } } },
+                new LegendaryStorm { name = "b", eastMi = -10, northMi = 10, tornadoes = new[] { new LegendaryTornado { ef = 3 } } },
+                new LegendaryStorm { name = "c", eastMi = 40, northMi = 0, towardDeg = 90, mph = 30 } } };
+            var badProblems = LegendaryEvents.Problems(bad, new StormScenario(plains, 1, half, legend: bad));
+            foreach (var w in badProblems) Console.WriteLine("    (meant to fail) " + w);
+            Check(badProblems.Any(w => w.Contains("within")) && badProblems.Any(w => w.Contains("never crosses")), "storms written too close together, or on a track that misses the map, are reported");
+        }
+        finally { LegendaryEvents.Unregister("check-1"); LegendaryEvents.Unregister("check-2"); }
+        Check(LegendaryEvents.All.All(e => !e.key.StartsWith("check-")), "the made-up events are gone again");
+        Console.WriteLine(ok ? "PASS" : "FAIL");
+    }
+
+    // One day spelled out (--day <setup> <seed> [event]; --day <setup> career <careerSeed> <firstDay> <lastDay>): the
+    // event the seed rolls (or the one asked for) and every storm laid out for it. With "career", the days of a career
+    // by its seed (the game's ChaseSetup.DaySeed: (careerSeed * 131 + day * 7919) % 999983 + 1), one line each.
+    static void Day(string[] args)
+    {
+        const double half = 80467.2 / 2;
+        var pre = StormPreset.Find(args.Length > 1 ? args[1] : "plains") ?? StormPreset.All[0];
+        if (args.Length > 5 && args[2] == "career")
+        {
+            int career = int.Parse(args[3]), d0 = int.Parse(args[4]), d1 = int.Parse(args[5]);
+            for (int day = d0; day <= d1; day++)
+            {
+                int ds = (career * 131 + day * 7919) % 999983 + 1;
+                Console.WriteLine($"day {day,3} (seed {ds,6}): {new StormScenario(pre, ds, half)}");
+            }
+            return;
+        }
+        int seed = args.Length > 2 ? int.Parse(args[2]) : 1;
+        var ev = args.Length > 3 ? StormEvents.Find(args[3])?.type : null;
+        var sc = new StormScenario(pre, seed, half, eventType: ev);
+        Console.WriteLine($"{sc.preset.key} seed {seed}: {sc}; {sc.eventDay.spec.risk}; closest the storms come {sc.ClosestApproachM() / 1609.344:0.0} mi");
+        foreach (var w in sc.leftOut) Console.WriteLine("  left out: " + w);
+        foreach (var st in sc.storms)
+            Console.WriteLine($"  storm {st.index + 1} ({st.label}{(sc.headline == st.index ? ", the headline" : "")}): seed {st.seed}, {st.precip}, starts {st.startMin:0.0} min at ({st.startX / 1609.344:0.0}, {st.startZ / 1609.344:0.0}) mi{(st.onMap ? " over the map" : $", on the map at {st.entryMin:0.0} min")}, mature {st.matureMin:0.0} min, " +
+                $"toward {(Math.Atan2(st.plan.motion.x, st.plan.motion.y) * 180 / Math.PI + 360) % 360:0} deg at {Math.Sqrt(st.plan.motion.x * st.plan.motion.x + st.plan.motion.y * st.plan.motion.y) * 2.23694:0} mph, dies from {st.startMin + st.plan.dieMin / sc.pace:0} min; tornadoes: " +
+                string.Join(", ", st.InGame(sc.gameMinutes, sc.pace).Select(t => $"EF{t.ef} {t.shape} at {st.startMin + t.formMin / sc.pace:0.0} min").DefaultIfEmpty("none")));
+    }
+
+    // two scenarios are the same day: the same event, storms, seeds, starts and tornadoes
+    static bool Same(StormScenario a, StormScenario b)
+    {
+        if (a.EventType != b.EventType || a.topEf != b.topEf || a.headline != b.headline || a.storms.Count != b.storms.Count) return false;
+        for (int i = 0; i < a.storms.Count; i++)
+        {
+            var x = a.storms[i]; var y = b.storms[i];
+            if (x.seed != y.seed || x.startMin != y.startMin || x.startX != y.startX || x.startZ != y.startZ || x.precip != y.precip || x.label != y.label) return false;
+            var tx = x.InGame(a.gameMinutes, a.pace).Select(t => (t.ef, t.shape, t.widthM)).ToList(); var ty = y.InGame(b.gameMinutes, b.pace).Select(t => (t.ef, t.shape, t.widthM)).ToList();
+            if (!tx.SequenceEqual(ty)) return false;
+        }
+        return true;
     }
 
     // the game's structure from the environment (StormStructure): per setup and day, the environment, the scales, and

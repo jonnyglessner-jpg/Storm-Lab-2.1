@@ -29,6 +29,28 @@ namespace StormLab.Game
         /// <summary>every vehicle's fuel and condition, carried between days</summary>
         public List<VehicleState> vehicles = new List<VehicleState>();
         public int motelNights, carCampNights, passOuts, repairs; public float fuelBought;
+        /// <summary>the legendary events this career has had (StormLegends.cs), each as "day:key": a day that rolls one
+        /// picks one the career has not had while any is left</summary>
+        public List<string> legends = new List<string>();
+
+        /// <summary>the keys of the legendary events had before a day (the day's own stays out, so its forecast and its
+        /// storms pick the same event however often the day is opened)</summary>
+        public List<string> LegendsSeenBefore(int day)
+        {
+            var keys = new List<string>();
+            foreach (var e in legends)
+            {
+                int i = e.IndexOf(':');
+                if (i > 0 && int.TryParse(e.Substring(0, i), out int d) && d < day) keys.Add(e.Substring(i + 1));
+            }
+            return keys;
+        }
+
+        public void SawLegend(int day, string key)
+        {
+            string e = day + ":" + key;
+            if (!legends.Contains(e)) legends.Add(e);
+        }
 
         [Serializable]
         public sealed class VehicleState
@@ -52,7 +74,7 @@ namespace StormLab.Game
         /// <summary>A career from day one: rested, every tank full, the seed set.</summary>
         public void StartCareer(int seed)
         {
-            careerSeed = seed; day = 1; careerStarted = true; sanity = 1f; awakeHours = 0f; spawnTown = "";
+            careerSeed = seed; day = 1; careerStarted = true; sanity = 1f; awakeHours = 0f; spawnTown = ""; legends.Clear();
             foreach (var v in vehicles) { v.fuelGal = -1f; v.condition = 1f; }
             Save();
         }
@@ -103,7 +125,7 @@ namespace StormLab.Game
                 if (File.Exists(Path))
                 {
                     var p = JsonUtility.FromJson<ChaseProfile>(File.ReadAllText(Path));
-                    if (p != null) { p.owned ??= new List<string>(); return p; }
+                    if (p != null) { p.owned ??= new List<string>(); p.legends ??= new List<string>(); return p; }
                 }
             }
             catch (Exception e) { Debug.LogWarning($"ChaseProfile: could not read {Path}: {e.Message}"); }

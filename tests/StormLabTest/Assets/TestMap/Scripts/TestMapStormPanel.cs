@@ -493,7 +493,22 @@ namespace StormLab.TestMap
             foreach (ScenarioPrecip m in Enum.GetValues(typeof(ScenarioPrecip)))
                 if (GUILayout.Toggle(g.precipitation == m, m == ScenarioPrecip.Auto ? "by lane" : "all " + m, "Button") && g.precipitation != m) { g.precipitation = m; g.Spawn(); }
             GUILayout.EndHorizontal();
+            // the day's event type (StormEvent): the seed's own, or one asked for whatever the seed rolls
+            var choices = (StormEventChoice[])Enum.GetValues(typeof(StormEventChoice));
+            for (int row = 0; row < 2; row++)
+            {
+                GUILayout.BeginHorizontal();
+                GUILayout.Label(row == 0 ? "event" : "", GUILayout.Width(84));
+                for (int k = row == 0 ? 0 : 4; k < (row == 0 ? 4 : choices.Length); k++)
+                {
+                    var c = choices[k];
+                    string name = c == StormEventChoice.Auto ? "the seed's" : StormEvents.Spec(StormEvents.Forced(c).Value).key;
+                    if (GUILayout.Toggle(g.eventType == c, name, "Button") && g.eventType != c) { g.eventType = c; g.Spawn(); }
+                }
+                GUILayout.EndHorizontal();
+            }
             GUILayout.Label($"{sc}{(sc.headline >= 0 ? $", the strongest from storm {sc.headline + 1}" : "")}", wrap);
+            foreach (var w in sc.leftOut) GUILayout.Label("left out: " + w, small);
 
             float t = g.gameMinutes;
             GUILayout.Label($"Game time {Mathf.FloorToInt(t)}:{Mathf.FloorToInt(t * 60 % 60):00} of {g.gameLength:0}:00   ·   life cycles run {g.pace:0.#}x the game clock", small);
@@ -521,7 +536,7 @@ namespace StormLab.TestMap
                 double life = g.StormMinutes(i);
                 string now = life < 0 ? "not started" : g.Alive(i) ? $"{g.Storms[i].Frame.stage}, {life:0} min into its life" : "gone";
                 var tors = st.InGame(g.gameLength, g.pace).Select(x => $"EF{x.ef} {StormTornadoes.ShapeName[(int)x.shape].ToLowerInvariant()} {x.widthM:0} m wide at {st.startMin + x.formMin / g.pace:0} min").ToList();
-                GUILayout.Label($"Storm {i + 1}: {st.precip}, {(st.northness > 0.5 ? "north" : "south")} lane, seed {st.seed}. Starts at {st.startMin:0.0} min {st.bearing:0} deg off the map, " +
+                GUILayout.Label($"Storm {i + 1}: {st.precip}, {st.label}, seed {st.seed}. Starts at {st.startMin:0.0} min {st.bearing:0} deg off the map, " +
                                 $"onto it at {st.entryMin:0.0} min, mature at {st.matureMin:0.0} min. Now: {now}. Tornadoes in the game: {(tors.Count > 0 ? string.Join("; ", tors) : "none")}", wrap);
             }
         }
