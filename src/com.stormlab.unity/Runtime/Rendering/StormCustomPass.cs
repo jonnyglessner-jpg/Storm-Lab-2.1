@@ -65,6 +65,14 @@ namespace StormLab
                 if (tex != null) marched.Add((storm, tex, dist));
             }
             CoreUtils.SetRenderTarget(ctx.cmd, ctx.cameraColorBuffer, ctx.cameraDepthBuffer, ClearFlag.None);
+            // two to four storms (the game's, with its environmental structure): all in one pass, each dimmed by the others in
+            // front of it by a soft order, so several anvils merge into one deck (StormRenderer.RecordCompositeAll)
+            if (marched.Count >= 2 && marched.Count <= StormRenderer.CompositeMax && marched[0].Item1.structure == StructureModel.Environmental)
+            {
+                StormRenderer.RecordCompositeAll(ctx.cmd, cam, marched, w, h, writeDepth);
+                Composites += marched.Count;
+                return;
+            }
             for (int i = 0; i < marched.Count; i++)
             {
                 var (storm, tex, dist) = marched[i];

@@ -32,6 +32,22 @@ float precipClear(float3 p)
     if (_PrecipP.z > 0.5) return 0.0;
     float keep = 1.0;
     float zb = S_base.x;
+    if (_PrecipP.x > 0.0 && S_struct)
+    {
+        // (the game's look; user, 2026-11-08: "this section missing from the RFD ... obviously unrealistic") the rain-free
+        // base without a cylinder's wall: its edge wanders by a third of its radius on noise that changes every kilometre
+        // or so up (the curtains' shafts end at different places), leans downwind with height as the rain falls through
+        // the wind, fades over the outer half of the radius (a Gaussian, not a fourth power), and the clearing's top is
+        // ragged too. Nothing is cut round the tornado: the rear-flank rain wraps round it as it falls.
+        float zr = max(p.z - zb, 0.0);
+        float Rb = _PrecipP.x * lerp(1.0, 0.75, ss(zb, zb + 3.0, p.z));
+        float2 c = S_up.xy + (S_f.xy - S_f.zw) * 0.42 * _PrecipP.x + S_f.xy * 0.2 * zr;
+        float nE = n3(float3(p.x * 0.28, p.y * 0.28, p.z * 0.5) + float3(0.41, 0.17, 0.83)) - 0.5;
+        float nT = n3(float3(p.x * 0.15, p.y * 0.15, 0.71)) - 0.5;
+        float q = length(p.xy - c) / Rb + 0.65 * nE;
+        keep *= 1.0 - exp(-q * q * 1.6) * ss(zb + 4.0 + 2.0 * nT, zb + 2.0 + 2.0 * nT, p.z);
+        return keep;
+    }
     if (_PrecipP.x > 0.0)
     {
         float Rb = _PrecipP.x * lerp(1.0, 0.75, ss(zb, zb + 3.0, p.z));
@@ -53,6 +69,19 @@ float hash1(float x) { return frac(sin(x * 127.1 + 311.7) * 43758.5453); }
 // ice cloud (the anvil) 0.3 * (1 - ice), so 0 is pure ice
 float water(float turb) { return 0.3 + 0.7 * saturate(turb); }
 float icy(float ice) { return 0.3 * (1.0 - saturate(ice)); }
+// ---- the game's (S_struct; user, 2026-11-07: "the entire supercell must consist of water vapor that goes through the
+// various stages from base, updraft, to anvil", not parts of a toy playset): one cloud, glaciating with height. Liquid
+// cloud freezes between about -20 C and -40 C, homogeneously by -40 (Stull ch. 7, 14): the turrets of the upper tower lose
+// their hard cauliflower and turn fibrous toward its top, as the anvil's root is. As heights: from about 55 % of the way
+// from the base to the EL up to 1.5 km under it (Stull's -20 and -40 C levels for these soundings). The share of ice the
+// tower keeps there is partial: a strong updraft carries supercooled water high.
+float glaciation(float z) { return S_struct ? ss(lerp(S_base.x, S_base.y, 0.55), S_base.y - 1.5, z) : 0.0; }
+// a material blended toward the anvil's ice by the glaciation (water(turb) -> smoother water -> ice, as the stored value
+// falls through 0.3)
+float glaciate(float m, float z) { return lerp(m, icy(0.4), 0.9 * glaciation(z)); }
+// where two parts of the cloud meet (the tower and its anvil, the flanking towers, the apron) the game joins them softly:
+// a + b - ab fills the crease where both are half dense instead of the larger of the two
+float joinC(float a, float b) { return S_struct ? a + b - a * b : max(a, b); }
 
 // a cumulus congestus tower: centre c, radius R, base zb, top zt. Near-vertical sides, a rounded top
 float congestus(float3 p, float2 c, float R, float zb, float zt, float seed)
@@ -142,7 +171,7 @@ void Build(uint3 gid : SV_DispatchThreadID)
                 tv = max(tv, S_tower.z * young * congestus(p, c + o * (1.0 + 0.08 * max(zr, 0.0)), R * (0.48 - 0.05 * fj), zb, zb + hj, 11.0 + fj * 3.0));
             }
         }
-        mw += tv * tv; ms += tv * tv * water(lerp(1.0, 0.12, lam));
+        mw += tv * tv; ms += tv * tv * glaciate(water(lerp(1.0, 0.12, lam)), p.z);
         cloud = max(cloud, tv);
     }
 
@@ -208,11 +237,21 @@ void Build(uint3 gid : SV_DispatchThreadID)
         float e = length(float2(su, q / max(Bq, 0.5)));
         // the updraft spreads out in all directions under the tropopause: a round canopy round it, merged with the oval
         float outD = min((e - 1.0) * min(Bq, A), length(p.xy - a0) - R * 2.6 * (0.6 + 0.4 * grow) * (1.0 + 3.0 * thin));
-        if (outD < 3.5)   // outside this the outline can't reach even with its noise
+        if (outD < (S_struct ? 7.0 : 3.5))   // outside this the outline can't reach even with its noise (the game's lobes reach further)
         {
             float n = fbm(p * 0.5 + float3(3.1, 1.7, 0.0)) - 0.5;
             float streak = 0.6 * n3(float3(s * 0.022, q * 0.2, p.z * 0.25) + float3(0.2, 0.5, 0.8)) + 0.4 * n3(float3(s * 0.05, q * 0.45, p.z * 0.4) + float3(0.7, 0.1, 0.5)) - 0.5;
             float inPlan = ss(1.4, -2.0, outD + n * 1.0 + streak * (0.5 + 1.0 * fr));
+            // (the game's look, S_struct; user, 2026-11-07: the anvils "very cartoonish", a smooth lens like a toy part) an
+            // outline that wanders on 10-30 km lobes and frays downwind into streamers drawn out along the wind aloft, and
+            // a top and underside that undulate gently over tens of km (nothing periodic)
+            float lobeA = 0.0, undA = 0.0;
+            if (S_struct)
+            {
+                lobeA = n3(float3(s * 0.012, q * 0.03, 0.61)) - 0.5;
+                undA = n3(float3(p.x * 0.02, p.y * 0.02, 0.29)) - 0.5;
+                inPlan = ss(1.6, -2.4, outD + n * 1.6 + lobeA * 6.0 + streak * (1.0 + 2.6 * fr));
+            }
             // cross-section: a lens, thinning to feathered edges (but a sharp, steep edge upwind)
             float qe = saturate(e);
             float lens = lerp(sqrt(max(1.0 - qe * qe, 0.0)), pow(max(1.0 - qe * qe, 0.0), 0.2), ss(-0.3, -0.8, su));
@@ -220,7 +259,7 @@ void Build(uint3 gid : SV_DispatchThreadID)
             // over the updraft and its upwind side the top bulges up into a dome of turrets; downstream it is flat
             float headD = length(float2(max(-s, 0.0) / max(nb, 0.5), q / max(B, 0.5)));
             float bulge = (0.45 + 0.3 * n) * exp(-max(s, 0.0) / max(R * 2.0, 1.0)) * (1.0 - ss(0.6, 1.0, headD)) * grow;
-            float topz = S_anvil2.y + 0.35 * exp(-max(s, 0.0) / 8.0) - 0.3 * fr + n * 0.06 + bulge;
+            float topz = S_anvil2.y + 0.35 * exp(-max(s, 0.0) / 8.0) - 0.3 * fr + n * 0.06 + bulge + 0.5 * undA * grow;
             // the backsheared part stays thick, with a sharp edge, its underside sloping down toward the updraft
             float upw = ss(0.0, -nb, s);
             // after the first tornado cycle the far anvil thins to a veil of ice (S_up.w), so it keeps its reach without a heavy slab
@@ -231,7 +270,7 @@ void Build(uint3 gid : SV_DispatchThreadID)
             // A broad curved root, rather than a thin plate over a domed tower: its underside
             // rises continuously from the column to the spreading anvil canopy.
             float skirtA = 3.4 * (1.0 - ss(R * 0.9, R * 2.7, dA)) * grow;
-            float botz = topz - thick - skirtA + n * 0.5 * thick + streak * 0.2 * fr;
+            float botz = topz - thick - skirtA + n * 0.5 * thick + streak * 0.2 * fr + (S_struct ? (0.7 * undA + 0.35 * streak) * thick : 0.0);
             // a soft top over several grid levels, so the gently sloping top doesn't show a contour line where it crosses one
             float vert = ss(botz - 0.2, botz + 0.35, p.z) * ss(topz + 0.25, topz - 0.55, p.z + streak * 0.25);
             // downstream it thins into cirrus and fades out
@@ -241,8 +280,8 @@ void Build(uint3 gid : SV_DispatchThreadID)
             // it; the texture smooths out into streaky ice further downstream
             float rootWater = (1.0 - ss(R * 1.5, R * 2.8, dA)) * (1.0 - ss(R * 1.5, R * 3.5, max(s, 0.0)));
             float knuckle = max(rootWater, (1.0 - ss(R * 1.0, R * 1.0 + 0.18 * Lz, s)) * (1.0 - ss(0.35, 0.85, qe)));
-            mw += av * av; ms += av * av * lerp(icy(0.35 + 0.65 * ss(0.02, 0.3, fr)), water(0.9), knuckle);
-            cloud = max(cloud, av);
+            mw += av * av; ms += av * av * lerp(icy(0.35 + 0.65 * ss(0.02, 0.3, fr)), glaciate(water(0.9), p.z), knuckle);
+            cloud = joinC(cloud, av);
         }
     }
 
@@ -276,7 +315,7 @@ void Build(uint3 gid : SV_DispatchThreadID)
             float2 off2 = float2(h1 - 0.5, 0.5 - h2) * rk * 1.6;
             fv = max(fv, congestus(p, ctr + off2 + lean * 0.9, rk * 0.5, zb, zb + Hk * (0.35 + 0.5 * h2), fk + 8.3));
             mw += fv * fv; ms += fv * fv * water(1.0);
-            cloud = max(cloud, fv);
+            cloud = joinC(cloud, fv);
         }
         // the line's shared base, a low ragged shelf joining the towers to the updraft
         float2 rel = p.xy - S_up.xy; float al = dot(rel, fd);
@@ -307,7 +346,7 @@ void Build(uint3 gid : SV_DispatchThreadID)
         float apron = S_rfdb.w * arc * inner * ss(ar + 0.5, ar - 0.5, length(p.xy - ac) + n * 0.35)
             * ss(apronBase - 0.15, apronBase + 0.35, p.z) * ss(3.5, 2.5, zr);
         mw += apron * apron; ms += apron * apron * water(0.12);
-        cloud = max(cloud, apron);
+        cloud = joinC(cloud, apron);
     }
 
     // ---- wall cloud, tail cloud and inflow tail: drawn in the render pass; the volume keeps a coarse copy
@@ -511,6 +550,16 @@ void Build(uint3 gid : SV_DispatchThreadID)
     // kilometres above the base, so the shafts come out of the murk with no flat top at the base.)
     if (_PrecipP.w > 0.0) rain *= lerp(1.0, ss(0.01, 0.08, cloud) * (1.0 - 0.75 * ss(zb + 1.0, zb + 4.5, p.z)), ss(zb + 0.5, zb + 2.0, p.z));
     if (_RainKeepP.x > 0.5) rain *= _RainKeep[id.xy];   // game adaptation (RainUnderCloud below)
+    // ---- the game's look (S_struct; user, 2026-11-08: "the rain seems to be visually too thick and might be blocking too
+    // much sun", the storm "unnaturally dark" at noon and in the afternoon). The rain field is an intensity, 1 in the
+    // heaviest core, and its extinction was linear in it at 2.5x the web build's (the unified lighting's rainExtinction):
+    // a third of the core's intensity, the forward flank's light rain, dimmed 2 a km, a few hundred metres' visibility,
+    // and shaded the sun and the sky under the storm as much. Rain's extinction goes about as the rain rate to the 0.6-0.7
+    // and the rate falls off much faster than linearly out of a core (visibility ~5 km in 10 mm/h, ~1 km in 50, under
+    // 0.5 km past 100): stored as intensity^1.6 x 0.8, the core is a little lighter (5 a km), a third of it about a
+    // quarter as dense, a tenth of it a fiftieth. Every reader of the volume (the march, the light, sky and ground grids,
+    // the scene's shadow, lightning's occlusion, the rain sound) takes the same rain.
+    if (S_struct) rain = 0.8 * pow(saturate(rain), 1.6);
     _OutD[id] = float4(sqrt(saturate(cloud)), sqrt(saturate(rain)), sqrt(saturate(nearV)), ms / mw);
 }
 

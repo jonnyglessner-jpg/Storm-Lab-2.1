@@ -23,6 +23,21 @@ Shader "Hidden/StormLab/Composite"
     // storm before's (y; z its luminance, 0: standalone)
     Texture2D _ShaftTex, _UnderShaftTex;
     float4 _ShaftP;
+    // ---- the game's composite of several storms at once (pass 2, StormRenderer.RecordCompositeAll; user, 2026-11-07:
+    // "the anvils do not mix at all when there are more than two storms"). Each storm was laid against only the one
+    // composited just before it, which holds for two storms; with three or more the target already held a third storm and
+    // the layering was wrong, so overlapping anvils showed one storm's edges cut through another's. Here every storm's
+    // light is dimmed by every other's transmittance as far as that other is in front of it along the ray: a soft order,
+    // w_ij = smoothstep(-kd, kd, d_i - d_j) (the same few km as the pair's), each storm's light the mixture of the two
+    // orders, lerp(1, T_j, w_ij) (exact for two storms; T_j^w_ij turned two opaque anvils at one distance black), so storms
+    // whose media interleave (two anvils at one height) blend into one deck, with no line where the order flips.
+    // out = sum_i C_i prod_j!=i lerp(1, T_j, w_ij) + scene prod_i T_i.
+    Texture2D _NTex0, _NTex1, _NTex2, _NTex3;
+    Texture2D<float> _NMean0, _NMean1, _NMean2, _NMean3;
+    Texture2D _NShaft0, _NShaft1, _NShaft2, _NShaft3;
+    float4 _NK;       // each storm's luminance scale (0: standalone, 1)
+    float4 _NShaftOn; // 1 where that storm's shafts are kept apart
+    float4 _NP;       // x: how many storms (2-4)
     struct V { float4 pos : SV_Position; };
     V vert(uint id : SV_VertexID)
     {
@@ -80,6 +95,49 @@ Shader "Hidden/StormLab/Composite"
                 }
                 // (capped below the half-float limit: a value past it is infinite in HDRP's buffers and spreads)
                 return float4(min(rgb, 60000.0), s.a);
+            }
+            ENDHLSL
+        }
+        Pass
+        {
+            Name "StormCompositeN"
+            ZTest Always ZWrite Off Cull Off
+            Blend One SrcAlpha, Zero One
+            HLSLPROGRAM
+            #pragma vertex vert
+            #pragma fragment fragN
+            float4 fragN(V i) : SV_Target
+            {
+                float2 uv = StormUV(i.pos);
+                int n = (int)_NP.x;
+                float4 c[4]; float d[4]; float3 sh[4];
+                c[0] = _NTex0.SampleLevel(sampler_LinearClamp_StormComposite, uv, 0); d[0] = _NMean0.SampleLevel(sampler_LinearClamp_StormComposite, uv, 0);
+                c[1] = _NTex1.SampleLevel(sampler_LinearClamp_StormComposite, uv, 0); d[1] = _NMean1.SampleLevel(sampler_LinearClamp_StormComposite, uv, 0);
+                c[2] = n > 2 ? _NTex2.SampleLevel(sampler_LinearClamp_StormComposite, uv, 0) : float4(0, 0, 0, 1); d[2] = n > 2 ? _NMean2.SampleLevel(sampler_LinearClamp_StormComposite, uv, 0) : 1e6;
+                c[3] = n > 3 ? _NTex3.SampleLevel(sampler_LinearClamp_StormComposite, uv, 0) : float4(0, 0, 0, 1); d[3] = n > 3 ? _NMean3.SampleLevel(sampler_LinearClamp_StormComposite, uv, 0) : 1e6;
+                sh[0] = _NShaftOn.x > 0.5 ? _NShaft0.SampleLevel(sampler_LinearClamp_StormComposite, uv, 0).rgb : 0.0;
+                sh[1] = _NShaftOn.y > 0.5 ? _NShaft1.SampleLevel(sampler_LinearClamp_StormComposite, uv, 0).rgb : 0.0;
+                sh[2] = _NShaftOn.z > 0.5 ? _NShaft2.SampleLevel(sampler_LinearClamp_StormComposite, uv, 0).rgb : 0.0;
+                sh[3] = _NShaftOn.w > 0.5 ? _NShaft3.SampleLevel(sampler_LinearClamp_StormComposite, uv, 0).rgb : 0.0;
+                float exposure = GetCurrentExposureMultiplier();
+                float k[4] = { _NK.x, _NK.y, _NK.z, _NK.w };
+                float3 rgb = 0.0; float T = 1.0;
+                [unroll] for (int a = 0; a < 4; a++)
+                {
+                    if (a >= n) break;
+                    float ka = k[a] > 0.0 ? k[a] * exposure : 1.0;
+                    float att = 1.0;
+                    [unroll] for (int b = 0; b < 4; b++)
+                    {
+                        if (b >= n || b == a) continue;
+                        float kd = 3.0 + 0.25 * min(d[a], d[b]);
+                        float front = smoothstep(-kd, kd, d[a] - d[b]);   // how far b is in front of a
+                        att *= lerp(1.0, c[b].a, front);
+                    }
+                    rgb += min(c[a].rgb * ka, 60000.0) * att + sh[a] * ka;
+                    T *= c[a].a;
+                }
+                return float4(min(rgb, 60000.0), T);
             }
             ENDHLSL
         }

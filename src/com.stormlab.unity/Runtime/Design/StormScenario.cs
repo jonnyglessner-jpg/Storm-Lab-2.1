@@ -100,7 +100,11 @@ namespace StormLab
         public StormScenario(StormPreset preset, int seed, double mapHalfM, ScenarioPrecip precipitation = ScenarioPrecip.Auto,
             double gameMinutes = DefaultGameMinutes, double pace = DefaultPace, double enterBeforeMature = 2)
         {
-            this.seed = seed; this.preset = preset; this.precipitation = precipitation;
+            this.seed = seed; this.precipitation = precipitation;
+            // (user, 2026-11-07) the day's own environment about the setup's (StormPreset.Day: shear, hodograph, CAPE, LCL),
+            // unless the key already names a day or a website preset
+            this.preset = preset.key.IndexOf(StormPreset.DaySep) > 0 || preset.key.StartsWith(StormPreset.WebPrefix, StringComparison.Ordinal) ? preset : StormPreset.Day(preset, seed);
+            preset = this.preset;
             this.gameMinutes = gameMinutes; this.pace = pace; this.mapHalfM = mapHalfM;
             region = StormTornadoes.RegionOf(preset.key);
             var r = new StormRng(seed, 500);
@@ -169,7 +173,7 @@ namespace StormLab
                 for (int attempt = 0; attempt < 12; attempt++)
                 {
                     st.seed = baseSeed + 7919 * attempt;
-                    st.plan = StormGame.Deviate(StormGame.Adapt(StormDesign.Plan(preset, st.seed, st.overrides)), st.overrides);
+                    st.plan = StormGame.Deviate(StormGame.Adapt(StormGame.Design(preset, st.seed, st.overrides)), st.overrides);
                     // where it crosses the map decides when it dies (StormLife): only tornadoes over before then count
                     Place(st, ax, az, own[i].enterBefore, own[i].onMap, own[i].inM);
                     st.plan = StormLife.Trim(st.plan, StormLife.DyingFrom(st.startX, st.startZ, st.plan.motion, 1.0 / pace, mapHalfM));
@@ -224,7 +228,10 @@ namespace StormLab
             var m = st.plan.motion;
             double mps = Math.Sqrt(m.x * m.x + m.y * m.y);
             double ux = mps > 0.5 ? m.x / mps : 1, uz = mps > 0.5 ? m.y / mps : 0;
-            double mature = Maturity(st.plan), entryLife = Math.Max(0, mature - enterBefore);
+            // (the game's structure, StormStructure, hangs the wall cloud and tornado up to about 2 km behind the updraft: a
+            // storm off the map crosses the edge with that much more to spare, or its first touchdown can be off the map)
+            double lead = mps > 0.5 ? 2500.0 / (mps * 60) * pace : 0;
+            double mature = Maturity(st.plan), entryLife = Math.Max(0, mature - enterBefore - lead);
             st.matureMin = st.startMin + mature / pace;
             // the lane's point on the centre line, then back along the storm's motion to the map's edge
             double px = ax * st.laneM, pz = az * st.laneM, back = Edge(px, pz, -ux, -uz, h), fore = Edge(px, pz, ux, uz, h);

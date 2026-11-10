@@ -87,7 +87,7 @@ namespace StormLab
                 cs.SetVector(LId, new Vector4(l.x, l.y, l.z, n));
                 // rain and the light through the cloud as the storm's own lighting has them (unified: its rain extinction and
                 // sun reach), so the ground under a rain shaft is no brighter than the rain above it
-                cs.SetVector(VId, new Vector4(StormVolume.L, StormVolume.ZT, StormVolume.CloudMax, StormVolume.RainMax * s.Volume.rainScale));
+                cs.SetVector(VId, new Vector4(StormVolume.L, StormVolume.ZT, StormVolume.CloudMax, StormVolume.RainMax * s.Volume.rainScale * s.Volume.rainLightShare));
                 cs.SetVector(MId, s.SunReach);
                 cs.SetVector(PId, new Vector4(first ? 1 : 0, 0, 0, 0));
                 cs.Dispatch(kernel, (n + 7) / 8, (n + 7) / 8, 1);

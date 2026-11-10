@@ -584,6 +584,84 @@ or the NWS steps.
 Output: by default the storm's light is in HDRP's physical units under the game's exposure and tonemapping.
 `UseStandaloneLook()` gives the website's backdrop and display curve (HDRP tonemapping off).
 
+### Structure from the environment (2026-11-07)
+
+`StormRenderer.structure`: **Environmental** (the game's default) or Website (the web build's layout). The user named four
+problems:
+- the updraft and downdrafts sat too close, especially in HP storms, and the radar's hooks were tiny beside the core;
+- phases needed more fluid transitions, the clear slot and horseshoe were too small for their tornado, and the wall cloud
+  was shoved aside as the slot wrapped round;
+- the cloud parts looked like a toy playset, the anvils were cartoonish (blocky, concentric artifacts), and with more than
+  two storms the anvils did not mix;
+- the cloud textures needed more resolution and variety.
+
+The environmental structure addresses all of them, leaving the web build's design untouched (parity stays at 0):
+- **Environment per day.** A game day draws its own environment about the setup's (`StormPreset.Day`, key
+  `plains~<seed>`): surface temperature and dew point (the LCL), the lapse rate and moist depth (CAPE and its shape), the
+  low-level jet and the hodograph's low-level curvature (`EnvInput.curve`: SRH), the deep shear and the wind aloft (the
+  anvil-level storm-relative wind). `StormEnv` keeps what the structure reads of it. A day's cloud base is at most 2 km
+  (`StormPreset.MaxLclM`, user 2026-11-08): the day's dew point is raised until its parcel's LCL is under it, which
+  caps the LP days (up to 2.5 km before) and leaves the other setups as drawn.
+- **Scales** (`StormStructure.Scales`, from `docs/meteorology/storm-structure.md`):
+  - the mesocyclone's radius, 1.6-4.8 km (low-level SR inflow, SRH, precipitation mode);
+  - the tower at least as wide as it (fatter with fat CAPE and strong shear);
+  - the forward-flank core where the wind aloft carries the rain, 9-13 km out, never closer than the web build;
+  - the hail core just outside the tower.
+- **The RFD keeps the web build's layout** (user, 2026-11-08: the separation was meant for the forward flank only, not
+  the RFD). The surge has the web build's size and the wall cloud the web build's place, 1.3 km behind the updraft, and
+  the clear slot's depth, the base's lean toward the surge and the radar's hook are the web build's. The game changes
+  three things there:
+  - the surge is never under 1.9x the funnel's top + 0.7 km, so a big tornado has the slot it needs;
+  - the wall cloud stays put while the slot opens (the web build's fit to the tower shoved it sideways);
+  - it goes back with the occlusion only as its tornado ropes out, as a drift velocity, not a fixed offset. From the
+    rope-out the wall cloud and tornado fall back and to the left at up to 0.6 and 0.5 of the storm's speed, ramped in
+    over at least 4 min and levelling off at the web build's 2.6 km. So the tornado slows to about half the storm's
+    speed and curves 27-35 degrees left at the end of its track, at most about 30 degrees per minute. (The first
+    version moved it a fixed 0.8 mesocyclone radii during the rope-out's few minutes, which ran it backwards at up to
+    2.9x the storm's speed.)
+- **Fluid transitions.** The slot's, horseshoe's, wall cloud's and rear-flank rain's amounts are eased with a 5-tap
+  filter over about 3 storm min (the largest step in 0.1 min fell from 0.8 to 0.05). The tower reaches the EL at
+  0.45 sqrt(2 CAPE): 9-20 min, not the web build's 14 for every storm.
+- **One cloud.**
+  - The tower glaciates with height (cauliflower, then smoother, then ice, from 55 % of the way to the EL).
+  - Tower, anvil, flanking line and apron join softly (a + b - ab).
+  - The anvil's outline wanders and frays downwind, and its top and underside undulate.
+  - The ice is fibrous noise drawn out along the wind aloft. The web build's cosine sheets every 420 m drew contour rings.
+  - Every march step is jittered ±30 % per pixel. The strides through clear air drew rings round the camera ("wood
+    grain").
+- **Rain (2026-11-08).** The user: "this section missing from the RFD" (the tilted layout's clear cylinder round a
+  tornado, `StormTilt.Clear`) and the rain "too thick". With the structure there is no cut round a tornado, and the
+  rain-free base's edge is ragged and leans downwind instead of a cylinder's wall. The volume stores the rain as
+  0.8 x intensity^1.6, so the core is about as dense as before and light rain much lighter, for the eye, the light grids,
+  the shadow, lightning and the rain sound alike. `StormLabTests -slRain <tag>` renders the rear-flank and inflow-side
+  views at noon and in the afternoon; `-slDiffuseSun x` and `-slDiffusion x` probe the lighting.
+- **Light through rain (2026-11-08).** The user: noon and afternoon "unnaturally dark". Raindrops scatter about 87 % of
+  what they intercept forward, so light reaching into rain loses about (1 - g) of what a straight look through it does.
+  Every light path through rain takes 0.3 of the eye's extinction (`StormStructure.RainTransport`): the light grid
+  (sun, sky overhead, sky visibility, ground light), the scene's sun cookie, and the tornado's sun, sun-depth and horizon
+  tests, so a funnel and the cloud round it stay lit alike. The eye's view through rain keeps the full extinction.
+  `StormLightCheck`, unified lighting: inside the rain 0.017 -> 0.108, the hail core 0.025 -> 0.060, backlit 0.048 ->
+  0.075. A broad base at noon stays dusk-dark in absolute terms, as a real one is. The test map's auto exposure now
+  adapts to the storm's shade as an eye does (`TestMapStormPanel.stormAdaptation`): 0.6 stop per halving of the sky
+  light the storms leave the camera (`StormSceneAmbient.Ambient`), at most 2.5 stops. It was a fixed 13.5 EV by day.
+- **Textures.** `GameNoise`, 128^3 with four fields (gradient fbm, billows, Perlin-Worley, fibres) and mips filtered by
+  the pixel's footprint, replaces the web build's 48^3 value noise in the march's detail (no glitter a few km off). Each
+  storm samples every noise at its own offset (`S_game`), so no two storms share a texture.
+- **Several storms.** Two to four are composited in one pass (`RecordCompositeAll`), each storm's light the mixture of
+  the orders it could be in with the others (`lerp(1, T, w)`). The old pairwise layering was wrong from the third storm.
+
+Checks:
+- `dotnet run --project validation/parity/csharp -- --structure`: the environment, scales and separations per setup and
+  day, the wall cloud's push while the slot grows (0 m), the surge against the tornado (at least 1.8x), and the eased
+  steps.
+- `dotnet run --project validation/parity/csharp -- --track [preset]`: each tornado's ground track through the game's
+  pipeline. It must never exceed 1.3x the storm's speed, never fall below 0.15x along the motion, and never turn more
+  than 30 degrees per minute. `TRACK_WEB=1` runs it without the structure layer, for comparison.
+- `StormLabTests.RunFromCommandLine -slStructure [plains,lp,dixie,ohio]`: per setup, four stages with the web and game
+  layouts side by side (a chaser's view, under the base, the radar). Output: `Screenshots/structure_<preset>.png` and
+  `validation/reports/StructureChecks.md`.
+- `-slAnvils [preset]`: three storms 24 km apart, old against new (`Screenshots/anvils_sheet.png`).
+
 ## Performance
 
 Optimised for an RX 7900 XT at 3440 x 1440 (user, 2026-10-30: "spec is to my GPU"). `StormRenderer.performance` picks a

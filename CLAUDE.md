@@ -35,6 +35,30 @@ README.md has the layout, use, checks and known gaps.
 - Setups: the game offers `StormPreset.All` (plains, lp = the website's hail environment renamed, dixie, ohio; the
   website's lp, capped and pulse removed at the user's request, 2026-10-25). `StormPreset.Website` keeps the website's
   seven for parity and the comparison (`web:<key>`); never edit it to change a game setup.
+- Structure from the environment (`structure = Environmental`, the game's default; user, 2026-11-07: updraft and
+  downdrafts too close, tiny hooks, slots too small for the tornado, the wall cloud shoved aside as the slot opened, toy-like
+  parts and anvils, anvils not mixing with three storms): `StormStructure.Apply` re-lays the frame after `StormTilt` from
+  the plan's `StormEnv` (kept by `StormGame.Design`). It sizes the mesocyclone, tower and cores; the RFD keeps the web build's surge size and wall cloud place
+  (user, 2026-11-08: separation is for the forward flank only), with the surge never under the tornado's need. It fixes the wall
+  cloud under the updraft's rear flank; the occlusion moves it back only as the tornado ropes out, as a drift velocity
+  (`StormStructure.Occlusion`: back and left at a share of the storm's speed, integrated over time), never a fixed offset
+  put in over the rope-out, which made the tornado run backwards. It eases the
+  build-up's amounts over about 3 storm min and runs the tower's rise on the storm's own CAPE.
+  - It marks the frame `S_struct` (slot 32.w). That flag gates every shader part of the overhaul: `GameNoise` detail and fibrous ice, the step jitter, glaciation with height,
+    soft joins, the anvil's outline, no clear cylinder round a tornado, a ragged rain-free base edge, and the rain stored
+    as 0.8 x intensity^1.6 (user, 2026-11-08: a box cut from the RFD rain, rain too thick; `-slRain`).
+  - Light through rain takes `StormStructure.RainTransport` (0.3) of the eye's extinction on every light path: the light
+    grid (`StormVolume.rainLightShare`), the scene cookie, and the tornado's tests (`_RainP` in the march). Keep a new
+    light path through rain on the same share, or a funnel and its wall cloud fall out of step again
+    (`StormLightCheck -slLightTornado -slLightPreset dixie`). The test map's day exposure adapts to the storm's shade
+    (`TestMapStormPanel.stormAdaptation`, user, 2026-11-08: "unnaturally dark").
+  - `S_game` (slot 34, the block is now 35) holds each storm's noise offset.
+  - Two to four storms are composited in one pass (`StormRenderer.RecordCompositeAll`, soft order, `lerp(1, T, w)`).
+  - Game days draw their own environment (`StormPreset.Day`, stream 520, key `plains~<seed>`). Keep the reference in
+    `docs/meteorology/storm-structure.md`.
+  - Check with `-- --structure` (the wall cloud is never pushed while the slot grows; the surge is at least 1.8x the
+    tornado's top), `-- --track` (the tornado's ground speed at most 1.3x the storm's, at least 0.15x along the motion,
+    turning at most 30 degrees per minute), `StormLabTests -slStructure [presets]` (web vs game: views and radar) and `-slAnvils` (three storms).
 - Storms die leaving the map (`StormLife`, after `StormDesign.At` and `StormTornadoes.Apply`): no tornado may be off the
   map; check with `validation/parity/csharp -- --life` after changing tracks, placement or cycles.
 - Look changes: one named problem at a time, checked in the test map; say when a request is taste, not a bug.

@@ -14,11 +14,13 @@ namespace StormLab
     {
         public string key, name, blurb, watch;
         public double T0F, TdF, moistFt, lapse, cap, llj, shear, upper;   // winds in knots
+        /// <summary>(game) the hodograph's low-level curvature (EnvInput.curve); 0 for every web build preset</summary>
+        public double curve;
 
         public EnvInput ToEnv() => new EnvInput
         {
             T0F = T0F, TdF = Math.Min(TdF, T0F), lapse = lapse, cap = cap, moist = moistFt * C.FT,
-            llj = llj * C.KT, shear = shear * C.KT, upper = upper * C.KT
+            llj = llj * C.KT, shear = shear * C.KT, upper = upper * C.KT, curve = curve
         };
 
         /// <summary>the web build's presets (src/presets.ts), in its order</summary>
@@ -56,15 +58,75 @@ namespace StormLab
             Website[3],
         };
 
-        /// <summary>a game setup or, with "web:" in front, a website preset by its key; null when there is none</summary>
+        /// <summary>a game setup or, with "web:" in front, a website preset by its key; null when there is none. A game
+        /// key with a day after it ("plains~1234", DayKey) is that setup's environment on that day (Day).</summary>
         public static StormPreset Find(string key)
         {
             if (key == null) return null;
+            int tilde = key.IndexOf(DaySep);
+            if (tilde > 0 && int.TryParse(key.Substring(tilde + 1), out int day))
+            {
+                var b = Find(key.Substring(0, tilde));
+                return b == null || key.StartsWith(WebPrefix, StringComparison.Ordinal) ? b : Day(b, day);
+            }
             bool web = key.StartsWith(WebPrefix, StringComparison.Ordinal);
             string k = web ? key.Substring(WebPrefix.Length) : key;
             return Array.Find(web ? Website : All, p => p.key == k);
         }
         public const string WebPrefix = "web:";
+        public const char DaySep = '~';
+        /// <summary>the setup's key without its day ("plains~1234" -> "plains")</summary>
+        public static string BaseKey(string key) { int i = key?.IndexOf(DaySep) ?? -1; return i > 0 ? key.Substring(0, i) : key; }
+        public static string DayKey(string baseKey, int day) => BaseKey(baseKey) + DaySep + day;
+
+        /// <summary>
+        /// (game; user, 2026-11-07: "a variety of wind shear profiles, CAPE profiles, and moisture profiles (variety of
+        /// LCLs)") the setup's environment on one day: the same kind of day, its numbers drawn about the setup's (its own
+        /// stream, StormRng 520). Surface temperature and dew point set the LCL (125 m a degree C of spread, Stull) and with
+        /// the mid-level lapse rate and the moist layer's depth the CAPE and its shape (tall and thin or short and fat); the
+        /// low-level jet and the hodograph's curvature the low-level shear and SRH; the deep shear the organisation and the
+        /// updraft's tilt; the wind aloft the anvil-level storm-relative wind, which decides how far the precipitation is
+        /// carried from the updraft (Rasmussen and Straka 1998: under 18 m/s HP, over 28 m/s LP; METR 4403 notes). The
+        /// draws are held where the setup keeps making supercells (deep shear at least 36 kt). Key: DayKey.
+        /// </summary>
+        public static StormPreset Day(StormPreset b, int day)
+        {
+            var r = new StormRng(day, 520);
+            double spread = Math.Max(b.T0F - b.TdF, 2);
+            double t0 = b.T0F + r.Range(-4, 4);
+            // the spread (LCL) varies by up to a third either way, more for a moist setup's small spread
+            double sp = C.Clamp(spread * (1 + r.Range(-0.35, 0.35)) + r.Range(-1.5, 1.5), 3, 40);
+            var d = new StormPreset
+            {
+                key = DayKey(b.key, day), name = b.name, blurb = b.blurb, watch = b.watch,
+                T0F = t0, TdF = t0 - sp,
+                moistFt = Math.Max(0, b.moistFt + r.Range(-1200, 1200)),
+                lapse = C.Clamp(b.lapse + r.Range(-0.7, 0.7), 5.6, 9.4),
+                cap = Math.Max(0, b.cap + r.Range(-0.4, 0.4)),
+                llj = Math.Max(15, b.llj * (1 + r.Range(-0.25, 0.25))),
+                shear = Math.Max(36, b.shear * (1 + r.Range(-0.18, 0.18))),
+                upper = Math.Max(30, b.upper * (1 + r.Range(-0.12, 0.25))),
+                curve = C.Clamp(b.curve + r.Range(-0.6, 1.0), -0.6, 1.0),
+            };
+            CapLcl(d);
+            return d;
+        }
+
+        /// <summary>the highest cloud base a day may draw, m (user, 2026-11-08: "we need to limit the top to 2km"; the LP
+        /// days reached 2.5 km)</summary>
+        public const double MaxLclM = 2000;
+
+        /// <summary>A day's dew-point spread narrowed (the dew point raised) until its parcel's LCL is at most MaxLclM.
+        /// Bisects on the spread with the environment's own parcel, so the cap holds whatever the mixed layer does.</summary>
+        static void CapLcl(StormPreset d)
+        {
+            double Lcl(double spread) { d.TdF = d.T0F - spread; return Environment.Make(d.ToEnv()).pc.lcl; }
+            double hi = d.T0F - d.TdF;
+            if (Lcl(hi) <= MaxLclM) { d.TdF = d.T0F - hi; return; }
+            double lo = 3;
+            for (int i = 0; i < 14; i++) { double m = 0.5 * (lo + hi); if (Lcl(m) <= MaxLclM) lo = m; else hi = m; }
+            d.TdF = d.T0F - lo;
+        }
 
         static StormPreset Renamed(StormPreset p, string key, string name) => new StormPreset
         {

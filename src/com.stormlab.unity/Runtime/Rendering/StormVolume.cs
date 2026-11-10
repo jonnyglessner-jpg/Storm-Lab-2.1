@@ -26,6 +26,9 @@ namespace StormLab
         public Vector4 precipParams;
         /// <summary>rain's extinction in the light grids as a multiple of RainMax (the unified lighting's rainExtinction; 1 otherwise)</summary>
         public float rainScale = 1f;
+        /// <summary>rain's extinction for light as a share of the eye's (StormStructure.RainTransport in the game's look; 1
+        /// otherwise): the light grid's sun, sky and ground light through rain</summary>
+        public float rainLightShare = 1f;
         /// <summary>the unified lighting's sun reach (StormCommon.hlsl sunReach: octaves, octave extinction, diffusion,
         /// diffused sun) for the ground light; zero for the other lightings (sunT)</summary>
         public Vector4 sunReach;
@@ -143,7 +146,7 @@ namespace StormLab
             cmd.SetComputeTextureParam(cs, kLight, "_OutLW", lightWeb);
             cmd.SetComputeVectorParam(cs, "_LSun", keyVol);
             cmd.SetComputeVectorParam(cs, "_LDims", new Vector4(LN, LZ, L, ZT));
-            cmd.SetComputeVectorParam(cs, "_LP", new Vector4(CloudMax, RainMax * rainScale, 0.8f, zbKm));
+            cmd.SetComputeVectorParam(cs, "_LP", new Vector4(CloudMax, RainMax * rainScale * rainLightShare, 0.8f, zbKm));
             cmd.SetComputeVectorParam(cs, "_LSlab", new Vector4(z0, 0, 0, 0));
             cmd.DispatchCompute(cs, kLight, G(LN, 4), G(LN, 4), G(nz, 4));
         }

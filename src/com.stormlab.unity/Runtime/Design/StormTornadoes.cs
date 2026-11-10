@@ -114,6 +114,7 @@ namespace StormLab
         public static ClimoRegion RegionOf(string preset)
         {
             var k = preset != null && preset.StartsWith(StormPreset.WebPrefix, StringComparison.Ordinal) ? preset.Substring(StormPreset.WebPrefix.Length) : preset;
+            k = StormPreset.BaseKey(k);   // (a day's environment, StormPreset.Day)
             return k == "dixie" ? ClimoRegion.Dixie : k == "ohio" ? ClimoRegion.Midwest : ClimoRegion.Plains;
         }
 

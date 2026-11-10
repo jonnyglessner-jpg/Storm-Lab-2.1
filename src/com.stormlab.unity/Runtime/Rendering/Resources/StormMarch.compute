@@ -120,6 +120,13 @@ float4 _TileP;
 StructuredBuffer<uint> _Tiles;
 AppendStructuredBuffer<uint> _TilesTorOut, _TilesPlainOut;
 Texture3D<float> _DetailNoise;
+// x: rain's extinction for light at the full field, 1/km (the eye's _MP.y times y); y: that share of the eye's (the game's
+// look: StormStructure.RainTransport, raindrops scatter forward; 1 otherwise). The tornado's own light tests take it, as the
+// light grid does, so a funnel is lit as the cloud and rain round it are
+float4 _RainP;
+// the game's cloud texture noise (GameNoise.cs, _CD.x): 128^3, r gradient fbm, g billows, b Perlin-Worley, a fibres (6:1
+// along x), each centred on 0.5, with mips
+Texture3D<float4> _GameNoise;
 
 float3 uvw(float3 p) { float L = S_grid.z; return float3((p.x + L) / (2.0 * L), (p.y + L) / (2.0 * L), p.z / S_grid.w); }
 float hash(float2 p) { return frac(sin(dot(p, float2(12.9898, 78.233))) * 43758.5453); }
@@ -226,10 +233,32 @@ float2 tornado(float3 q)
     return float2(funnel, debris);
 }
 
+// The game's noise (_CD.x with the game's structure, S_struct; user, 2026-11-07: "much better resolution and variety", and "blocky textures"): q * k in tiles
+// of 1 / k km at this storm's own offset (S_game), from the mip level whose texels are about the pixel's footprint (128
+// texels a tile, x 1.5), fading to neutral as that level averages the field out, so nothing finer than a pixel sparkles.
+// (The web build's n3 is 48^3 value noise, its finest octave 16 cells a tile; its smoothstepped lattice reads as soft
+// boxes up close and its finest octaves alias into glitter a few km off.)
+float4 gn(float3 q, float k)
+{
+    float l = max(0.0, log2(max(g_fp * 192.0 * k, 1e-6)));
+    float4 v = _GameNoise.SampleLevel(sampler_LinearRepeat, q * k + S_game.xyz * 3.7, l);
+    return lerp(v, 0.5, ss(3.0, 5.5, l));
+}
+// detail() with the game's noise: smooth cloud from two octaves of gradient noise (tiles of 10 and 3 km, its finest cells
+// about 160 and 50 m), cauliflower from billows (5 km tile: lobes 1 km to 250 m) eroded by Perlin-Worley (3 km tile)
+float gameDetail(float3 q, float turb)
+{
+    float4 a = gn(q, 0.1), b = gn(q + float3(3.1, 1.7, 0.9), 0.33);
+    float soft = 0.6 * a.r + 0.4 * b.r;
+    float lobes = turb > 0.02 ? 0.55 * gn(q + float3(0.7, 4.3, 2.1), 0.2).g + 0.45 * b.b : 0.5;
+    return lerp(soft, lobes, turb);
+}
+
 // sub-grid detail for water cloud: smooth (turb 0) to cauliflower (turb 1)
 // lod 0 near .. 1 far: the finest octave fades out with distance so far clouds don't sparkle
 float detail(float3 q, float turb, float lod)
 {
+    if (_CD.x > 0.5 && S_struct) return gameDetail(q, turb);
     float soft = 0.5; float lobes = 0.5;
     // the finest octaves only up close (lod < 1): far away they would only add sparkle, and they cost samples
     float f1 = 0.5; float f2 = 0.5;
@@ -668,7 +697,7 @@ float tornadoSun(float3 q)
     {
         float4 d = _Dens.SampleLevel(sampler_LinearClamp, uvw(q + _Sun.xyz * (0.6 * k)), 0);
         // (here the wall cloud, horseshoe and tail are drawn analytically; the volume's b channel holds where they are)
-        od += ss(0.2, 0.4, max(d.r, d.b)) * 1.6 + saturate(d.g - 0.2) * 0.6;
+        od += ss(0.2, 0.4, max(d.r, d.b)) * 1.6 + saturate(d.g - 0.2) * 0.6 * _RainP.y;
     }
     return exp(-od);
 }
@@ -688,7 +717,7 @@ float horizonRay(float3 q, float3 d)
         float3 p = q + d * (a + 0.5 * s);
         if (abs(p.x) > L || abs(p.y) > L) break;
         float4 dn = _Dens.SampleLevel(sampler_LinearClamp, uvw(p), 0);
-        od += (ss(0.2, 0.4, max(dn.r, dn.b)) * 2.7 + saturate(dn.g - 0.2)) * s;
+        od += (ss(0.2, 0.4, max(dn.r, dn.b)) * 2.7 + saturate(dn.g - 0.2) * _RainP.y) * s;
         a += s; s *= 1.6;
     }
     return exp(-od);
@@ -928,7 +957,7 @@ float funnelSunDepth(float3 q)
     [unroll] for (int k = 0; k < 16; k++)
     {
         float4 d = _Dens.SampleLevel(sampler_LinearClamp, uvw(q + _Sun.xyz * (0.3 * k + 0.15)), 0);
-        od += ((d.r * d.r + d.b * d.b) * _MP.x + d.g * d.g * _MP.y) * 0.3;
+        od += ((d.r * d.r + d.b * d.b) * _MP.x + d.g * d.g * _RainP.x) * 0.3;
     }
     return od + _Light.SampleLevel(sampler_LinearClamp, uvw(q + _Sun.xyz * 4.8), 0).r;
 }
@@ -1176,6 +1205,12 @@ void March(uint3 gidT : SV_DispatchThreadID, uint3 grp : SV_GroupID, uint3 gt : 
             // rain alone (no cloud, no near-ground feature): the march adds no detail to it, and it varies over the volume's
             // cells (~0.43 km across), so it takes longer steps (_Q.y km near the camera; 0: the cloud's)
             else if (s.r <= 0.004 && s.b <= 0.004 && !surf) dt = max(dt, _Q.y * (1.0 + t / 40.0));
+            // (the game's look, S_struct; user, 2026-11-07: "concentric artifacts" on the anvils) every step's length jittered
+            // by up to 30 % either way, per pixel and per step: the start's 0.1 km jitter is a fraction of the strides
+            // through clear air (0.45-0.9 km at an anvil's distance), so neighbouring rays entered a smooth surface at one
+            // phase and drew rings round the camera (wood grain). Now they are noise, which the temporal resolve averages
+            // out. Before the tornado's bounds below, which still keep a step from passing over a funnel.
+            if (S_struct) dt *= 0.7 + 0.6 * hash(float2(id.xy) * 0.7 + float2((float)i * 0.618, fmod(_MP.w, 64.0) * 0.37));
             nearClear = false;
             if (PROBE_TOR > 3.5) nKind += nearOn ? float4(1, 0, 0, 0) : surf ? float4(0, 1, 0, 0) : s.r > 0.004 ? float4(0, 0, 1, 0) : s.g > 0.004 ? float4(0, 0, 0, 1) : 0.0;
             // the detailed tornado: fine steps where the ray may meet it, and never step over it (2.0)
@@ -1252,7 +1287,26 @@ void March(uint3 gidT : SV_DispatchThreadID, uint3 grp : SV_GroupID, uint3 gt : 
                 // out into long streaks along the wind aloft. The texture scales the density (no threshold), so the ice is
                 // translucent and its edges fade into wisps
                 float ddI = 0.0;
-                if (ice > 0.01)
+                if (ice > 0.01 && _CD.x > 0.5 && S_struct)
+                {
+                    // the game's ice (user, 2026-11-07: the anvils "very cartoonish ... blocky textures, concentric
+                    // artifacts"): the web build's sheets were a cosine stacked every 420 m, and wherever the anvil's curved
+                    // underside or lens crossed them they drew contour rings. Here fibres drawn out along the wind aloft (the
+                    // noise's fibre field, 6:1, in the anvil's own along / across frame, squeezed 2.2x in height so they lie
+                    // in thin, uneven layers), meandering on a broad warp, and thin layering from stretched gradient noise:
+                    // nothing periodic, all of it at this storm's own offset. Near the camera a second, finer octave.
+                    float2 ad = S_anvil.xy; float2 an = float2(-ad.y, ad.x);
+                    float3 qa = float3(dot(q.xy, ad), dot(q.xy, an), q.z);
+                    float4 w0 = gn(qa * float3(0.25, 1.0, 1.0), 0.04);
+                    qa.yz += (w0.rg - 0.5) * float2(3.0, 0.6);
+                    float f1 = gn(qa * float3(1.0, 1.0, 2.2), 0.035).a;
+                    float f2 = gn(qa * float3(1.0, 1.0, 2.2) + float3(5.3, 2.1, 0.7), 0.12).a;
+                    float sheet = gn(qa * float3(0.3, 1.0, 3.0) + float3(1.9, 0.3, 4.1), 0.05).r;
+                    float tex = saturate(0.6 + 1.5 * (0.4 * (f1 - 0.5) + 0.25 * (f2 - 0.5) + 0.35 * (sheet - 0.5)));
+                    float vI = s.r * (0.3 + 0.7 * tex);
+                    ddI = ss(0.04, 0.8, vI) * 0.55;
+                }
+                else if (ice > 0.01)
                 {
                     float2 ad = S_anvil.xy; float2 an = float2(-ad.y, ad.x);
                     float ua = dot(q.xy, ad); float va = dot(q.xy, an);

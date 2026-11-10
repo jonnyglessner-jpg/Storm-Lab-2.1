@@ -94,6 +94,10 @@ namespace StormLab
             double baseR = 0.5 * R * (0.7 + 0.6 * Slope(P)) * (1 - 0.3 * hp);
             double tor = a[13 * 4 + 2], ef = a[24 * 4 + 2] > 0 ? a[24 * 4 + 2] : 1;
             double torR = tor > 0.1 ? (0.35 + 0.15 * ef) * (1.6 - 0.6 * hp) * C.Clamp((tor - 0.1) / 0.3, 0, 1) : 0;
+            // (the game's structure, StormStructure's flag S_struct: no clear cylinder round a tornado, which cut a box out of
+            // the rear-flank rain, user 2026-11-08; and the rain-free base from the web build's tower radius, not the wider
+            // tower the structure gives, so it does not eat into the hook)
+            if (a[32 * 4 + 3] > 0.5) { torR = 0; baseR *= Math.Min(1, P.R * 1.4 / Math.Max(R, 0.1)); }
             return (baseR, torR);
         }
     }

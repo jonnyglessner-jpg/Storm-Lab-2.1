@@ -22,6 +22,10 @@ namespace StormLab
     /// <summary>Tilted: the game's leaning updraft drops its rain further off, with a rain-free base and clear air round
     /// a tornado (StormTilt); Website: the web build's layout.</summary>
     public enum PrecipLayout { Tilted, Website }
+    /// <summary>Environmental: the game's structure from the storm's environment (StormStructure: mesocyclone, tower,
+    /// cores, rear-flank surge and wall cloud sized and placed by the sounding and hodograph, the slot eased in time and the
+    /// occlusion late in a tornado's life); Website: the web build's layout.</summary>
+    public enum StructureModel { Environmental, Website }
     /// <summary>Enhanced: finer billows on water cloud near the camera (DetailNoise) and a short self-shadow probe that shades
     /// them; Website: the web build's detail.</summary>
     public enum CloudDetail { Enhanced, Website }
@@ -52,6 +56,8 @@ namespace StormLab
         public WallBase wallBase = WallBase.Smooth;
         [Tooltip("Tilted: the updraft leans with the shear and drops its rain further off, leaving a rain-free base and clear air round a tornado (StormTilt); Website: the web build's layout")]
         public PrecipLayout precip = PrecipLayout.Tilted;
+        [Tooltip("Environmental: updraft, downdrafts, hook, slot and wall cloud sized and placed from the storm's environment (StormStructure); Website: the web build's layout")]
+        public StructureModel structure = StructureModel.Environmental;
         /// <summary>storm minutes at which the storm begins to die (StormLife; DieLeaving sets it from a map); infinity:
         /// it lives out the web build's plan</summary>
         [NonSerialized] public double dieFrom = double.PositiveInfinity;
@@ -533,6 +539,7 @@ namespace StormLab
             StormDesign.At(Plan, tMin, clock, Frame);
             if (tornado == TornadoModel.Detailed) StormTornadoes.Apply(Plan, Tornadoes, tMin, Frame);
             if (precip == PrecipLayout.Tilted) StormTilt.Apply(Plan, Frame);
+            if (structure == StructureModel.Environmental) StormStructure.Apply(Plan, tMin, clock, Frame);
             StormLife.Apply(Plan, tMin, Frame);
             Spin.Advance(Frame, tMin, clock, spinRates);
             if (frameCmd == null) frameCmd = new CommandBuffer { name = "Storm volume" };
@@ -547,6 +554,8 @@ namespace StormLab
             Volume.precipParams = ClearParams;
             float rainScale = lighting == StormLighting.Unified ? rainExtinction : 1f;
             if (rainScale != Volume.rainScale) { Volume.rainScale = rainScale; hasFrame = false; }
+            float rainShare = RainLightShare;
+            if (rainShare != Volume.rainLightShare) { Volume.rainLightShare = rainShare; hasFrame = false; }
             Volume.sunReach = SunReach;
             Volume.townCount = 0;
             foreach (var tw in Towns)
@@ -700,6 +709,7 @@ namespace StormLab
             cmd.SetComputeVectorParam(marchCs, "_SkyZen", bZen); cmd.SetComputeVectorParam(marchCs, "_SkyMid", bMid);
             cmd.SetComputeVectorParam(marchCs, "_SkyHor", bHor); cmd.SetComputeVectorParam(marchCs, "_SkyHorK", bHorK);
             cmd.SetComputeVectorParam(marchCs, "_MP", new Vector4(StormVolume.CloudMax, StormVolume.RainMax * (Volume != null ? Volume.rainScale : 1f), exposure, st.frame++));
+            cmd.SetComputeVectorParam(marchCs, "_RainP", new Vector4(StormVolume.RainMax * (Volume != null ? Volume.rainScale * Volume.rainLightShare : 1f), Volume != null ? Volume.rainLightShare : 1f, 0, 0));
             cmd.SetComputeVectorParam(marchCs, "_TorP", new Vector4(tornado == TornadoModel.Detailed ? 1 : 0, tornadoStep, tornadoLightAll ? 1 : 0, tornadoCostProbe));
             cmd.SetComputeVectorParam(marchCs, "_WallP", WallParams);
             // the ground pattern of the backdrop moves under the storm as it travels
@@ -722,6 +732,7 @@ namespace StormLab
             cmd.SetComputeTextureParam(marchCs, kM, "_Ground", Volume.GroundTex);
             cmd.SetComputeTextureParam(marchCs, kM, "_Noise", noise);
             cmd.SetComputeTextureParam(marchCs, kM, "_DetailNoise", DetailNoise.Get());
+            cmd.SetComputeTextureParam(marchCs, kM, "_GameNoise", GameNoise.Get());
             cmd.SetComputeVectorParam(marchCs, "_CD", new Vector4(cloudDetail == CloudDetail.Enhanced ? 1 : 0, 0, 0, 0));
             cmd.SetComputeVectorParam(marchCs, "_Q", new Vector4(Mathf.Max(stepScale, 0.25f), Mathf.Max(rainStride, 0f), Mathf.Max(nearStride, 1f), 0));
             cmd.SetComputeTextureParam(marchCs, kM, "_Out", st.cur);
@@ -828,6 +839,10 @@ namespace StormLab
         /// <summary>Draw the storm over the bound colour target (out = storm.rgb x light scale + storm.a x target) and, with
         /// writeDepth, write its depth where it is opaque. under: the storm composited just before (and its march
         /// texture), which this one is laid behind wherever it is the nearer of the two along the ray.</summary>
+        /// <summary>rain's extinction for light as a share of the eye's: StormStructure.RainTransport in the game's look
+        /// (the frame marked S_struct) with the unified lighting, 1 otherwise</summary>
+        public float RainLightShare => lighting == StormLighting.Unified && Frame != null && Frame.param[32 * 4 + 3] > 0.5f ? StormStructure.RainTransport : 1f;
+
         public void RecordComposite(CommandBuffer cmd, Camera cam, Texture storm, Texture dist, int w, int h, bool writeDepth,
             StormRenderer under = null, Texture underTex = null, bool shaftsOwn = true, bool shaftsUnder = false)
         {
@@ -852,8 +867,63 @@ namespace StormLab
             mpb.SetVector("_StormTan", new Vector4(tanY * w / (float)h, tanY, 0, 0));
             cmd.BeginSample(CompositeSampler);
             cmd.DrawProcedural(Matrix4x4.identity, compositeMat, 0, MeshTopology.Triangles, 3, 1, mpb);
-            if (writeDepth && dist) cmd.DrawProcedural(Matrix4x4.identity, compositeMat, 1, MeshTopology.Triangles, 3, 1, mpb);
+            if (writeDepth && dist) cmd.DrawProcedural(Matrix4x4.identity, compositeMat, compositeMat.FindPass("StormDepth"), MeshTopology.Triangles, 3, 1, mpb);
             cmd.EndSample(CompositeSampler);
+        }
+
+        static readonly string[] NTex = { "_NTex0", "_NTex1", "_NTex2", "_NTex3" }, NMean = { "_NMean0", "_NMean1", "_NMean2", "_NMean3" },
+            NShaft = { "_NShaft0", "_NShaft1", "_NShaft2", "_NShaft3" };
+        static MaterialPropertyBlock compositeAllProps;
+        /// <summary>The most storms RecordCompositeAll lays in one pass.</summary>
+        public const int CompositeMax = 4;
+
+        /// <summary>
+        /// (game; user, 2026-11-07: the anvils "do not mix at all when there are more than two storms") Composite 2-4 marched
+        /// storms over the camera colour in one pass, each storm's light dimmed by the others as far as they are in front of
+        /// it along the ray (StormComposite.shader, StormCompositeN), then each storm's depth. The storms' marches: tex (rgb,
+        /// a = transmittance) and dist (the depth pass's distance); their mean distances are their own camera state's.
+        /// </summary>
+        public static void RecordCompositeAll(CommandBuffer cmd, Camera cam, IList<(StormRenderer storm, RenderTexture tex, RenderTexture dist)> marched,
+            int w, int h, bool writeDepth)
+        {
+            int n = Mathf.Min(marched.Count, CompositeMax);
+            var first = marched[0].storm;
+            if (!first.compositeMat || n < 2) return;
+            var mpb = compositeAllProps ??= new MaterialPropertyBlock(); mpb.Clear();
+            var k = Vector4.zero; var shOn = Vector4.zero;
+            for (int i = 0; i < CompositeMax; i++)
+            {
+                if (i < n && marched[i].storm.cams.TryGetValue(cam, out var st))
+                {
+                    var s = marched[i].storm;
+                    mpb.SetTexture(NTex[i], marched[i].tex);
+                    mpb.SetTexture(NMean[i], st.dist);
+                    var sh = s.ShaftFor(cam);
+                    mpb.SetTexture(NShaft[i], sh ? (Texture)sh : Texture2D.blackTexture);
+                    k[i] = s.toneMap ? 0 : s.Luminance; shOn[i] = sh ? 1 : 0;
+                }
+                else
+                {
+                    mpb.SetTexture(NTex[i], Texture2D.blackTexture); mpb.SetTexture(NMean[i], Texture2D.blackTexture); mpb.SetTexture(NShaft[i], Texture2D.blackTexture);
+                }
+            }
+            mpb.SetVector("_NK", k); mpb.SetVector("_NShaftOn", shOn); mpb.SetVector("_NP", new Vector4(n, 0, 0, 0));
+            mpb.SetVector("_StormView", new Vector4(w, h, 0, 0));
+            cmd.BeginSample(CompositeSampler);
+            cmd.DrawProcedural(Matrix4x4.identity, first.compositeMat, first.compositeMat.FindPass("StormCompositeN"), MeshTopology.Triangles, 3, 1, mpb);
+            cmd.EndSample(CompositeSampler);
+            if (!writeDepth) return;
+            for (int i = 0; i < n; i++)
+            {
+                var s = marched[i].storm;
+                var dmpb = s.compositeProps ??= new MaterialPropertyBlock(); dmpb.Clear();
+                dmpb.SetTexture("_StormTex", marched[i].tex);
+                dmpb.SetTexture("_StormDist", marched[i].dist ? (Texture)marched[i].dist : Texture2D.blackTexture);
+                dmpb.SetVector("_StormView", new Vector4(w, h, 0, 0));
+                float tanY = TanHalfHeight(cam);
+                dmpb.SetVector("_StormTan", new Vector4(tanY * w / (float)h, tanY, 0, 0));
+                if (marched[i].dist) cmd.DrawProcedural(Matrix4x4.identity, s.compositeMat, s.compositeMat.FindPass("StormDepth"), MeshTopology.Triangles, 3, 1, dmpb);
+            }
         }
     }
 }
