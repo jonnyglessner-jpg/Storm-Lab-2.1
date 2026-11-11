@@ -22,6 +22,7 @@ static class DumpCs
         if (args.Length > 0 && args[0] == "--rise") { Rise(); return; }
         if (args.Length > 0 && args[0] == "--structure") { Structure(); return; }
         if (args.Length > 0 && args[0] == "--lcl") { Lcl(); return; }
+        if (args.Length > 0 && args[0] == "--wallforms") { WallForms(); return; }
         if (args.Length > 0 && args[0] == "--track") { Track(args.Length > 1 ? args[1] : null); return; }
         if (args.Length > 0 && args[0] == "--anti")
         {
@@ -704,6 +705,32 @@ static class DumpCs
             l.Sort(); cp.Sort();
             double Q(List<double> x, double q) => x[(int)Math.Round(q * (x.Count - 1))];
             Console.WriteLine($"{b.key,-8} web preset LCL {web * 1000:0} m; days: LCL min {Q(l, 0):0} / 10% {Q(l, 0.1):0} / median {Q(l, 0.5):0} / 90% {Q(l, 0.9):0} / max {Q(l, 1):0} m; CAPE {Q(cp, 0):0}-{Q(cp, 1):0} (median {Q(cp, 0.5):0}) J/kg");
+        }
+    }
+
+    /// <summary>The spread of the wall clouds' forms (StormStructure.WallForm, WallSize) over the game's day
+    /// environments: per setup, 400 drawn days, each storm's first two cycles.</summary>
+    static void WallForms()
+    {
+        foreach (var b0 in StormPreset.All)
+        {
+            int n = 0, bowl = 0, block = 0, tier = 0, cone = 0, tilted = 0; double wide = 0, deep = 0, wMin = 9, wMax = 0, dMin = 9, dMax = 0;
+            for (int day = 1; day <= 400; day++)
+            {
+                var pre = StormPreset.Day(b0, day);
+                var P = StormGame.Plan(pre.key, pre, day, null);
+                if (P.env == null || P.kind != StormKind.Supercell) continue;
+                for (int c = 0; c < 2; c++)
+                {
+                    var (fb, fc, ft, fs) = StormStructure.WallForm(P, c);
+                    var (w, d) = StormStructure.WallSize(P, c, fb, fc);
+                    n++;
+                    if (fc > 0.5) cone++; else if (fs > 0.6) tier++; else if (fb > 0.6) block++; else bowl++;
+                    if (Math.Abs(ft) > 0.3) tilted++;
+                    wide += w; deep += d; wMin = Math.Min(wMin, w); wMax = Math.Max(wMax, w); dMin = Math.Min(dMin, d); dMax = Math.Max(dMax, d);
+                }
+            }
+            Console.WriteLine($"{b0.key,-8} {n} wall clouds: bowl {100.0 * bowl / n:0} %, block {100.0 * block / n:0} %, tiered {100.0 * tier / n:0} %, cone {100.0 * cone / n:0} %; tilted {100.0 * tilted / n:0} %; width x {wMin:0.00}-{wMax:0.00} (mean {wide / n:0.00}), depth x {dMin:0.00}-{dMax:0.00} (mean {deep / n:0.00})");
         }
     }
 

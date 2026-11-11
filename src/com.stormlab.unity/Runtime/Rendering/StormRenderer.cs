@@ -244,6 +244,26 @@ namespace StormLab
         /// <summary>with towns given: the town light over open country, as a share of the even town light (StormVolume.compute
         /// GroundLight; the horizon's and the haze's town glow, SkyLight.townSky)</summary>
         public const float TownFloor = 0.15f;
+        /// <summary>
+        /// What the march's lobes on the wall cloud (StormCommon.hlsl: STORM_WALL_LOBES) need that is the same at every step
+        /// of a ray, worked out here once a frame: _WallL (x the lowest height with lobes, km; y, z round a tornado, the
+        /// radius from the funnel's top where they begin and 1 / the distance they come in over; w how much of that fade
+        /// there is), _WallL2 (x the lobes' depth in the density; y 1 / the radius inside which the open sky is straight
+        /// below) and _WallL3 (the shading probe's 120 m step toward the key light, in the wall cloud's turning frame).
+        /// In the shader each of these was arithmetic the compiler lifted out of the march's loop and held in a register
+        /// through it, and that cost the close tornado views 1.5 ms (StormPerfCheck, 2026-11-10).
+        /// </summary>
+        public static void WallLobeParams(float[] a, Vector3 keyVol, out Vector4 wallL, out Vector4 wallL2, out Vector4 wallL3)
+        {
+            float zb = a[1 * 4], Rw = a[6 * 4 + 2], lw = a[7 * 4];
+            float rj = Mathf.Clamp(a[32 * 4 + 2], 0.1f, 0.5f * Rw);
+            bool tor = a[13 * 4 + 2] > 0.01f && a[15 * 4] != 0f;
+            wallL = new Vector4(zb - lw - 0.4f, 1.2f * rj, 1f / Mathf.Max(rj, 1e-3f), tor ? Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.05f, 0.4f, a[13 * 4 + 2])) : 0f);
+            wallL2 = new Vector4(0.55f * (1f - 0.35f * a[StormStructure.FormSlot * 4]), 1f / Mathf.Max(0.5f * Rw, 0.1f), (zb + 0.2f) / StormVolume.ZT, 0f);
+            float ang = -a[30 * 4 + 2], c = Mathf.Cos(ang), s = Mathf.Sin(ang);
+            wallL3 = new Vector4(c * keyVol.x - s * keyVol.y, s * keyVol.x + c * keyVol.y, keyVol.z, 0f) * 0.12f;
+        }
+
         /// <summary>the unified lighting's sun reach (StormCommon.hlsl sunReach) for what the storm shades besides itself
         /// (its ground light, StormSceneShadow); zero for the other lightings</summary>
         public Vector4 SunReach => lighting == StormLighting.Unified ? new Vector4(scatterOctaves, octaveExtinction, diffusion, diffuseSun) : Vector4.zero;
@@ -734,6 +754,9 @@ namespace StormLab
             cmd.SetComputeTextureParam(marchCs, kM, "_DetailNoise", DetailNoise.Get());
             cmd.SetComputeTextureParam(marchCs, kM, "_GameNoise", GameNoise.Get());
             cmd.SetComputeVectorParam(marchCs, "_CD", new Vector4(cloudDetail == CloudDetail.Enhanced ? 1 : 0, 0, 0, 0));
+            WallLobeParams(Frame.param, lt.keyDir, out var wallL, out var wallL2, out var wallL3);
+            cmd.SetComputeVectorParam(marchCs, "_WallL", wallL); cmd.SetComputeVectorParam(marchCs, "_WallL2", wallL2);
+            cmd.SetComputeVectorParam(marchCs, "_WallL3", wallL3);
             cmd.SetComputeVectorParam(marchCs, "_Q", new Vector4(Mathf.Max(stepScale, 0.25f), Mathf.Max(rainStride, 0f), Mathf.Max(nearStride, 1f), 0));
             cmd.SetComputeTextureParam(marchCs, kM, "_Out", st.cur);
             cmd.SetComputeTextureParam(marchCs, kM, "_OutDist", st.dist);

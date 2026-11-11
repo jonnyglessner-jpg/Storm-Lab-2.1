@@ -30,9 +30,9 @@ namespace StormLab
     {
         /// <summary>first of the angle slots (S_spin), and how many</summary>
         public const int Slot0 = StormTornadoes.NSLOT, Slots = 5;
-        /// <summary>the whole parameter block with the angle slots and StormStructure's slot after them (must match
-        /// StormCommon.hlsl)</summary>
-        public const int NSLOT = Slot0 + Slots + 1;
+        /// <summary>the whole parameter block with the angle slots and StormStructure's two slots after them (must
+        /// match StormCommon.hlsl)</summary>
+        public const int NSLOT = Slot0 + Slots + 2;
 
         // ---- real tangential winds, m/s
         /// <summary>mesocyclone at the updraft's edge, per rad/s of the web build's rate: its 0.034-0.092 at full strength

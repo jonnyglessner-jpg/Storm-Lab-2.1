@@ -20,6 +20,14 @@ namespace StormLab
         public int resolution = 1024;
         [Tooltip("seconds between updates (the storm volume itself is repainted every few seconds)")]
         public float refreshSeconds = 0.25f;
+        [Tooltip("seconds SunAtCamera takes to settle after the shadow over the camera changes (as the scene's ambient does)")]
+        public float settleSeconds = 1.5f;
+
+        /// <summary>The share of the sun's light that reaches the camera through the storms (1: open sun, and while there
+        /// is no shadow), settled over settleSeconds: the cookie's middle, which lies on the camera's line to the sun. What
+        /// an exposure meters beside the sky the camera sees (StormSceneAmbient.Ambient).</summary>
+        public float SunAtCamera { get; private set; } = 1f;
+        float sunTarget = 1f; bool reading;
 
         /// <summary>the cookie (r: the share of sunlight through the storms), centred on the camera in the light's plane, for checks</summary>
         public RenderTexture Cookie => rt;
@@ -46,6 +54,7 @@ namespace StormLab
         {
             if (sun && showing) sun.cookie = null;
             showing = false;
+            SunAtCamera = sunTarget = 1f;
         }
 
         void OnDestroy() { if (rt) { rt.Release(); Destroy(rt); } }
@@ -53,6 +62,7 @@ namespace StormLab
         void LateUpdate()
         {
             if (!sun || sun.type != LightType.Directional) return;
+            SunAtCamera += (sunTarget - SunAtCamera) * (1f - Mathf.Exp(-Time.unscaledDeltaTime / Mathf.Max(settleSeconds, 0.01f)));
             if (Time.unscaledTime - last < refreshSeconds) return;
             last = Time.unscaledTime;
             if (!cs) { cs = Resources.Load<ComputeShader>("StormShadow"); if (cs) kernel = cs.FindKernel("Cookie"); }
@@ -97,7 +107,23 @@ namespace StormLab
             {
                 // no storm: no cookie
                 if (showing) { sun.cookie = null; showing = false; }
+                sunTarget = 1f;
                 return;
+            }
+            // the sun's share at the camera: the four texels round the cookie's middle
+            if (!reading && SystemInfo.supportsAsyncGPUReadback)
+            {
+                reading = true;
+                AsyncGPUReadback.Request(rt, 0, n / 2 - 1, 2, n / 2 - 1, 2, 0, 1, TextureFormat.RGBAHalf, req =>
+                {
+                    reading = false;
+                    if (this == null || req.hasError) return;
+                    var d = req.GetData<ushort>();
+                    if (d.Length < 16) return;
+                    float t = 0f;
+                    for (int i = 0; i < 4; i++) t += Mathf.HalfToFloat(d[i * 4]);
+                    sunTarget = Mathf.Clamp01(t * 0.25f);
+                });
             }
             rt.IncrementUpdateCount();   // HDRP re-copies a cookie into its atlas when this changes
             if (!showing || sun.cookie != rt)

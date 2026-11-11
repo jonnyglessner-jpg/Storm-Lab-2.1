@@ -28,6 +28,9 @@
 #define sunReach sunReach_o
 #define n3 n3_o
 #define g_fp g_fp_o
+#define g_lobes g_lobes_o
+#define g_wallK g_wallK_o
+#define g_wallShade g_wallShade_o
 #define nlod nlod_o
 #define n3k n3k_o
 #define safeNorm safeNorm_o
@@ -65,6 +68,9 @@
 #undef sunReach
 #undef n3
 #undef g_fp
+#undef g_lobes
+#undef g_wallK
+#undef g_wallShade
 #undef nlod
 #undef n3k
 #undef safeNorm

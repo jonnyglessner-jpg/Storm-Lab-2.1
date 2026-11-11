@@ -42,6 +42,22 @@ than the library's, and are starting values to tune.
 - Cloud between the LCL and the LFC is smooth and laminar; above the LFC it turns to cauliflower turrets (Stull ch. 14).
 - LP skies are clear and high-based; HP skies are full of low and mid cloud.
 
+## Wall cloud forms
+
+From the user's five reference photographs (2026-11-10) and Stull ch. 14. A wall cloud is an abrupt lowering of the
+rain-free base under the main updraft, where rain-cooled, moistened air from the forward flank is drawn in and condenses
+below the base. Its shape varies from storm to storm and from cycle to cycle:
+
+- A shallow, ragged bowl that curves up to the base at its rim (weak or young lowerings, high bases).
+- A block: a flat floor with crisp, near-vertical sides, two to four times as wide as it is deep (the photographs'
+  commonest; a strongly rotating lowering reads as a cylinder).
+- A stepped lowering: a terrace round a lower inner floor, often with the tail cloud feeding the upper step.
+- A broad cone tapering down toward the tornado (large tornadoes under low bases).
+- Many slope: lower on the side the tail cloud feeds, or on the far side.
+- A low LCL (humid air) hangs bigger, blockier and lower wall clouds; high bases keep small shallow ones.
+
+The game's odds and sizes for these are its own numbers (`StormStructure.WallForm`, `WallSize`), not measured ones.
+
 ## Lifecycle
 
 - The ordinary cell lasts H/w0 + H/v_t: about 50 min.
@@ -71,6 +87,7 @@ than the library's, and are starting values to tune.
 | Mid-level SR wind | hail core just outside the tower, further in stronger flow |
 | Tornado | the web build's surge (the RFD is not separated), at least 1.9x the funnel's top + 0.7 km |
 | CAPE, EL, base | tower reaches the EL at 0.45 sqrt(2 CAPE): 9-20 min |
+| LCL, SRH 0-1 km, seed and cycle | the wall cloud's form: bowl, block, tiered or cone, tilted or level, 0.5-1.1x as wide and 0.85-1.55x as deep as the design's bowl (`-- --wallforms`) |
 | Tornado rope-out | the occlusion drifts the wall cloud back and left at up to 0.6 and 0.5 of the storm's speed, at most 2.6 km: the tornado slows and hooks left |
 | Day draw | cloud base (the parcel's LCL) at most 2 km |
 | Base to EL | glaciation from 55 % of the way up to 1.5 km under the EL |

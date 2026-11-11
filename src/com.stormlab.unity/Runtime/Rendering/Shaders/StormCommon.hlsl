@@ -1,13 +1,13 @@
 // Shared by the storm's compute passes and the lightning medium: the parameter block (StormDesign.cs, 23 float4 slots,
 // then StormTornadoes.cs, 6 more for the detailed tornado, then StormSpin.cs, 5 of angles turned so far, then
-// StormStructure.cs, 1 for the game's own),
+// StormStructure.cs, 2 for the game's own),
 // noise, and the near-ground features. Ported from StormLab's src/storm3d/shaders.ts (WGSL, web build f5bd687, MIT):
 // the SP struct, NOISE and NEAR blocks, kept line for line. Lengths are km in the storm's frame (origin at the volume
 // centre, x east, y north, z up above ground).
 #ifndef STORM_COMMON
 #define STORM_COMMON
 
-float4 _SP[35];
+float4 _SP[36];
 #define S_f      _SP[0]    // xy forward (storm motion) unit, zw left unit
 #define S_base   _SP[1]    // x cloud base, y storm top (EL), z clock s, w storm time min
 #define S_tower  _SP[2]    // x top height, y radius, z amount, w striation
@@ -52,6 +52,11 @@ float4 _SP[35];
 // ---- the game's (StormStructure): xyz this storm's offset into the noise, in tiles (each storm its own texture; zero for
 // the web build's plans), w spare
 #define S_game   _SP[34]
+// the game's wall cloud form (StormStructure.WallForm, by storm and cycle; all zero: the web build's bowl): x block (0 a
+// bowl whose underside curves up to the base at its rim .. 1 a flat floor with near-vertical, crisp sides), y cone (its
+// underside sloping straight down to its middle), z tilt (-1 .. 1: the floor lower toward the tail cloud's side, or
+// away from it), w tiers (a stepped underside: a half-depth terrace round an inner floor)
+#define S_wform  _SP[35]
 #define S_spin5  _SP[33]   // how far the tornado's textures have risen, each in its own radii (StormSpin.RiseRates): x the funnel's
                            // skin, y the central core, z the dust (in the core's frame), w the satellite tornado
 
@@ -313,10 +318,39 @@ float4 wallNoise(float2 dr, float z, float fine, bool smoothBase, float3 o)
     return r;
 }
 
+// The game's lobes on the wall cloud (STORM_WALL_LOBES: StormMarch.compute alone defines it, and gn, its game noise; user,
+// 2026-11-09: the wall cloud "kind of bland. Needs more definition and detail"). The march asks for them (g_lobes: 1, or
+// 2 where the key light reaches the point) and nearField adds them to the wall cloud's own density, before its scud, the
+// surge's bite and its joins with the tail cloud and the rest, so they are on the wall cloud and nothing else. It hands
+// back what the march needs of them: g_wallK how much of them this point has (0: none; the march cuts the cloud at a
+// crisper threshold there) and g_wallShade how far this point is on a lobe's far side from its light (0 .. g_wallK).
+// How they cost nothing (StormPerfCheck, 2026-11-10; the cone tornado at 0.4 km, 64 near-field steps a pixel: 11.9 ms
+// without them, 13.8 as first written in the march, 12.0 now), for anything else added to a step:
+//  - Nothing the same at every step of a ray is worked out here: it comes from the CPU (_WallL.., StormRenderer.
+//    WallLobeParams). The compiler lifts arithmetic on the block's values alone out of the march's loop and holds each
+//    result in a register for the whole of it, and the march has none to spare (`1 - ss(1.1 Rw, 1.3 Rw + 0.3, r)` alone
+//    cost 1.5 ms with the same steps a pixel).
+//  - Only one value goes on from here to where the march lights the cloud (g_wallShade): four of them (the point in the
+//    wall cloud's frame, the lobes' field, their amount), held across the beaver tail's evaluation there, cost 1.6 ms.
+static float g_lobes = 0.0, g_wallK = 0.0, g_wallShade = 0.0;
+#ifdef STORM_WALL_LOBES
+float4 gn(float3 q, float k);
+// x: the lowest height with lobes, km (the wall cloud's foot less 0.4); y, z: round a tornado, the radius from the funnel's
+// top where they begin (1.2 junction radii) and 1 / the distance they come in over (to 2.2); w: how much of that fade there
+// is (0 without a tornado)
+float4 _WallL;
+// x: the lobes' depth in the density (less on a block); y: 1 / the radius inside which the open sky is straight below (half
+// the wall cloud's); z: the height lowered cloud takes its sky light at, just inside the base, as a share of the volume's
+float4 _WallL2;
+// xyz: 0.12 km toward the key light, in the wall cloud's turning frame (the probe's step toward the sun)
+float4 _WallL3;
+#endif
+
 float nearField(float3 p, float fine)
 {
     float zb = S_base.x; float clock = S_base.z;
     float v = 0.0;
+    g_wallK = 0.0; g_wallShade = 0.0;
     if (S_wall.w > 0.0)
     {
         float2 wc = S_wall.xy; float Rw = S_wall.z; float lw = S_wall2.x;
@@ -373,11 +407,53 @@ float nearField(float3 p, float fine)
             // when the RFD's stationary outline surrounds the cloud. They shrink with it.
             float lobe = 0.07 * cos(3.0 * ang + 0.8) + 0.035 * sin(5.0 * ang - 0.4);
             float contourR = Rw * (1.0 + lobe);
-            float bowl = 1.0 - pow(saturate(rw / contourR), 2.4);
-            float bot = zb - lw * (0.15 + 0.85 * bowl + 0.1 * cos(2.0 * ang + 0.5)) + (n - 0.5) * 0.12 - (fringe - 0.5) * (smoothBase ? 0.1 : 0.18);
+            // The game's forms (S_wform; user, 2026-11-10, with five photographs: "wall clouds sometimes have sharper, more
+            // vertical edges ... the supercells need to have variety"). The web build's is one bowl, deepest in the
+            // middle and curving up to the base at its rim, so every wall cloud had the same sloping sides. Block: the
+            // bowl's power rises (2.4 to 12), so the floor is flat nearly to the rim and the sides stand, and the rim and
+            // the floor are cut over a third of the distance with less of the outline's noise. Cone: the underside
+            // slopes straight down to its middle. Tiers: the depth is stepped, a terrace at half depth round an inner
+            // floor. Tilt: the floor hangs lower toward the tail cloud's side (or away from it). Where a block's side
+            // meets the base it eases out into it (a fillet), so the two are one cloud. All zero: the web build's.
+            float blk = S_wform.x;
+            float xr = saturate(rw / contourR);
+            float bowl = 1.0 - pow(xr, lerp(2.4, 12.0, blk));
+            if (S_wform.y > 0.0) bowl = lerp(bowl, 1.0 - xr, S_wform.y);
+            if (S_wform.w > 0.0) { float s2 = bowl * 2.0; bowl = lerp(bowl, 0.5 * (floor(s2) + ss(0.3, 0.7, frac(s2))), S_wform.w); }
+            float2 tdw = normalize(tailCloudAim() - wc + float2(0.0001, 0.0));
+            float slope = 1.0 + 0.35 * S_wform.z * clamp(dot(dw, tdw) / max(Rw, 0.1), -1.0, 1.0);
+            float bot = zb - lw * (0.15 + 0.85 * bowl + 0.1 * cos(2.0 * ang + 0.5) * (1.0 - blk)) * slope + (n - 0.5) * 0.12 - (fringe - 0.5) * (smoothBase ? 0.1 : 0.18);
             float join = ss(zb - 0.1, zb + 1.0, p.z);
-            float under = smoothBase ? ss(bot - 0.1, bot + 0.12, p.z) : ss(bot - 0.03, bot + 0.05, p.z);
-            float w = ss(contourR + 0.15 + join * 0.8, contourR - 0.2 + join * 0.8, rw + (n - 0.5) * 0.65) * under * ss(zb + 1.8, zb + 0.9, p.z);
+            float under = smoothBase ? ss(bot - lerp(0.1, 0.045, blk), bot + lerp(0.12, 0.055, blk), p.z) : ss(bot - 0.03, bot + 0.05, p.z);
+            float fil = ss(zb - 0.35 * lw - 0.05, zb + 0.05, p.z); fil = 0.3 * blk * fil * fil;
+            float w = ss(contourR + lerp(0.15, 0.05, blk) + fil + join * 0.8, contourR - lerp(0.2, 0.07, blk) + fil + join * 0.8, rw + (n - 0.5) * lerp(0.65, 0.3, blk)) * under * ss(zb + 1.8, zb + 0.9, p.z);
+#ifdef STORM_WALL_LOBES
+            // The lobes (see g_lobes above): in the rim's turning frame (dr: one rigid frame), knuckles 150-500 m across
+            // over finer ones 50-150 m, added near the surface (where w is neither nothing nor far inside). Round a
+            // tornado: none within 1.2 junction radii of the funnel's top, all of them from 2.2 (the junction's and the
+            // ring's frames turn faster there, and the funnel takes the wall cloud's plain light where they meet; by
+            // the frames' own share, 1 / r^3, a big funnel took them off nine tenths of the wall cloud). A block's
+            // standing sides keep more of their line.
+            if (g_lobes > 0.5 && w > 0.005 && p.z > _WallL.x)
+            {
+                float tj = saturate((length(p.xy - S_tor3.xy) - _WallL.y) * _WallL.z);
+                float lk = 1.0 - _WallL.w * (1.0 - tj * tj * (3.0 - 2.0 * tj));
+                if (lk > 0.01)
+                {
+                    float3 qw = float3(dr, p.z);
+                    float lobeN = gn(qw, 0.4).g;
+                    float dW = lerp(lobeN, gn(qw + float3(2.3, 0.9, 1.7), 1.2).b, 0.28 * lk);
+                    float amp = lk * saturate(w * 4.0);
+                    w = max(w + (dW - 0.5) * _WallL2.x * amp, 0.0);
+                    // Each lobe shades its own far side: a probe of the broad lobes 120 m toward the sun where it reaches
+                    // the point (g_lobes 2), otherwise toward the open sky below and outside the lowering, where its light
+                    // comes from under the base (straight down under its middle). By the lobes' slope alone, so it
+                    // averages out over the cloud and fades with them. (The finer lobes in it left the face pitted.)
+                    float3 qp = qw + (g_lobes > 1.5 ? _WallL3.xyz : normalize(float3(dr / max(rw, 0.3) * min(rw * _WallL2.y, 1.0), -0.8)) * 0.12);
+                    g_wallK = amp; g_wallShade = amp * saturate((gn(qp, 0.4).g - lobeN) * 5.0);
+                }
+            }
+#endif
             if (smoothBase)
             {
                 // scud: thin, soft fragments hugging the base, turning with it, gathered under its middle and none near its
@@ -420,7 +496,7 @@ float nearField(float3 p, float fine)
                 float far = saturate((s - Rw) / 4.5);
                 float hw = lerp(0.6, 0.25, far) * (0.85 + 0.3 * nt);
                 float x = abs(qq) / hw;
-                float wallD = lw * (0.15 + 0.85 * (1.0 - pow(saturate(s / Rw), 2.4)));
+                float wallD = lw * (0.15 + 0.85 * (1.0 - pow(saturate(s / Rw), lerp(2.4, 12.0, S_wform.x))));
                 float tailD = (0.8 * lw + 0.05) * (1.0 - 0.6 * far);
                 float D = lerp(wallD, tailD, ss(0.3 * Rw, 1.1 * Rw, s));
                 float tb = zb - D * (1.0 - min(x * x * x, 1.0)) + (nt - 0.5) * 0.1;
@@ -490,7 +566,11 @@ float nearField(float3 p, float fine)
             // the lip is the rolled underside of the mesocyclone's rim: none of it sticks out beyond the cloud above
             float mR0 = S_tower.y * (1.0 + baseFlare(0.0)) + mesoExtra(0.0);
             float cover = ss(mR0 + 0.2, mR0 - 1.2, length(p.xy - mesoCentre(0.0)));
-            v = max(v, S_rfdb.w * lip * cover);
+            // (the game's look, S_struct; user, 2026-11-10: "all the cloud features ... blended together ... with smooth
+            // transitions": a soft union, as the tail cloud's with the wall cloud, where the larger of the two left a
+            // crease along the line they met on)
+            float hv = S_rfdb.w * lip * cover;
+            v = S_struct ? v + hv - v * hv : max(v, hv);
         }
     }
     if (S_anti.z > 0.0)
@@ -505,10 +585,12 @@ float nearField(float3 p, float fine)
             float la = (0.1 + 0.25 * S_anti.z) * (1.0 - 0.5 * pow(min(ra / Ra, 1.2), 4.0));
             float bot = zb - la - (na - 0.5) * 0.12;
             float lw2 = ss(Ra + 0.1, Ra - 0.25, ra + (na - 0.5) * 0.6) * ss(bot - 0.03, bot + 0.05, p.z) * ss(zb + 0.2, zb, p.z);
-            v = max(v, S_anti.z * lw2 * 0.9);
+            float av2 = S_anti.z * lw2 * 0.9;
+            v = S_struct ? v + av2 - v * av2 : max(v, av2);
         }
     }
-    v = max(v, beaverTail(p, fine));
+    float bt = beaverTail(p, fine);
+    v = S_struct ? v + bt - v * bt : max(v, bt);
     return v * (1.0 - clearSlot(p));
 }
 

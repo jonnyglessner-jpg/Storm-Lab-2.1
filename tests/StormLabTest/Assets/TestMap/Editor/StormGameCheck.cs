@@ -461,12 +461,68 @@ public static class StormGameCheck
             float pitchUp = pi >= 0 && pi + 1 < argv.Length ? float.Parse(argv[pi + 1], CultureInfo.InvariantCulture) : 5f;
             // -slGameSpot20: 2.0's tornado march (6 m steps, its lighting and reach), to compare with the game's
             if (argv.Contains("-slGameSpot20")) foreach (var r in game.Storms) { r.tornadoStep = 0f; r.tornadoLightAll = true; }
+            // -slGameWallForms "block,cone,tilt,tiers;...": the same views with every wall cloud in each of these forms
+            // in turn (StormStructure.WallFormOverride; "own": each storm's own), named ..._form<k>.png
+            int wfi = Array.IndexOf(argv, "-slGameWallForms");
+            var forms = wfi >= 0 && wfi + 1 < argv.Length ? argv[wfi + 1].Split(';') : new[] { "" };
+            for (int fk = 0; fk < forms.Length; fk++)
+            {
+            if (forms[fk].StartsWith("L:"))
+            {
+                // a look instead of a form, "L:<stops brighter>:<aces|neutral|none>[:<toe strength>:<toe length>:<shoulder strength>]"
+                // (the panel's exposure compensation and the scene's tonemapping; a custom curve when the three numbers follow)
+                var lk = forms[fk].Split(':');
+                panel.compensation = float.Parse(lk[1], CultureInfo.InvariantCulture);
+                panel.grade = lk.Length > 2 && lk[2] == "grade"; if (panel.grade) panel.Apply();
+                foreach (var vv in Object.FindObjectsByType<UnityEngine.Rendering.Volume>(FindObjectsSortMode.None))
+                    if (vv.isGlobal && vv.sharedProfile && vv.sharedProfile.Has<UnityEngine.Rendering.HighDefinition.Tonemapping>() && vv.profile.TryGet(out UnityEngine.Rendering.HighDefinition.Tonemapping tm))
+                    {
+                        var mode = lk.Length > 2 ? lk[2] : "aces";
+                        if (mode == "grade") break;
+                        if (lk.Length > 5 && !lk[3].Contains("="))
+                        {
+                            tm.mode.Override(UnityEngine.Rendering.HighDefinition.TonemappingMode.Custom);
+                            tm.toeStrength.Override(float.Parse(lk[3], CultureInfo.InvariantCulture)); tm.toeLength.Override(float.Parse(lk[4], CultureInfo.InvariantCulture));
+                            tm.shoulderStrength.Override(float.Parse(lk[5], CultureInfo.InvariantCulture));
+                        }
+                        else tm.mode.Override(mode == "neutral" ? UnityEngine.Rendering.HighDefinition.TonemappingMode.Neutral : mode == "none" ? UnityEngine.Rendering.HighDefinition.TonemappingMode.None : UnityEngine.Rendering.HighDefinition.TonemappingMode.ACES);
+                    }
+                // (the camera in place first: the view meter reads the picture, and the exposure follows it over a few seconds)
+                cam.transform.SetPositionAndRotation(at + Vector3.up * heights[0] * 1000f, Quaternion.Euler(-pitchUp, v[4], 0f));
+                // further "key=value" fields: con (contrast, -100..100), sat (saturation), sh (the shadows' gain, 1 = none),
+                // wb (white balance temperature, -100..100)
+                foreach (var vv in Object.FindObjectsByType<UnityEngine.Rendering.Volume>(FindObjectsSortMode.None))
+                    if (!panel.grade && vv.isGlobal && vv.sharedProfile && vv.sharedProfile.Has<UnityEngine.Rendering.HighDefinition.Tonemapping>())
+                    {
+                        T Get<T>() where T : UnityEngine.Rendering.VolumeComponent => vv.profile.TryGet(out T c) ? c : vv.profile.Add<T>(true);
+                        float F(string key, float dflt) { foreach (var x in lk) if (x.StartsWith(key + "=")) return float.Parse(x.Substring(key.Length + 1), CultureInfo.InvariantCulture); return dflt; }
+                        var ca = Get<UnityEngine.Rendering.HighDefinition.ColorAdjustments>();
+                        ca.contrast.Override(F("con", 0f)); ca.saturation.Override(F("sat", 0f));
+                        var smh = Get<UnityEngine.Rendering.HighDefinition.ShadowsMidtonesHighlights>();
+                        float shg = F("sh", 1f); smh.shadows.Override(new Vector4(1f, 1f, 1f, shg - 1f)); smh.shadowsStart.Override(0f); smh.shadowsEnd.Override(F("she", 0.3f));
+                        var wb = Get<UnityEngine.Rendering.HighDefinition.WhiteBalance>(); wb.temperature.Override(F("wb", 0f));
+                    }
+                float tl = Time.realtimeSinceStartup;
+                while (Time.realtimeSinceStartup - tl < 6f) { StormLabTestKit.Pump(cam); yield return null; }
+                rep.AppendLine($"- form {fk + 1} ({forms[fk]}): EV100 {panel.ExposureEV:0.00}, storm lift {panel.StormLift:0.00}, shade {panel.StormShade:0.000}, view trim {panel.ViewTrim:0.00} (picture log-average {StormViewMeter.LogAverage:0.000}, bright {StormViewMeter.Bright:0.00})");
+            }
+            else if (forms[fk].Length > 0)
+            {
+                if (forms[fk] == "own") StormStructure.WallFormOverride = null;
+                else { var w = forms[fk].Split(',').Select(x => double.Parse(x, CultureInfo.InvariantCulture)).ToArray(); StormStructure.WallFormOverride = (w[0], w[1], w[2], w[3]); }
+                // (the game runs on: the storms take the form with their next frame, and their volumes with the next repaint)
+                float tf = Time.realtimeSinceStartup;
+                while (Time.realtimeSinceStartup - tf < 3f) yield return null;
+                foreach (var r in game.Storms) if (r && r.gameObject.activeInHierarchy)
+                    rep.AppendLine($"- form {fk + 1} ({forms[fk]}): storm wall cloud form in the frame {r.Frame.param[StormStructure.FormSlot * 4]:0.00}, {r.Frame.param[StormStructure.FormSlot * 4 + 1]:0.00}, {r.Frame.param[StormStructure.FormSlot * 4 + 2]:0.00}, {r.Frame.param[StormStructure.FormSlot * 4 + 3]:0.00}; radius {r.Frame.param[6 * 4 + 2]:0.00} km, lowering {r.Frame.param[7 * 4]:0.00} km");
+            }
+            string formTag = forms[fk].Length > 0 ? $"_form{fk + 1}" : "";
             foreach (var up in heights)
             for (int h = (int)v[4]; h <= (int)v[5]; h += 30)
             {
                 cam.transform.SetPositionAndRotation(at + Vector3.up * up * 1000f, Quaternion.Euler(-pitchUp, h, 0f));
                 foreach (var x in Frames(20)) yield return x;
-                var name = $"spot_live_{up:00}km_{h:000}.png";
+                var name = $"spot_live_{up:00}km_{h:000}{formTag}.png";
                 var rt = new RenderTexture(1600, 900, 24);
                 var keepT = cam.targetTexture; cam.targetTexture = rt;
                 cam.Render(); cam.Render();
@@ -504,6 +560,8 @@ public static class StormGameCheck
                     }
                 }
             }
+            }
+            StormStructure.WallFormOverride = null;
             game.playing = false;
             rep.AppendLine().AppendLine($"Live views at game {game.gameMinutes:0.0} min: `Screenshots/spot_live_*.png`.");
             yield break;

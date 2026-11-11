@@ -114,6 +114,57 @@ namespace StormLab
 
         /// <summary>the game's own slot in the parameter block (S_game): xyz the storm's noise offset</summary>
         public const int Slot = StormSpin.Slot0 + StormSpin.Slots;
+        /// <summary>the wall cloud's form (S_wform): x block, y cone, z tilt, w tiers</summary>
+        public const int FormSlot = Slot + 1;
+
+        /// <summary>checks only: every wall cloud takes this form (block, cone, tilt, tiers) instead of its own</summary>
+        public static (double block, double cone, double tilt, double tiers)? WallFormOverride;
+
+        /// <summary>
+        /// The form of a cycle's wall cloud (user, 2026-11-10, with five photographs: "wall clouds sometimes have sharper,
+        /// more vertical edges ... the supercells need to have variety like you see in these storms"). The web build
+        /// draws one bowl, its underside curving up to the base at the rim. Each cycle of each storm draws its own
+        /// (stream 540 + cycle, so a new wall cloud is a new draw, made while there is none to see):
+        ///   bowl    the web build's, a little flattened at most
+        ///   block   a flat floor and near-vertical, crisp sides (the cylinder of a strongly rotating lowering)
+        ///   tiered  a stepped underside: a terrace round a lower inner floor
+        ///   cone    the underside sloping straight down to its middle (a broad funnel-shaped lowering)
+        /// and any of them may hang lower on the tail cloud's side or the far one (tilt).
+        /// The odds lean with the environment (docs/meteorology/storm-structure.md): a low, moist base (a low LCL)
+        /// hangs big blocky lowerings, strong low-level rotation (0-1 km SRH) stands their sides up, and a high base
+        /// keeps the shallow bowl. The numbers are the game's own.
+        /// </summary>
+        public static (double block, double cone, double tilt, double tiers) WallForm(StormPlan P, int cycle)
+        {
+            if (WallFormOverride.HasValue) return WallFormOverride.Value;
+            if (P?.seed == null || P.env == null) return (0, 0, 0, 0);
+            var r = new StormRng(P.seed.Value, 540 + Math.Max(cycle, 0));
+            double moist = C.Clamp((1.5 - P.env.lclKm) / 0.9, 0, 1), rot = C.Clamp((P.env.srh1 - 80) / 220, 0, 1);
+            double wBowl = 1.1 - 0.5 * moist, wBlock = 0.4 + 0.7 * moist + 0.5 * rot, wTier = 0.35 + 0.4 * moist + 0.2 * rot, wCone = 0.35 + 0.3 * rot;
+            double u = r.U() * (wBowl + wBlock + wTier + wCone);
+            double block, cone = 0, tiers;
+            if (u < wBowl) { block = r.Range(0, 0.25); tiers = r.Range(0, 0.25); }
+            else if (u < wBowl + wBlock) { block = r.Range(0.65, 1); tiers = r.Range(0, 0.2); }
+            else if (u < wBowl + wBlock + wTier) { block = r.Range(0.3, 0.6); tiers = r.Range(0.7, 1); }
+            else { block = r.Range(0, 0.2); cone = r.Range(0.6, 1); tiers = r.Range(0, 0.35); }
+            double tilt = r.U() < 0.45 ? r.Range(-0.8, 0.8) : r.Range(-0.15, 0.15);
+            return (block, cone, tilt, tiers);
+        }
+
+        /// <summary>How wide and how deep a form's wall cloud is, against the design's: a block is narrower and hangs
+        /// lower (the photographs' blocks are two to four times as wide as they are deep; the design's bowl is eight), a
+        /// cone a little of both, and each cycle's is a little wider or narrower, deeper or shallower, of its own
+        /// (stream 560 + cycle).</summary>
+        public static (double wide, double deep) WallSize(StormPlan P, int cycle, double block, double cone)
+        {
+            double jw = 1, jd = 1;
+            if (!WallFormOverride.HasValue && P?.seed != null)
+            {
+                var r = new StormRng(P.seed.Value, 560 + Math.Max(cycle, 0));
+                jw = r.Range(0.8, 1.1); jd = r.Range(0.85, 1.2);
+            }
+            return (C.Lerp(1, 0.62, block) * C.Lerp(1, 0.8, cone) * jw, C.Lerp(1, 1.3, block) * (1 + 0.25 * cone) * jd);
+        }
 
         /// <summary>this storm's offset into the noise tiles (S_game.xyz), from its seed: no two storms share a texture</summary>
         public static void NoiseOffset(StormPlan P, StormFrame F)
@@ -223,6 +274,9 @@ namespace StormLab
             if (P.cycles == null || t < P.cycles[0].start) { a[32 * 4 + 3] = 1; return; }
             int ci = 0; for (int i = 0; i < P.cycles.Length; i++) if (t >= P.cycles[i].start) ci = i;
             var cyc = P.cycles[ci];
+            var (formBlock, formCone, formTilt, formTiers) = WallForm(P, ci);
+            var (formWide, formDeep) = WallSize(P, ci, formBlock, formCone);
+            a[FormSlot * 4] = (float)formBlock; a[FormSlot * 4 + 1] = (float)formCone; a[FormSlot * 4 + 2] = (float)formTilt; a[FormSlot * 4 + 3] = (float)formTiers;
             double tau = StormCycles.CycleTime(cyc, t);
             bool multi = cyc.shape == TornadoShape.Multivortex;
             double big = double.IsNaN(cyc.bigness) ? (ci > 0 ? 1 : 0) : cyc.bigness;
@@ -256,8 +310,11 @@ namespace StormLab
 
             // the wall cloud: as big as the design makes it for a tower this size, and round the tornado's top
             double wallAmt = a[6 * 4 + 3];
-            double wallR = Math.Max(a[6 * 4 + 2], (1.3 * torTop + 0.35) * Ramp(torAmt, 0.02, 0.3));
-            a[6 * 4 + 2] = (float)Math.Min(wallR, 0.45 * R + 0.6);
+            double wallNeed = (1.3 * torTop + 0.35) * Ramp(torAmt, 0.02, 0.3);
+            double wallR = Math.Max(a[6 * 4 + 2], wallNeed);
+            // (its form's own width, never under the tornado's need; its depth, never within 300 m of the ground)
+            a[6 * 4 + 2] = (float)Math.Max(Math.Min(wallNeed, 0.45 * R + 0.6), Math.Min(wallR, 0.45 * R + 0.6) * formWide);
+            a[7 * 4] = (float)Math.Min(a[7 * 4] * formDeep, Math.Max(a[1 * 4] - 0.3, a[7 * 4]));
             // move the wall cloud and everything hung from it (the tornado's top and foot, a satellite)
             double ddx = wcx - a[6 * 4], ddy = wcy - a[6 * 4 + 1];
             a[6 * 4] = (float)wcx; a[6 * 4 + 1] = (float)wcy;

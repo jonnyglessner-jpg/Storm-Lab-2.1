@@ -50,7 +50,7 @@ namespace StormLab
         readonly RenderTexture rainKeep;
         bool rainKeepValid;
         readonly ComputeShader cs;
-        readonly int kBuild, kLight, kSky, kGround, kRain;
+        readonly int kBuild, kLight, kSky, kGround, kRain, kFill;
         readonly Vector4[] sp = new Vector4[StormSpin.NSLOT];
         int slab = -1, slabZ;
         float pendingBase;
@@ -60,11 +60,16 @@ namespace StormLab
         public StormVolume(StormQuality q, ComputeShader shader)
         {
             cs = shader;
-            kBuild = cs.FindKernel("Build"); kLight = cs.FindKernel("Light"); kSky = cs.FindKernel("SkyVis"); kGround = cs.FindKernel("GroundLight"); kRain = cs.FindKernel("RainUnderCloud");
+            kBuild = cs.FindKernel("Build"); kLight = cs.FindKernel("Light"); kSky = cs.FindKernel("SkyVis"); kGround = cs.FindKernel("GroundLight"); kRain = cs.FindKernel("RainUnderCloud"); kFill = cs.FindKernel("SkyFill");
             // the web build's QUALITY_HIGH and QUALITY_LOW
             if (q == StormQuality.Low) { NV = 256; NZ = 72; } else { NV = 416; NZ = 144; }
             LN = Mathf.Max(8, NV / 3); LZ = Mathf.Max(4, NZ / 3);
-            SN = Mathf.Max(8, LN / 2); SZ = Mathf.Max(4, LZ / 2);
+            // The sky visibility: half the light grid across, all of it in height (High: 2.6 km cells, 0.375 km deep).
+            // It was half in height too (0.75 km layers; user, 2026-11-09, plains game 816557: the wall cloud 7 to 9 times
+            // as light as the base it hangs from): a base 1.14 km up lay in the second layer, inside cloud, and its
+            // 0.62 km lowering in the first, open air that sees the horizon all round, so the lowering took the open
+            // layer's sky light right up to the base. At this depth the lowering's upper part is as dark as the base.
+            SN = Mathf.Max(8, LN / 2); SZ = LZ;
             dens = Vol(NV, NZ, "storm volume", RenderTextureFormat.ARGB32);
             light = Vol(LN, LZ, "storm light", RenderTextureFormat.ARGBHalf);       // r: key light optical depth
             lightWeb = Vol(LN, LZ, "storm light (web build)", RenderTextureFormat.R8);
@@ -135,7 +140,9 @@ namespace StormLab
         public void Relight(CommandBuffer cmd, Vector3 keyVol, float zbKm)
         {
             LightSlab(cmd, keyVol, zbKm, 0, LZ);
-            SkyAndGround(cmd);
+            SkySlab(cmd, 0, SZ);
+            SkyFill(cmd);
+            Ground(cmd);
         }
 
         /// <summary>The light grid's levels z0 .. z0 + nz (z0 a multiple of 4)</summary>
@@ -151,18 +158,36 @@ namespace StormLab
             cmd.DispatchCompute(cs, kLight, G(LN, 4), G(LN, 4), G(nz, 4));
         }
 
-        /// <summary>The sky visibility and the ground light (from the light grid as it is)</summary>
-        void SkyAndGround(CommandBuffer cmd)
+        /// <summary>The sky visibility's levels z0 .. z0 + nz (z0 a multiple of 4)</summary>
+        void SkySlab(CommandBuffer cmd, int z0, int nz)
         {
             cmd.SetComputeTextureParam(cs, kSky, "_Dens", dens);
             cmd.SetComputeTextureParam(cs, kSky, "_OutS", skyVis);
             cmd.SetComputeVectorParam(cs, "_LM", sunReach);   // (the sky's light through rain and cloud by the sun's law, unified)
             cmd.SetComputeVectorParam(cs, "_LDims", new Vector4(SN, SZ, L, ZT));
-            // all its levels: SkyVis takes its first level from _LSlab too, which the light grid's upper half left set
+            // its own first level, always set: SkyVis takes it from _LSlab too, which the light grid's upper half left set
             // (2026-10-30: the sky visibility's lower half stopped updating in the game, every base lit as open sky)
-            cmd.SetComputeVectorParam(cs, "_LSlab", Vector4.zero);
-            cmd.DispatchCompute(cs, kSky, G(SN, 4), G(SN, 4), G(SZ, 4));
+            cmd.SetComputeVectorParam(cs, "_LSlab", new Vector4(z0, 0, 0, 0));
+            cmd.DispatchCompute(cs, kSky, G(SN, 4), G(SN, 4), G(nz, 4));
+        }
 
+        /// <summary>The horizon's light under the base carried up into the cloud above it (SkyFill: unified lighting),
+        /// once the sky visibility's levels are all in.</summary>
+        void SkyFill(CommandBuffer cmd)
+        {
+            if (sunReach.x < 0.5f) return;
+            cmd.SetComputeTextureParam(cs, kFill, "_Dens", dens);
+            cmd.SetComputeTextureParam(cs, kFill, "_OutS", skyVis);
+            cmd.SetComputeVectorParam(cs, "_LM", sunReach);
+            cmd.SetComputeVectorParam(cs, "_LDims", new Vector4(SN, SZ, L, ZT));
+            cmd.DispatchCompute(cs, kFill, G(SN, 8), G(SN, 8), 1);
+        }
+
+        /// <summary>The ground light (from the light grid and the sky visibility as they are)</summary>
+        void Ground(CommandBuffer cmd)
+        {
+            cmd.SetComputeTextureParam(cs, kGround, "_SkyIn", skyVis);
+            cmd.SetComputeVectorParam(cs, "_LM", sunReach);
             cmd.SetComputeTextureParam(cs, kGround, "_LightIn", light);
             cmd.SetComputeTextureParam(cs, kGround, "_OutG", ground);
             cmd.SetComputeVectorArrayParam(cs, "_Towns", towns);
@@ -194,9 +219,9 @@ namespace StormLab
         /// <summary>
         /// This frame's share of a repaint in progress; true when it (and the relight) finished. The relight is spread too
         /// (a game optimisation, 2026-10-30): the frame that finished the repaint also relit the whole volume, about 2 ms at
-        /// once on an RX 7900 XT (StormPerfCheck); now the lower and upper halves of the light grid, then the sky visibility
-        /// and ground light, each on a frame of its own. Meanwhile the march reads the light grid as it stands, as it
-        /// already read the volume part repainted.
+        /// once on an RX 7900 XT (StormPerfCheck); now the lower and upper halves of the light grid, then the lower and
+        /// upper halves of the sky visibility (the upper with the ground light), each on a frame of its own. Meanwhile the
+        /// march reads the light grid as it stands, as it already read the volume part repainted.
         /// </summary>
         public bool Step(CommandBuffer cmd)
         {
@@ -210,9 +235,16 @@ namespace StormLab
             }
             else if (slab == nBuild) LightSlab(cmd, pendingKey, pendingBase, 0, lzHalf);
             else if (slab == nBuild + 1) LightSlab(cmd, pendingKey, pendingBase, lzHalf, LZ - lzHalf);
-            else SkyAndGround(cmd);
+            // (the sky visibility in quarters since 2026-11-10: its rays run on to the anvil, about twice the samples)
+            else
+            {
+                int k = slab - nBuild - 2, szQ = Mathf.Max(4, Mathf.CeilToInt(SZ / 16f) * 4), z0 = k * szQ;
+                int nzq = Mathf.Min(k == 3 ? SZ - z0 : szQ, SZ - z0);
+                if (nzq > 0) SkySlab(cmd, z0, nzq);
+                if (k == 3) { SkyFill(cmd); Ground(cmd); }
+            }
             slab++;
-            bool done = slab > nBuild + 2;
+            bool done = slab > nBuild + 5;
             if (done) slab = -1;
             return done;
         }
