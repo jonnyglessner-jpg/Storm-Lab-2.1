@@ -8,6 +8,7 @@
 #pragma kernel Light
 #pragma kernel SkyVis
 #pragma kernel GroundLight
+#pragma kernel SkyFill
 
 #include "Packages/com.stormlab.unity/Runtime/Rendering/Shaders/StormCommon.hlsl"
 
@@ -699,16 +700,35 @@ void Light(uint3 gid : SV_DispatchThreadID)
 RWTexture3D<float4> _OutS;
 float4 _LM;   // the unified lighting's sun reach (StormVolume.sunReach): x octaves, y octave extinction, z diffusion, w diffused sun; x = 0 otherwise
 
+// Unified lighting, 2026-11-10 (user: "another full lighting overhaul ... things just still aren't looking right", with
+// photographs where the storm is a silhouette against a bright horizon and its lowerings are as dark as the base): the
+// rays follow through to the anvil. Eight steps growing 1.6x end 17.5 km out with the last two 4 and 7 km long, so a
+// ray straight up stepped over an anvil 2 km deep (the sky's cap read half open 20 km out under a solid anvil), and a
+// ray 8 degrees above the horizon had risen 2.4 km when it stopped: the whole horizon under the anvil, which runs on for
+// 60 km and more downwind, counted as open sky, and that lit every lowering from the inflow side as no real storm is
+// lit. Now no step rises more than 1.2 km and the ray runs on to the volume's top or its edge (to 24 steps; it stops
+// once nothing more can come through), so the horizon is open only where the anvil ends.
 float skyTrace(float3 p, float3 d)
 {
     float tau = 0.0, a = 0.0, s = 0.25;
+    if (_LM.x > 0.5)
+    {
+        float sMax = 1.2 / max(d.z, 0.139);
+        [loop] for (int k2 = 0; k2 < 24; k2++)
+        {
+            float3 q2 = p + d * (a + 0.5 * s);
+            if (q2.z > _LDims.w || q2.z < 0.0 || abs(q2.x) > _LDims.z || abs(q2.y) > _LDims.z || tau > 30.0) break;
+            tau += betaL(q2) * s; a += s; s = min(s * 1.6, sMax);
+        }
+        return sunReach(tau, _LM);
+    }
     [unroll] for (int k = 0; k < 8; k++)
     {
         float3 q = p + d * (a + 0.5 * s);
         if (q.z > _LDims.w || q.z < 0.0 || abs(q.x) > _LDims.z || abs(q.y) > _LDims.z) break;
         tau += betaL(q) * s; a += s; s *= 1.6;
     }
-    return _LM.x > 0.5 ? sunReach(tau, _LM) : exp(-0.1 * tau);
+    return exp(-0.1 * tau);
 }
 
 [numthreads(4, 4, 4)]
@@ -735,6 +755,37 @@ void SkyVis(uint3 gid : SV_DispatchThreadID)
     _OutS[id] = float4(zen * 0.2, mid / 6.0, hor / 8.0, hk / max(wk, 1e-4));
 }
 
+// Unified lighting, 2026-11-10 (user: flat, black undersides; the wall cloud lighter than the base it hangs from). The
+// light under a storm's base comes in from the horizon beneath it, and a cloud's underside is lit by it: it goes on up
+// into the cloud by the same law as any light through cloud (sunReach of the depth crossed). The rays above cannot say
+// so: all of them rise, so from a cell inside the base every one runs kilometres through cloud and it reads black, while
+// a lowering under the base, in the open cells, took the horizon's light whole: the base 3.5 to 9 times darker than its
+// own wall cloud. Here each column is climbed once: the horizon's light at the last open level is carried up through
+// the cloud above it, and a cell that sees less than that takes it. (b and a: the horizon, and its sunward share.)
+// An underside catches the horizon's light at a grazing angle, on its lumps: UnderShare of what a face turned to it
+// would (the band 0-20 degrees up, on a rough surface facing down, against one facing it). 0.03: at 0.3 and 0.1 the base
+// came out pale, and at 0.06 bases seen from 6-10 km lost the dark middle and lighter rim that give them depth (the
+// road frames of game 816557); the base is meant to stay dark, about as bright as the ground under it.
+[numthreads(8, 8, 1)]
+void SkyFill(uint3 id : SV_DispatchThreadID)
+{
+    uint nv = (uint)_LDims.x; uint nz = (uint)_LDims.y;
+    if (id.x >= nv || id.y >= nv) return;
+    float dx = 2.0 * _LDims.z / _LDims.x; float dz = _LDims.w / _LDims.y;
+    float2 carry = 0.0; float tau = 0.0;
+    for (uint z = 0; z < nz; z++)
+    {
+        uint3 c = uint3(id.xy, z);
+        float4 v = _OutS[c];
+        float3 pos = float3(-_LDims.z + (id.x + 0.5) * dx, -_LDims.z + (id.y + 0.5) * dx, (z + 0.5) * dz);
+        tau += betaL(pos) * dz;
+        float t = sunReach(tau, _LM);
+        const float UnderShare = 0.03;
+        if (v.b >= carry.x * t * UnderShare) { carry = v.ba; tau = 0.0; }
+        else { v.b = carry.x * t * UnderShare; v.a = max(v.a, carry.y * t * UnderShare); _OutS[c] = v; }
+    }
+}
+
 // ------------------------------------------------------------------------------------------------ ground light
 // StormLab 2.0: how lit the ground is, averaged over the 4 km a cloud base above it sees (13 taps): r the sun's (or
 // moon's) transmittance to the ground, g its sky from above. The march turns it into light bounced up onto undersides.
@@ -745,6 +796,7 @@ void SkyVis(uint3 gid : SV_DispatchThreadID)
 // lights the base over it 4x as brightly as the even town light, open country about a seventh as brightly.
 RWTexture2D<float4> _OutG;
 Texture3D<float4> _LightIn;
+Texture3D<float4> _SkyIn;   // the sky visibility, for the sky the ground sees (unified)
 float4 _Towns[16];
 float4 _TownP;   // x: how many towns, y: the open country's share (StormRenderer.TownFloor)
 
@@ -760,8 +812,14 @@ void GroundLight(uint3 id : SV_DispatchThreadID)
     {
         float r = k == 0 ? 0.0 : (k <= 6 ? 2.0 : 4.0);
         float a = k * 1.0472 + (k > 6 ? 0.5236 : 0.0);
-        float4 l = _LightIn.SampleLevel(sampler_LinearClamp, luvw(float3(p + r * float2(cos(a), sin(a)), 0.05)), 0);
-        acc += float2(_LM.x > 0.5 ? sunReach(l.r, _LM) : sunT(l.r), l.g);
+        float3 gu = luvw(float3(p + r * float2(cos(a), sin(a)), 0.05));
+        float4 l = _LightIn.SampleLevel(sampler_LinearClamp, gu, 0);
+        // (unified, 2026-11-10: the sky the ground sees, by the sky visibility's cap, ring and horizon. The sky straight
+        // above alone left the ground under a storm with none, so it bounced nothing onto the base, though the horizon
+        // under the base lights that ground)
+        float skyG = l.g;
+        if (_LM.x > 0.5) { float4 sv = _SkyIn.SampleLevel(sampler_LinearClamp, gu, 0); skyG = saturate(0.18 * sv.r + 0.477 * sv.g + 0.342 * sv.b); }
+        acc += float2(_LM.x > 0.5 ? sunReach(l.r, _LM) : sunT(l.r), skyG);
     }
     float town = 1.0;
     if (_TownP.x > 0.5)

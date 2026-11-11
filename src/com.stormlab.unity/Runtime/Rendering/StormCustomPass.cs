@@ -35,6 +35,8 @@ namespace StormLab
             var hd = ctx.hdCamera; var cam = hd.camera;
             if (cam.cameraType == CameraType.Preview || cam.cameraType == CameraType.Reflection) return;
             if (this == global && SceneHasOwnPass()) return;
+            // the model's sky after sunset, where HDRP's has gone dark: under the storms, which dim it as they dim HDRP's
+            StormTwilightSky.Draw(ctx.cmd, hd, ctx.cameraColorBuffer, ctx.cameraDepthBuffer);
             drawn ??= new List<StormRenderer>();
             drawn.Clear();
             var active = StormRenderer.Active;

@@ -73,6 +73,17 @@ public static class StormLabTestKit
     internal static void Sync() { var b = new ComputeBuffer(1, 4); var a = new int[1]; b.GetData(a); b.Release(); }
 
     /// <summary>Render `frames` frames of a camera into a w x h target and save the last as PNG.</summary>
+    static RenderTexture pumpRT;
+    /// <summary>One frame of the camera into a small target, thrown away: a headless Play draws no game view, so what
+    /// follows the picture (StormViewMeter, and the exposure after it) has nothing to follow while a check only waits.
+    /// Call it each frame of such a wait.</summary>
+    internal static void Pump(Camera cam)
+    {
+        if (!pumpRT) { pumpRT = new RenderTexture(480, 270, 24, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB) { antiAliasing = 1, hideFlags = HideFlags.DontSave }; pumpRT.Create(); }
+        var keep = cam.targetTexture;
+        cam.targetTexture = pumpRT; cam.Render(); cam.targetTexture = keep;
+    }
+
     internal static void Render(Camera cam, string path, int w, int h, int frames, Action beforeFrame = null)
     {
         var rt = new RenderTexture(w, h, 24, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB) { antiAliasing = 1 };

@@ -300,6 +300,9 @@ public static class StormLightCheck
     /// </summary>
     static IEnumerable<object> SceneLight(StormRenderer storm, Camera cam, TestMapStormPanel panel)
     {
+        // (the exposure does not follow the picture here: these measures compare the ground's light between frames at one
+        // exposure, and a meter that opens up as the ground darkens turned "the decal takes light off the ground" round)
+        if (panel) panel.viewAdaptation = 0f;
         var F = storm.Frame.param;
         var u0 = storm.WorldToStorm(storm.UpdraftWorld(storm.StormTime));
         var k = storm.Lighting.keyDir; var toSun = new Vector3(k.x, 0f, k.y).normalized;

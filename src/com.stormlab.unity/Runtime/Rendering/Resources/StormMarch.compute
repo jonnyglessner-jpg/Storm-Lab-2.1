@@ -39,6 +39,7 @@
 #define TORNADO_ON true
 #endif
 
+#define STORM_WALL_LOBES   // nearField adds the game's lobes to the wall cloud here (gn, below)
 #include "Packages/com.stormlab.unity/Runtime/Rendering/Shaders/StormCommon.hlsl"
 
 Texture3D<float4> _Dens;
@@ -875,6 +876,17 @@ float3 groundLight(float3 q, float3 sunc0)
         g *= 0.2;
     }
     float3 E = sunc0 * (4.0 * max(_Sun.z, 0.0) * g.x) + skyMean() * g.y;
+    // (unified, 2026-11-10: the ground's sky is now what it sees of the horizon under the storm, not the sky straight up,
+    // which was none. With the old albedo that bounce alone made a base ten times as bright as the ground under it in
+    // the scene (590 nits over 60): the storm's sky is two to three times HDRP's and the map's ground is darker than
+    // 0.12. So under the unified lighting the bounce takes the scene's ground: 0.35 of that sky, and a darker albedo.)
+    // And its colour: (0.12, 0.14, 0.1) off sunlit ground turned a base the low sun shone under olive (the 16 h frames of
+    // game 816557); the map's ground is darker and less green than that: (0.075, 0.08, 0.066) under the unified lighting.
+    if (LIGHT_MODEL > 1.5)
+    {
+        E = sunc0 * (4.0 * max(_Sun.z, 0.0) * g.x) + skyMean() * (g.y * 0.35);
+        return 0.5 * (float3(0.075, 0.08, 0.066) * E + _SkyP.y * g.z * float3(1.0, 0.75, 0.5)) * _PL2.y;
+    }
     return 0.5 * (float3(0.12, 0.14, 0.1) * E + _SkyP.y * g.z * float3(1.0, 0.75, 0.5)) * _PL2.y;
 }
 // Night: the eye's adaptation (a gain) and its blue shift (rods see no colour and are most sensitive to blue-green)
@@ -919,6 +931,10 @@ float upDepth(float4 lt) { return -10.0 * log(max(lt.g, 1e-12)); }
 // the storm looking out) by forward scatter. Which side is open is taken from how open the sky is at the medium and at
 // the eye: the same openness at both is an even sky.
 static float g_openCam = 1.0;
+// the share of the open air's sky under a base that a tornado's flank takes over the base's own (the march's tornado),
+// and that rain under the base does (0.09 each: about three times UnderShare, the underside's own, StormVolume.compute)
+static const float SideShare = 0.09;
+static const float RainShare = 0.09;
 float skyOpen(float4 sv) { return saturate(0.18 * sv.r + 0.477 * sv.g + 0.342 * sv.b); }
 float3 stormLight(float3 q, float4 lt, float4 sv, float3 sunz, float3 sunc0, float ph, float selfSh, float tauX, float ice, int nOct, float2 phA = float2(1.0, 1.0))
 {
@@ -1358,7 +1374,10 @@ void March(uint3 gidT : SV_DispatchThreadID, uint3 grp : SV_GroupID, uint3 gt : 
                     float baseShade = ss(S_base.x - 0.4, S_base.x + 1.5, q.z);
                     float iceSun = lerp(1.0, lt.a, ice); float iceSky = lerp(1.0, 0.3 + 0.7 * lt.a, ice);
                     float3 c;
-                    if (uni) c = stormLight(q, lt, sv, sunz, sunc, lerp(g_phW, g_phI, ice), selfSh, 0.0, ice, 4);
+                    // (the base's ragged bottom takes the sky light just inside the base, as lowered cloud does below: one
+                    // underside, one light. At its own height the grid's open cells under the base gave its fringe the
+                    // horizon's light whole)
+                    if (uni) c = stormLight(q, lt, tc.z < _WallL2.z ? _SkyVis.SampleLevel(sampler_LinearClamp, float3(tc.xy, _WallL2.z), 0) : sv, sunz, sunc, lerp(g_phW, g_phI, ice), selfSh, 0.0, ice, 4);
                     else if (phys)
                     {
                         // 2.0: the sky by what each point sees of it, and the ground's bounce onto the sides and underside
@@ -1410,13 +1429,23 @@ void March(uint3 gidT : SV_DispatchThreadID, uint3 grp : SV_GroupID, uint3 gt : 
             if (nearOn || tv.x > 0.0)
             {
                 // the wall cloud and the funnel are one cloud: smooth union, then the same threshold and light
+                // The game's wall cloud (S_struct; user, 2026-11-09, plains game 816557 from 3 km: "kind of bland. Needs more
+                // definition and detail"). It was nearField's smooth bowl cut at a soft threshold and lit by the sky
+                // visibility grid alone (cells 2.6 km across), so its face was one even grey from rim to rim: the main
+                // cloud's billows (detail) and their own shade (selfSh) never reached it. Now nearField adds the game
+                // noise's lobes to it (g_lobes: StormCommon.hlsl), only while the ray still shows a good share of what it
+                // meets (T), its threshold under the base is crisper where they are, and each lobe shades its own far
+                // side (g_wallShade, below where this step is lit).
+                g_lobes = S_struct && _CD.x > 0.5 && T > 0.05 ? (lt.r < 12.0 ? 2.0 : 1.0) : 0.0; g_wallK = 0.0; g_wallShade = 0.0;
                 float nw = nearOn ? nearField(q, 1.0) : 0.0;
                 nearClear = nearOn && nw < 0.02;
+                float wallDef = g_wallK;
                 float nv = smax(nw, tv.x, 0.15);
                 // The funnel keeps a soft edge, with enough extinction to avoid a bright sky showing through its core.
                 float fs = saturate((tv.x - nw) * 3.0 + 0.5) * step(0.001, tv.x);
                 float lowN = 1.0 - ss(S_base.x - 0.1, S_base.x + 0.3, q.z);
-                float bn = lerp(lerp(ss(0.22, 0.38, nv), ss(0.14, 0.55, nv), 0.6 * lowN), ss(0.12, 0.6, nv) * 0.9, fs) * _MP.x * 0.8 * (1.0 + 0.6 * fs);   // funnels are less translucent
+                // (the game's wall cloud keeps more of the crisp threshold under the base, so its lobes have edges)
+                float bn = lerp(lerp(ss(0.22, 0.38, nv), ss(0.14, 0.55, nv), 0.6 * lowN * (1.0 - 0.6 * wallDef)), ss(0.12, 0.6, nv) * 0.9, fs) * _MP.x * 0.8 * (1.0 + 0.6 * fs);   // funnels are less translucent
                 if (bn > 0.0)
                 {
                     float3 c;
@@ -1434,7 +1463,18 @@ void March(uint3 gidT : SV_DispatchThreadID, uint3 grp : SV_GroupID, uint3 gt : 
                         if (nearOn && _WallP.w > 0.5)
                             occ = 0.4 * ss(0.3, 1.0, beaverTail(q, 1.0) / max(nw, 1e-4));
                         if (PROBE_LIGHT > 4.5) occ = 0.0;   // (checks only: lightDebug 5, the near field without this)
-                        c = stormLight(q, lt, sv * (1.0 - occ), sunz, sunc, g_phW, 1.0, 0.0, 0.0, 4);
+                        // The wall cloud's lobes shade their own far sides (g_wallShade, from nearField): a lobe hides half
+                        // the sky from its far side, as the beaver tail's own cloud does above, and where the sun reaches
+                        // it is in its own shade there, as the main cloud's billows are (selfSh). Inputs of stormLight,
+                        // not a light of the wall cloud's own.
+                        occ = 1.0 - (1.0 - occ) * (1.0 - 0.5 * g_wallShade);
+                        float wallSelf = lt.r < 12.0 ? 1.0 - 0.75 * g_wallShade : 1.0;
+                        // Lowered cloud takes the base's sky light (2026-11-10; user: the wall cloud, tail cloud and funnel
+                        // "lighter than the base they hang from", where the photographs' are as dark as the base or
+                        // darker): the sky visibility just inside the base over it, not at its own height, where the
+                        // grid's cells (2.6 km across) are open air round a lowering finer than they are.
+                        float4 svN = _SkyVis.SampleLevel(sampler_LinearClamp, float3(tc.xy, max(tc.z, _WallL2.z)), 0);
+                        c = stormLight(q, lt, svN * (1.0 - occ), sunz, sunc, g_phW, wallSelf, 0.0, 0.0, 4);
                     }
                     else if (phys)
                     {
@@ -1473,7 +1513,12 @@ void March(uint3 gidT : SV_DispatchThreadID, uint3 grp : SV_GroupID, uint3 gt : 
                 float fwd = 1.0 + 2.2 * pow(max(cosg, 0.0), 4.0);     // rain scatters forward: curtains glow against the light
                 // (unified: lit as the cloud around it is, so under the storm it is as dark as the base; raindrops and
                 // hail absorb next to nothing, so it is grey)
-                float3 pc = uni ? stormLight(q, lt, sv, sunz, sunc, phR, 1.0, 0.0, 0.0, 1, phAR) * 0.9
+                // (2026-11-10, after the tornado: rain under the base took the open air's sky whole, a pale shaft against
+                // the slate base. Under the base it takes the base's sky and RainShare of the open air's, as the tornado
+                // does; where nothing is overhead at the base's level that sky is the open air's own.)
+                float4 svR = sv;
+                if (uni && tc.z < _WallL2.z) svR = lerp(_SkyVis.SampleLevel(sampler_LinearClamp, float3(tc.xy, _WallL2.z), 0), sv, RainShare);
+                float3 pc = uni ? stormLight(q, lt, svR, sunz, sunc, phR, 1.0, 0.0, 0.0, 1, phAR) * 0.9
                     : lerp(float3(0.55, 0.6, 0.66), float3(0.8, 0.88, 0.86), saturate(hw)) * (sunz * sunL * 0.9 * fwd + skyc * (0.35 + 0.5 * lt.g));
                 be += br; Lc += pc * br;
             }
@@ -1526,6 +1571,14 @@ void March(uint3 gidT : SV_DispatchThreadID, uint3 grp : SV_GroupID, uint3 gt : 
                 // its own sun test, and the bright horizon it sees all round from under the base (the light grid's sky
                 // term is the sky overhead, which the base hides)
                 float tsun = (funnelLit || tv.y > 0.0) ? (PROBE_TOR > 0.5 ? sunL : max(sunL, tornadoSun(q))) : 0.0;
+                // The sky a tornado takes (user, 2026-11-10: "the tornadoes got left out of the lighting overhaul", a funnel
+                // near white and its dust bright orange under a dark slate base at noon, out of the sun: its sky light
+                // 4 to 5 times the base's on screen). The base and every lowering take the sky visibility just inside
+                // the base, where the horizon's light arrives at UnderShare (StormVolume.compute SkyFill); the funnel and
+                // its dust went on taking the open air's under the base, the horizon whole. They take the base's too
+                // (svB: where nothing is overhead it is the open sky's own), and of the open air's a side's share: a
+                // funnel's flank and a dust column's are turned to the horizon where the underside meets it at a graze.
+                // (Read where each uses it: held from here across the funnel's tests it cost the close cone 1.6 ms.)
                 float3 hzLight = skyc * 0.2 + hazec * 0.08;
                 // the funnel's vertical sides see the horizon under the base, which the base's underside does not (the
                 // painted path's version; the physical path takes it from the sky bands below)
@@ -1610,13 +1663,15 @@ void March(uint3 gidT : SV_DispatchThreadID, uint3 grp : SV_GroupID, uint3 gt : 
                         float kTop = S_wall.w * ss(0.0, 0.8 * ztop, q.z);
                         float4 ltF = lt; ltF.r = PROBE_TOR > 0.5 ? lt.r : lerp(funnelSunDepth(q), lt.r, kTop);
                         float horF = PROBE_TOR > 0.5 ? sv.b : tornadoHorizon(q, g_torN) * horizonFar(q, g_torN);
-                        float4 svF = sv; svF.b = lerp(0.5 * (saturate(sv.b + (sv.a - sv.b) * cs) + horF), sv.b, kTop);
+                        float4 svB = _SkyVis.SampleLevel(sampler_LinearClamp, float3(tc.xy, max(tc.z, _WallL2.z)), 0);
+                        float4 svF = sv; svF.b = 0.5 * (saturate(sv.b + (sv.a - sv.b) * cs) + horF);
+                        svF = lerp(svB, svF, SideShare * (1.0 - kTop));
                         float stain = S_tor9.w * pow(saturate(1.0 - hz / 0.45), 2.0);
                         float3 albF = lerp(lerp(min(alb, 1.0), 1.0, kTop).xxx, soil * 0.85, stain) * tone;
                         float rF = lerp(S_tor2.x, S_tor2.y, pow(hz, lerp(3.0, 0.7, S_tor.w)));
                         float across = 2.0 * rF * 3.5 * _MP.x * (1.0 - lit) * (0.2 + 0.8 * facing) * (1.0 - kTop);
                         fc = stormLight(q, ltF, svF, sunz, sunc, g_phW, 1.0, across, 0.0, 4) * lerp(lerp(0.85, 1.0, facing), 1.0, kTop) * albF;
-                        parent = stormLight(q, lt, sv, sunz, sunc, g_phW, 1.0, 0.0, 0.0, 4);
+                        parent = stormLight(q, lt, svB, sunz, sunc, g_phW, 1.0, 0.0, 0.0, 4);
                     }
                     if (S_tor4.w > 0.5)
                     {
@@ -1637,7 +1692,7 @@ void March(uint3 gidT : SV_DispatchThreadID, uint3 grp : SV_GroupID, uint3 gt : 
                         float4 ltT = _Light.SampleLevel(sampler_LinearClamp, tcT, 0);
                         float3 sunzT = sunAt(zT);
                         float3 wallC;
-                        if (uni) wallC = stormLight(qT, ltT, _SkyVis.SampleLevel(sampler_LinearClamp, tcT, 0), sunzT, sunc, g_phW, 1.0, 0.0, 0.0, 4);
+                        if (uni) wallC = stormLight(qT, ltT, _SkyVis.SampleLevel(sampler_LinearClamp, float3(tcT.xy, max(tcT.z, _WallL2.z)), 0), sunzT, sunc, g_phW, 1.0, 0.0, 0.0, 4);
                         else if (phys) wallC = (sunzT * (cloudSun(ltT.r, 0.0, 1.0) * (1.4 / 1.9)) + skyLight(_SkyVis.SampleLevel(sampler_LinearClamp, tcT, 0)) + groundLight(qT, sunc)) * 0.88;
                         else
                         {
@@ -1663,7 +1718,8 @@ void March(uint3 gidT : SV_DispatchThreadID, uint3 grp : SV_GroupID, uint3 gt : 
                     {
                         // as the funnel: its sun test, and the sun crossing its own cloud to reach the far side
                         float4 ltD = lt; ltD.r = PROBE_TOR > 0.5 ? lt.r : funnelSunDepth(q);
-                        tl = stormLight(q, ltD, sv, sunz, sunc, phD, 1.0, od * (0.15 + 0.65 * (1.0 - lit)) / 0.38, 0.0, 1, phAD) * (0.65 + 0.35 * shade);
+                        float4 svD = lerp(_SkyVis.SampleLevel(sampler_LinearClamp, float3(tc.xy, max(tc.z, _WallL2.z)), 0), sv, SideShare);
+                        tl = stormLight(q, ltD, svD, sunz, sunc, phD, 1.0, od * (0.15 + 0.65 * (1.0 - lit)) / 0.38, 0.0, 1, phAD) * (0.65 + 0.35 * shade);
                     }
                     // dense dust is darker than its soil (light lost to scattering in the thick core; the reference photos'
                     // columns are mid-brown, their thin rims tan)

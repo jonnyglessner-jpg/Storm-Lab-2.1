@@ -51,8 +51,21 @@ README.md has the layout, use, checks and known gaps.
     grid (`StormVolume.rainLightShare`), the scene cookie, and the tornado's tests (`_RainP` in the march). Keep a new
     light path through rain on the same share, or a funnel and its wall cloud fall out of step again
     (`StormLightCheck -slLightTornado -slLightPreset dixie`). The test map's day exposure adapts to the storm's shade
-    (`TestMapStormPanel.stormAdaptation`, user, 2026-11-08: "unnaturally dark").
-  - `S_game` (slot 34, the block is now 35) holds each storm's noise offset.
+    (`TestMapStormPanel.stormAdaptation`, user, 2026-11-08: "unnaturally dark"): the share of open daylight that
+    reaches the camera, the sun's (`StormSceneShadow.SunAtCamera`) and the sky's (`StormSceneAmbient.Ambient`)
+    together (`StormShade`; 2026-11-09: by the sky seen alone the ground under the anvil was near black at noon).
+    Check it on the roads round a game's storms with `StormExposureCheck`.
+  - `S_game` (slot 34) holds each storm's noise offset; `S_wform` (slot 35, the block is now 36) the wall cloud's form.
+  - Wall clouds (user, 2026-11-10, with five photographs: "sharper, more vertical edges ... variety"; "all the cloud
+    features ... blended together ... with smooth transitions"): each cycle of each storm draws a form
+    (`StormStructure.WallForm`, stream 540 + cycle: bowl, block, tiered, cone, and a tilt) and its own width and depth
+    (`WallSize`, 560 + cycle), drawn by `nearField` from `S_wform` (all zero is the web build's bowl, so the website's
+    plans are untouched). In the march the game's wall cloud takes the game noise's lobes on its surface
+    (`STORM_WALL_LOBES`: `nearField` adds them for the march alone) and their shade (`g_wallShade`: one probe of the
+    lobes, toward the sun where it reaches and toward the open sky otherwise, feeding `selfSh` and the sky they hide:
+    inputs of `stormLight`, never a light of its own). Near-ground features join by soft union (`a + b - a b`) under
+    `S_struct`, not the larger of the two. Check the spread with `-- --wallforms` and the look with
+    `StormGameCheck -slGameSpot ... -slGameWallForms "block,cone,tilt,tiers;...;own"`.
   - Two to four storms are composited in one pass (`StormRenderer.RecordCompositeAll`, soft order, `lerp(1, T, w)`).
   - Game days draw their own environment (`StormPreset.Day`, stream 520, key `plains~<seed>`). Keep the reference in
     `docs/meteorology/storm-structure.md`.
@@ -71,6 +84,42 @@ README.md has the layout, use, checks and known gaps.
   2026-10-31: the Dixie wall cloud lit grey over a dark funnel when it saw rain at a tenth of the sun's extinction).
   Check a tornado against its wall cloud with `StormLightCheck -slLightTornado -slLightPreset <key> -slLightSeed <n>`.
   Check with `StormLightCheck` (physical beside unified, at 17 h and 18.8 h).
+- The second lighting overhaul (user, 2026-11-10: "another full lighting overhaul ... things just still aren't looking
+  right"; their target: match storm photographs, where the base is a dark slate, lowered cloud is as dark as the base or
+  darker, the horizon under it is bright and there is colour; everything in the light in scope, structure untouched):
+  - Under a storm the light comes in from the horizon beneath the base, and only where the anvil ends. The sky
+    visibility's rays run on to the volume's top or edge (`skyTrace`: no step rises over 1.2 km); `SkyFill` then carries
+    the horizon's light at the last open level up into the cloud above each column, at `UnderShare` (0.03: an underside
+    catches it at a grazing angle; more of it flattened the bases). Lowered cloud and the base's own fringe take the sky visibility just inside the base
+    (`_WallL2.z`), so wall cloud, tail cloud and funnel junction are lit as the base is. The ground map's sky is what the
+    ground sees, and the bounce takes the scene's darker ground. Calibrate these against the scene: a base about as
+    bright as the ground under it, both far under the sky; never brighten a base to make it readable.
+  - A tornado is lowered cloud too (user, 2026-11-10: "the tornadoes got left out of the lighting overhaul", a white
+    funnel and bright orange dust under a slate base at noon, out of the sun). The funnel, its join with the wall cloud
+    and its dust take the base's sky visibility (`_WallL2.z`) and, on top, `SideShare` (0.09, StormMarch.compute) of
+    the open air's under the base: a flank turned to the horizon, about three times what the underside catches. Anything
+    new that hangs under a base takes its sky the same way, or it comes out some 30 times the base in sky light. Read
+    that sky where it is used: held across the funnel's tests it cost the close cone 1.6 ms. Rain below the base's
+    level takes its sky the same way (`RainShare`, 0.09; user, 2026-11-10: "Yes, rain"): under a base it is the base's
+    slate, not a pale shaft, and where nothing is overhead at that level it keeps the open air's sky.
+  - Readability is the exposure's job. The test map's exposure follows the picture (`StormViewMeter`, a custom pass at
+    BeforePostProcess; `TestMapStormPanel.viewAdaptation` / `viewTarget` / `ViewTrim`) on top of the storm's shade, as a
+    camera's meter does: real cameras open three stops and more under a storm and let the horizon go white. Its grade is
+    HDRP's Neutral curve with contrast +25 and saturation +20 (`grade`): ACES crushed the ground in a storm's shade to
+    black. A headless check must draw frames while it waits (`StormLabTestKit.Pump`), or the meter has no picture.
+  - The sky after sunset (user, 2026-11-10: "the dusk lighting does not look right at all. The sky goes black way too
+    soon"): HDRP's sky is lit by the sun Light, which the test map's panel fades out by 1 degree down, and is far under
+    the storm model's sky from about 8 degrees up, so the storm stood lit against a black sky all through twilight.
+    `StormTwilightSky` (drawn by `StormCustomPass` on the sky pixels, before the storms) shows the model's own sky
+    (the march's `skyRad`, for the sun alone: the moon's sky is HDRP's) for the share lost, the same share the sky
+    fill gives the ground, at `Scale` 0.4 (the model's dome is two to three times HDRP's; at 1 it came out white). As
+    shown, its pale horizon turns blue as the sky's level falls and is darker away from the sun; that is the picture
+    only, the storm's light is untouched. Check the run of it with `StormLightCheck -slLightSpot` at hours 18.5 to 20.1.
+    When the user's editor has the project open, headless checks run in `tests/StormLabTwin` (the same Assets by
+    junction, its own Library and Screenshots).
+  - Judge it on the roads with `StormExposureCheck -slExpQuick` (both storms, three hours, sheets) and a spot with
+    `StormGameCheck -slGameSpot ... -slGameWallForms "L:<stops>:<aces|neutral|grade>[:con=..:sat=..]"`. A frame that
+    comes out pale once in a repeated render is lightning.
 - Funnels are smooth (no vertical grooves), as in 2.0.
 - Everything on a tornado turns by the angles in `S_spin` / `S_spin2` / `S_spin3`, each wrapped at 2 pi on its own: never
   blend two of them into one angle (a lerp between the core's and the whirl's wound the dust up and snapped it every turn,
@@ -116,7 +165,13 @@ README.md has the layout, use, checks and known gaps.
   tornado's code out of the `STORM_NO_TORNADO` path, and anything new that changes where a ray may meet a tornado in
   `reachesTornado` too (Classify), or tiles will be marched without it. Register pressure decides the march's speed:
   a value kept live across the step loop can cost more than the work it saves (a shared light struct made the close
-  cone 50 -> 57 ms). FXC's temp count does not predict it; time it.
+  cone 50 -> 57 ms). FXC's temp count does not predict it; time it. Two ways a few lines cost 1.5 ms each in the close
+  tornado views with the same steps a pixel (the wall cloud's lobes, 2026-11-10): arithmetic on uniforms alone inside
+  the step (the compiler lifts it out of the loop and holds each result in a register all through it: work such
+  values out on the CPU and pass them, as `StormRenderer.WallLobeParams` does), and several values carried from
+  `nearField` to where the cloud is lit, across the beaver tail's evaluation (carry one). A change of that kind costs
+  the same whether its code ever runs, so a variant that never executes it is no control: compile it out. And check
+  that a cost experiment changes the image where it should (`-slPerfOnly`, a baseline made just before).
 - C: is nearly full (about 14 GB free on 2026-10-24); the test map's generated data is about 2 GB.
 
 ## Running

@@ -67,19 +67,48 @@ namespace StormLab.TestMap
         [Range(0f, 3f)] public float twilightLift = 1f;
         [Range(-6f, 16f)] public float manualEV = 13.5f;
         [Tooltip("auto exposure: the eye's adaptation to the storm's shade (user, 2026-11-08: noon and afternoon " +
-                 "\"unnaturally dark\"): stops opened per halving of the sky light the storms leave the camera " +
-                 "(StormSceneAmbient.Ambient), as an eye or a camera's meter adapts under a storm; 0: the day's fixed 13.5 EV")]
+                 "\"unnaturally dark\"): stops opened per halving of the daylight the storms leave the camera " +
+                 "(StormShade: the sun's share and the sky's), as an eye or a camera's meter adapts under a storm; 0: the day's fixed 13.5 EV")]
         [Range(0f, 1f)] public float stormAdaptation = 0.6f;
         [Tooltip("auto exposure: the most stops the storm's shade opens it")]
         [Range(0f, 4f)] public float stormAdaptationMax = 2.5f;
         /// <summary>stops the exposure is open now for the storm's shade</summary>
         public float StormLift { get; private set; }
+        /// <summary>The share of the open sky's daylight that reaches the camera through the storms (1 in the open): the
+        /// sun's light by the share of it the storms let through to the camera (StormSceneShadow.SunAtCamera) and the
+        /// sky's by the share of the sky the camera sees (StormSceneAmbient.Ambient), each weighted by its light on a
+        /// small sphere at the camera (a quarter of the sun's lux, half the sky's on level ground). What the exposure
+        /// adapts to.</summary>
+        public float StormShade { get; private set; } = 1f;
+        [Tooltip("auto exposure by day: how far the exposure follows the picture itself, as a camera's meter does (StormViewMeter: " +
+                 "the frame's centre-weighted log-average), on top of the storm's shade: 0 not at all, 1 until the frame averages viewTarget")]
+        [Range(0f, 1f)] public float viewAdaptation = 0.7f;
+        [Tooltip("the picture's log-average the view meter aims at, in scene-linear light at the exposure in use (0.18: mid grey)")]
+        [Range(0.03f, 0.4f)] public float viewTarget = 0.075f;
+        [Tooltip("the most the view meter closes (x) and opens (y) the exposure, stops")]
+        public Vector2 viewRange = new Vector2(0.7f, 2.5f);
+        [Tooltip("seconds the view meter's trim takes to settle")]
+        public float viewSeconds = 1.2f;
+        [Tooltip("the picture's grade (2026-11-10, with the lighting overhaul): HDRP's Neutral tone curve with a little contrast " +
+                 "and saturation put back, in place of the scene's ACES. ACES crushed everything in a storm's shade (the ground " +
+                 "under it came out black beside a readable base); Neutral alone was flat. Off: the scene's own tonemapping")]
+        public bool grade = true;
+        [Range(-50f, 50f)] public float gradeContrast = 25f;
+        [Range(-50f, 50f)] public float gradeSaturation = 20f;
+        /// <summary>stops the exposure is open now for what is in the picture (negative: closed down)</summary>
+        public float ViewTrim { get; private set; }
+        /// <summary>the two shares StormShade is made of, and the sun's weight in it (0 at night)</summary>
+        public float SunShare { get; private set; } = 1f;
+        public float SkyShare { get; private set; } = 1f;
+        public float SunWeight { get; private set; }
         [Tooltip("the sun's illuminance with it well up, lux (HDRP's daylight)")]
         public float sunLux = 100000f;
         [Tooltip("a full moon's illuminance, lux")]
         public float fullMoonLux = 0.25f;
         [Tooltip("light the ground with the storm model's twilight and night sky where HDRP's sky goes dark with the sun Light")]
         public bool skyFill = true;
+        [Tooltip("show the storm model's twilight sky where HDRP's sky goes dark with the sun Light (StormTwilightSky)")]
+        public bool twilightSky = true;
         [Tooltip("degrees the sky fill leans from straight up toward the sun's bearing (the twilight sky is brightest there)")]
         [Range(0f, 60f)] public float skyFillLean = 35f;
 
@@ -92,6 +121,8 @@ namespace StormLab.TestMap
         public Vector2 MoonAzEl { get; private set; }
 
         Exposure exposure;
+        Tonemapping tonemap; ColorAdjustments colour; int tonemapScene = -1;
+        StormSceneShadow shadow;
         Light fill;
         Rect win = new Rect(16, 300, 470, 10);
         Vector2 scroll;
@@ -133,7 +164,14 @@ namespace StormLab.TestMap
             }
             // the scene's exposure, on a copy of its profile (the asset is left alone)
             foreach (var v in FindObjectsByType<Volume>(FindObjectsSortMode.None))
-                if (v.isGlobal && v.sharedProfile && v.sharedProfile.Has<Exposure>()) { v.profile.TryGet(out exposure); break; }
+                if (v.isGlobal && v.sharedProfile && v.sharedProfile.Has<Exposure>())
+                {
+                    v.profile.TryGet(out exposure);
+                    // (the grade goes on the same copy of the profile)
+                    if (v.profile.TryGet(out tonemap)) tonemapScene = (int)tonemap.mode.value;
+                    if (!v.profile.TryGet(out colour)) colour = v.profile.Add<ColorAdjustments>(true);
+                    break;
+                }
             if (storm)
             {
                 storm.sunSource = SunSource.TimeOfDay;
@@ -200,6 +238,10 @@ namespace StormLab.TestMap
                 sun.intensity = sunLux * Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(-1f, 3f, s.y));
                 sun.enabled = sun.intensity > 1e-3f;
             }
+            // (HDRP's sky is lit by that Light: black from a degree down, and already far under the storm model's sky
+            // from some 8 degrees up, while the storm is lit by the model's sunset and twilight sky. The model's own sky
+            // is drawn for the share lost, as the sky fill below gives it to the ground; user, 2026-11-10)
+            StormTwilightSky.Set(storm, twilightSky && sun ? 1f - Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(-1f, 8f, s.y)) : 0f);
             if (moon)
             {
                 moon.transform.rotation = Quaternion.LookRotation(-StormRenderer.StormToWorldDir(StormRenderer.SunVol(m.x, m.y)));
@@ -213,14 +255,46 @@ namespace StormLab.TestMap
             var sky = storm.PhysicalSky ? SkyLighting.Evaluate(storm.SunDirVol, storm.MoonDirVol, night) : default;
             float gain = storm.PhysicalSky ? sky.gain : 1f;
             float lift = storm.PhysicalSky ? TwilightLift(sky.level) : 0f;
-            // the storm's shade (the share of the sky's light the storms leave the camera, settled over a second or two):
-            // under a supercell's base the light is a quarter of the open sky's or less, and an eye or a meter opens up
-            // for it; the day's exposure held at 13.5 EV left the base and the rain under it near black
+            // the storm's shade (the share of the open sky's daylight the storms leave the camera, settled over a second or
+            // two): under a supercell's base the light is a quarter of the open sky's or less, and an eye or a meter
+            // opens up for it; the day's exposure held at 13.5 EV left the base and the rain under it near black.
+            // Both lights count (user, 2026-11-09, plains game 816557). By the sky seen alone, the ground under the anvil
+            // 10 to 40 km out was near black at noon: the anvil took over 99 % of the sun there while the camera still
+            // saw half the sky or more, so the exposure opened 0.05 to 0.6 stop; and at 18.5 h it opened 1.4 stops under
+            // an anvil the low sun shone in beneath, and the sky toward the sun clipped.
             var amb = StormSceneAmbient.Current;
-            float shade = amb ? Mathf.Clamp(amb.Ambient, 0.02f, 1f) : 1f;
+            if (sun && (!shadow || shadow.gameObject != sun.gameObject)) shadow = sun.GetComponent<StormSceneShadow>();
+            SkyShare = amb ? amb.Ambient : 1f;
+            SunShare = shadow && shadow.isActiveAndEnabled ? shadow.SunAtCamera : 1f;
+            // (the sun's lux as the air leaves it at this height: HDRP's sky dims the sun Light so, and the model's
+            // colour of sunlight, SkyLighting.SunColour, gives the share: 1 overhead, a half 7 degrees up)
+            float air = Lum(SkyLighting.SunColour(Mathf.Max(s.y, 0f))) / Lum(SkyLighting.SunColour(90f));
+            float eSun = sun && sun.enabled ? 0.25f * sun.intensity * air : 0f, eSky = 0.5f * SkyLux();
+            SunWeight = eSun + eSky > 1e-9f ? eSun / (eSun + eSky) : 0f;
+            StormShade = SunWeight * SunShare + (1f - SunWeight) * SkyShare;
+            float shade = Mathf.Clamp(StormShade, 0.02f, 1f);
             StormLift = autoExposure ? Mathf.Min(-Mathf.Log(shade, 2f) * stormAdaptation, stormAdaptationMax) : 0f;
-            ExposureEV = autoExposure ? Mathf.Clamp(13.5f - Mathf.Log(Mathf.Max(gain, 1e-6f), 2f) - lift - StormLift, -6f, 16f) - compensation : manualEV;
+            // The picture's own level (2026-11-10): by the light at the camera alone, frames near a storm came out two to
+            // three stops under a photograph's, since what fills them (the base, the rain, the ground in its shade) is far
+            // darker than a grey card there would be. A camera meters the picture: the view meter's log-average, at the
+            // exposure in use, says how many stops the frame is from viewTarget, and the exposure follows viewAdaptation of
+            // the way (what it would read with no trim is its reading times 2^-trim, so the loop has no gain to run away
+            // with), within viewRange, by day only (the night model has the night), and not while another script holds the
+            // exposure (the photo camera's own settings).
+            StormViewMeter.EnsureInstalled();
+            float day = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(-4f, 3f, s.y));
+            float want = 0f;
+            if (autoExposure && !externalExposure && viewAdaptation > 0f && StormViewMeter.LogAverage > 0f && Time.unscaledTime - StormViewMeter.ReadAt < 2f)
+                want = Mathf.Clamp(viewAdaptation * (Mathf.Log(viewTarget / StormViewMeter.LogAverage, 2f) + ViewTrim), -viewRange.x, viewRange.y) * day;
+            else if (externalExposure) want = ViewTrim;
+            ViewTrim += (want - ViewTrim) * (1f - Mathf.Exp(-Time.unscaledDeltaTime / Mathf.Max(viewSeconds, 0.05f)));
+            ExposureEV = autoExposure ? Mathf.Clamp(13.5f - Mathf.Log(Mathf.Max(gain, 1e-6f), 2f) - lift - StormLift - ViewTrim, -6f, 16f) - compensation : manualEV;
             if (exposure && !externalExposure) { exposure.mode.Override(ExposureMode.Fixed); exposure.fixedExposure.Override(ExposureEV); }
+            if (tonemap && colour)
+            {
+                tonemap.mode.Override(grade ? TonemappingMode.Neutral : (TonemappingMode)tonemapScene);
+                colour.contrast.Override(grade ? gradeContrast : 0f); colour.saturation.Override(grade ? gradeSaturation : 0f);
+            }
             ApplySkyFill(s);
         }
 
@@ -238,6 +312,19 @@ namespace StormLab.TestMap
             float close = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(-4f, -2f, l));
             return twilightLift * open * close;
         }
+
+        /// <summary>The storm model's open sky on level ground now, lux: its radiance (storm units, StormRenderer.Luminance
+        /// nits each) over the cap, ring and horizon bands by their cosine-weighted shares of the dome (0-37.5, 37.5-66,
+        /// 66-90 degrees from the zenith), times pi. A third of the sun's lux by day when the storm has no sky model.</summary>
+        float SkyLux()
+        {
+            if (!storm.PhysicalSky) return sunLux / 3f;
+            SkyLighting.Bands(storm.Lighting, out var zen, out var mid, out var hor, out _);
+            var e = (0.37f * (Vector3)zen + 0.465f * (Vector3)mid + 0.165f * (Vector3)hor) * (Mathf.PI * storm.Luminance);
+            return Lum(e);
+        }
+
+        static float Lum(Vector3 c) => 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z;
 
         /// <summary>The sky fill for the sun at azimuth / elevation s (degrees).</summary>
         void ApplySkyFill(Vector2 s)
@@ -416,6 +503,7 @@ namespace StormLab.TestMap
                 storm.nightFill = Slider("night fill under the base", storm.nightFill, 0f, 1f);
                 storm.purkinje = Slider("night blue shift", storm.purkinje, 0f, 1f);
                 skyFill = GUILayout.Toggle(skyFill, $"twilight sky light on the ground ({SkyFillLux:0.##} lux)");
+                twilightSky = GUILayout.Toggle(twilightSky, "twilight sky behind the storm");
                 storm.dropletDiameter = Slider("droplet diameter (um)", storm.dropletDiameter, 5f, 50f);
                 if (storm.lighting == StormLighting.Unified)
                 {
@@ -427,7 +515,7 @@ namespace StormLab.TestMap
             else GUILayout.Label("The web build's lighting: fixed evening colours, no night model.", small);
             GUILayout.BeginHorizontal();
             autoExposure = GUILayout.Toggle(autoExposure, "auto exposure");
-            GUILayout.Label($"EV100 {ExposureEV:0.0}", small);
+            GUILayout.Label(autoExposure ? $"EV100 {ExposureEV:0.0}  shade {StormShade:0.00} (sun {SunShare:0.00}, sky {SkyShare:0.00})  view {ViewTrim:+0.0;-0.0}" : $"EV100 {ExposureEV:0.0}", small);
             GUILayout.EndHorizontal();
             if (autoExposure) compensation = Slider("compensation (stops brighter)", compensation, -4f, 3f);
             if (autoExposure) twilightLift = Slider("twilight adaptation (stops)", twilightLift, 0f, 3f);

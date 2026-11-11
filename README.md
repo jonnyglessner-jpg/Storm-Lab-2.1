@@ -642,11 +642,30 @@ The environmental structure addresses all of them, leaving the web build's desig
   tests, so a funnel and the cloud round it stay lit alike. The eye's view through rain keeps the full extinction.
   `StormLightCheck`, unified lighting: inside the rain 0.017 -> 0.108, the hail core 0.025 -> 0.060, backlit 0.048 ->
   0.075. A broad base at noon stays dusk-dark in absolute terms, as a real one is. The test map's auto exposure now
-  adapts to the storm's shade as an eye does (`TestMapStormPanel.stormAdaptation`): 0.6 stop per halving of the sky
-  light the storms leave the camera (`StormSceneAmbient.Ambient`), at most 2.5 stops. It was a fixed 13.5 EV by day.
+  adapts to the storm's shade as an eye does (`TestMapStormPanel.stormAdaptation`): 0.6 stop per halving of the
+  daylight the storms leave the camera (`StormShade`), at most 2.5 stops. It was a fixed 13.5 EV by day. The shade is
+  the sun's share at the camera (`StormSceneShadow.SunAtCamera`, the middle of the scene's shadow cookie) and the sky's
+  (`StormSceneAmbient.Ambient`), weighted as each lights a small sphere there (2026-11-09; it was the sky seen alone,
+  which left the ground under the anvil near black at noon, where the anvil takes over 99 % of the sun and hides little
+  of the sky from the camera). `StormExposureCheck` measures it on the roads round a game's storms.
 - **Textures.** `GameNoise`, 128^3 with four fields (gradient fbm, billows, Perlin-Worley, fibres) and mips filtered by
   the pixel's footprint, replaces the web build's 48^3 value noise in the march's detail (no glitter a few km off). Each
   storm samples every noise at its own offset (`S_game`), so no two storms share a texture.
+- **Light under the storm (2026-11-10).** The sky visibility's rays reach the anvil, so the horizon is open only where
+  the anvil ends; the horizon's light under the base is carried up into the base's skin (`SkyFill`), and lowered cloud
+  takes the base's sky light, so a wall cloud is as dark as its base. The ground-bounce map takes the sky the ground
+  sees. The test map's exposure meters the picture (`StormViewMeter`, `TestMapStormPanel.ViewTrim`) and its grade is
+  HDRP's Neutral curve with a little contrast and saturation. Relight 2.4 -> 3.4 ms, spread over four more frames.
+  A tornado's funnel and dust take the base's sky light as well, with a side's share of the open horizon under the
+  base (`SideShare`): out of the sun a funnel is the slate of its wall cloud, not white. Rain under the base the same
+  (`RainShare`). After sunset the storm model's own sky is drawn behind the storm where HDRP's has faded with the sun
+  Light (`StormTwilightSky`, the panel's "twilight sky behind the storm"), so dusk has a sky until the model's
+  twilight ends.
+- **Wall clouds.** Each cycle of each storm draws its wall cloud's form (`StormStructure.WallForm`: the web build's
+  bowl, a block with a flat floor and standing sides, a stepped one, a cone, level or tilted) and its width and depth
+  (`WallSize`), leaning with the day's LCL and low-level rotation; the shader draws it from `S_wform` (slot 35). The
+  march adds the game noise's lobes to its surface with their own shading, and the near-ground features (wall cloud,
+  tail cloud, horseshoe, beaver tail) join by soft union. `validation/parity/csharp -- --wallforms` prints the spread.
 - **Several storms.** Two to four are composited in one pass (`RecordCompositeAll`), each storm's light the mixture of
   the orders it could be in with the others (`lerp(1, T, w)`). The old pairwise layering was wrong from the third storm.
 
@@ -689,8 +708,9 @@ image unchanged unless said:
 - **Longer steps where nothing is drawn**: below the base the near field's fine step doubles while the last one found it
   far below drawing (`nearStride`; under the base 8.6 -> 6.8 ms), and rain with no cloud in it takes 0.2 km steps
   (`rainStride`). Both at the level of the march's jitter (mean under 0.5/255).
-- **The volume's relight** (light grid, then sky visibility and ground light) is spread over three frames after the
-  repaint's slabs: the worst volume frame 2.0 -> 0.9 ms.
+- **The volume's relight** (light grid, then sky visibility and ground light) is spread over four frames after the
+  repaint's slabs: the worst volume frame 2.0 -> 0.9 ms. (Four since 2026-11-09, when the sky visibility's layers went
+  from 0.75 to 0.375 km deep for the wall cloud's sake: its two halves take 1.1 and 0.8 ms, a frame each.)
 - The tiers' checkerboard and march scale soften motion slightly; static views differ from Ultra by under 1/255 on
   average (High) to about 1/255 (Performance).
 
